@@ -8,7 +8,11 @@ Current implementation includes:
 - In-memory database baseline with transaction, schema, undo/redo, changeset, and relation field support
 - SQLite persistence backend under `Src/Sqlite`
 - Computed-column metadata baseline in public types for upper-layer table tools
+- Minimal computed runtime (`expression`, `ruleId`, cache model)
+- Batch edit/import helpers
+- Migration planning and diagnostics helpers
 - M1 example under `Examples/MemoryExample.cpp`
+- Product integration example under `Examples/ProductIntegrationExample.cpp`
 - M1/M2/M3 baseline tests under `Tests/`
 
 Quick in-memory usage:
@@ -45,6 +49,13 @@ db->Commit(edit.Get());
 ```
 
 Computed columns are modeled separately from storage schema facts. Use `ColumnDef` for persisted fact/relation columns and `ComputedColumnDef` for read-only derived columns owned by upper-layer table or calculation modules.
+
+For higher-level integration:
+
+- `Computed.h` provides expression/rule evaluation and cache invalidation primitives.
+- `Batch.h` provides batch-edit/import helpers that reuse the database transaction model.
+- `Migration.h` provides explicit migration planning primitives.
+- `Diagnostics.h` provides health-report and `ChangeSet` description helpers.
 
 面向未来算量产品的通用存储内核。
 

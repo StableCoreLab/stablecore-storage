@@ -8,6 +8,10 @@ find_package(SQLite3 REQUIRED)
 
 add_library(stablecore_storage
     Src/Factory.cpp
+    Src/Batch/BatchOperations.cpp
+    Src/Computed/ComputedRuntime.cpp
+    Src/Diagnostics/Diagnostics.cpp
+    Src/Migration/Migration.cpp
     Src/Memory/MemoryDatabase.cpp
     Src/Sqlite/SqliteAdapter.cpp
 )
@@ -25,6 +29,14 @@ add_executable(stablecore_storage_memory_example
 )
 
 target_link_libraries(stablecore_storage_memory_example
+    PRIVATE stablecore_storage
+)
+
+add_executable(stablecore_storage_product_example
+    Examples/ProductIntegrationExample.cpp
+)
+
+target_link_libraries(stablecore_storage_product_example
     PRIVATE stablecore_storage
 )
 
@@ -47,6 +59,7 @@ if (STABLECORE_STORAGE_BUILD_TESTS)
     endif()
 
     add_executable(stablecore_storage_tests
+        Tests/ComputedTests.cpp
         Tests/M1Tests.cpp
         Tests/M2SqliteTests.cpp
         Tests/M3Tests.cpp
