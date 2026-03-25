@@ -41,6 +41,23 @@ std::vector<sc::FieldDependency> ParseDependencies(const QString& text, const QS
     return result;
 }
 
+QString JoinDependencies(
+    const std::vector<sc::FieldDependency>& dependencies,
+    const QString& currentTableName)
+{
+    QStringList parts;
+    for (const sc::FieldDependency& dependency : dependencies)
+    {
+        const QString tableName = QString::fromStdWString(dependency.tableName);
+        const QString fieldName = QString::fromStdWString(dependency.fieldName);
+        parts.push_back(
+            tableName.compare(currentTableName, Qt::CaseInsensitive) == 0
+                ? fieldName
+                : tableName + QStringLiteral(".") + fieldName);
+    }
+    return parts.join(QStringLiteral(", "));
+}
+
 }  // namespace
 
 ComputedColumnDialog::ComputedColumnDialog(const QString& currentTableName, QWidget* parent)
@@ -49,7 +66,24 @@ ComputedColumnDialog::ComputedColumnDialog(const QString& currentTableName, QWid
 {
     setWindowTitle(QStringLiteral("Add Session Computed Column"));
     resize(620, 540);
+    BuildForm();
+}
 
+ComputedColumnDialog::ComputedColumnDialog(
+    const QString& currentTableName,
+    const sc::ComputedColumnDef& initialValue,
+    QWidget* parent)
+    : QDialog(parent)
+    , currentTableName_(currentTableName)
+{
+    setWindowTitle(QStringLiteral("Edit Session Computed Column"));
+    resize(620, 540);
+    BuildForm();
+    ApplyInitialValue(initialValue);
+}
+
+void ComputedColumnDialog::BuildForm()
+{
     auto* layout = new QVBoxLayout(this);
     layout->addWidget(new QLabel(
         QStringLiteral("Computed columns are session-only and will disappear after the editor closes."),
@@ -119,6 +153,23 @@ ComputedColumnDialog::ComputedColumnDialog(const QString& currentTableName, QWid
     connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
 
+    UpdateModeVisibility();
+}
+
+void ComputedColumnDialog::ApplyInitialValue(const sc::ComputedColumnDef& initialValue)
+{
+    nameEdit_->setText(QString::fromStdWString(initialValue.name));
+    displayNameEdit_->setText(QString::fromStdWString(initialValue.displayName));
+    valueKindCombo_->setCurrentIndex(valueKindCombo_->findData(static_cast<int>(initialValue.valueKind)));
+    kindCombo_->setCurrentIndex(kindCombo_->findData(static_cast<int>(initialValue.kind)));
+    expressionEdit_->setPlainText(QString::fromStdWString(initialValue.expression));
+    ruleIdEdit_->setText(QString::fromStdWString(initialValue.ruleId));
+    aggregateKindCombo_->setCurrentIndex(aggregateKindCombo_->findData(static_cast<int>(initialValue.aggregateKind)));
+    aggregateRelationEdit_->setText(QString::fromStdWString(initialValue.aggregateRelation));
+    aggregateFieldEdit_->setText(QString::fromStdWString(initialValue.aggregateField));
+    factDepsEdit_->setText(JoinDependencies(initialValue.dependencies.factFields, currentTableName_));
+    relationDepsEdit_->setText(JoinDependencies(initialValue.dependencies.relationFields, currentTableName_));
+    cacheableCheck_->setChecked(initialValue.cacheable);
     UpdateModeVisibility();
 }
 

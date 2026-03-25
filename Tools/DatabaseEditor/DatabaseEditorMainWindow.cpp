@@ -120,12 +120,16 @@ void DatabaseEditorMainWindow::BuildUi()
     auto* clearFilterButton = new QPushButton(QStringLiteral("Clear"), centerWidget);
     auto* relationButton = new QPushButton(QStringLiteral("Pick Relation"), centerWidget);
     auto* computedButton = new QPushButton(QStringLiteral("Add Computed Column"), centerWidget);
+    auto* editComputedButton = new QPushButton(QStringLiteral("Edit Computed"), centerWidget);
+    auto* deleteComputedButton = new QPushButton(QStringLiteral("Delete Computed"), centerWidget);
 
     toolsLayout->addWidget(tableSummaryLabel_, 1);
     toolsLayout->addWidget(filterEdit_, 2);
     toolsLayout->addWidget(clearFilterButton);
     toolsLayout->addWidget(relationButton);
     toolsLayout->addWidget(computedButton);
+    toolsLayout->addWidget(editComputedButton);
+    toolsLayout->addWidget(deleteComputedButton);
     centerLayout->addLayout(toolsLayout);
 
     dataTable_ = new QTableView(centerWidget);
@@ -143,6 +147,8 @@ void DatabaseEditorMainWindow::BuildUi()
     connect(clearFilterButton, &QPushButton::clicked, filterEdit_, &QLineEdit::clear);
     connect(relationButton, &QPushButton::clicked, this, &DatabaseEditorMainWindow::EditSelectedRelation);
     connect(computedButton, &QPushButton::clicked, this, &DatabaseEditorMainWindow::AddSessionComputedColumn);
+    connect(editComputedButton, &QPushButton::clicked, this, &DatabaseEditorMainWindow::EditSelectedComputedColumn);
+    connect(deleteComputedButton, &QPushButton::clicked, this, &DatabaseEditorMainWindow::DeleteSelectedComputedColumn);
 
     splitter->addWidget(centerWidget);
 
@@ -189,6 +195,8 @@ void DatabaseEditorMainWindow::BuildMenus()
     tableMenu->addAction(QStringLiteral("Create Table..."), this, &DatabaseEditorMainWindow::CreateTable);
     tableMenu->addAction(QStringLiteral("Add Column..."), this, &DatabaseEditorMainWindow::AddColumn);
     tableMenu->addAction(QStringLiteral("Add Session Computed Column..."), this, &DatabaseEditorMainWindow::AddSessionComputedColumn);
+    tableMenu->addAction(QStringLiteral("Edit Selected Computed Column..."), this, &DatabaseEditorMainWindow::EditSelectedComputedColumn);
+    tableMenu->addAction(QStringLiteral("Delete Selected Computed Column"), this, &DatabaseEditorMainWindow::DeleteSelectedComputedColumn);
     tableMenu->addAction(QStringLiteral("Add Record"), this, &DatabaseEditorMainWindow::AddRecord);
     tableMenu->addAction(QStringLiteral("Delete Selected Record"), this, &DatabaseEditorMainWindow::DeleteSelectedRecord);
     tableMenu->addAction(QStringLiteral("Pick Selected Relation..."), this, &DatabaseEditorMainWindow::EditSelectedRelation);
@@ -207,6 +215,8 @@ void DatabaseEditorMainWindow::BuildMenus()
     toolbar->addAction(QStringLiteral("New Table"), this, &DatabaseEditorMainWindow::CreateTable);
     toolbar->addAction(QStringLiteral("Add Column"), this, &DatabaseEditorMainWindow::AddColumn);
     toolbar->addAction(QStringLiteral("Add Computed"), this, &DatabaseEditorMainWindow::AddSessionComputedColumn);
+    toolbar->addAction(QStringLiteral("Edit Computed"), this, &DatabaseEditorMainWindow::EditSelectedComputedColumn);
+    toolbar->addAction(QStringLiteral("Delete Computed"), this, &DatabaseEditorMainWindow::DeleteSelectedComputedColumn);
     toolbar->addAction(QStringLiteral("Add Record"), this, &DatabaseEditorMainWindow::AddRecord);
     toolbar->addAction(QStringLiteral("Delete Record"), this, &DatabaseEditorMainWindow::DeleteSelectedRecord);
     toolbar->addAction(QStringLiteral("Pick Relation"), this, &DatabaseEditorMainWindow::EditSelectedRelation);
@@ -317,6 +327,100 @@ void DatabaseEditorMainWindow::AddSessionComputedColumn()
 
     recordModel_->Refresh();
     UpdateComputedColumnsPanel();
+    SelectComputedColumnByName(ToQString(definition.name));
+}
+
+void DatabaseEditorMainWindow::EditSelectedComputedColumn()
+{
+    const QString columnName = CurrentComputedColumnName();
+    if (columnName.isEmpty())
+    {
+        ShowError(QStringLiteral("Edit Computed Column Failed"), QStringLiteral("Select a computed column in the Session Computed Columns panel."));
+        return;
+    }
+
+    sc::ComputedColumnDef existing;
+    QString error;
+    if (!session_->GetSessionComputedColumn(columnName, &existing, &error))
+    {
+        ShowError(QStringLiteral("Edit Computed Column Failed"), error);
+        return;
+    }
+
+    ComputedColumnDialog dialog(session_->CurrentTableName(), existing, this);
+    if (dialog.exec() != QDialog::Accepted)
+    {
+        return;
+    }
+
+    sc::ComputedColumnDef updated;
+    if (!dialog.BuildDefinition(&updated, &error))
+    {
+        ShowError(QStringLiteral("Edit Computed Column Failed"), error);
+        return;
+    }
+
+    if (!session_->UpdateSessionComputedColumn(columnName, updated, &error))
+    {
+        ShowError(QStringLiteral("Edit Computed Column Failed"), error);
+        return;
+    }
+
+    recordModel_->Refresh();
+    UpdateComputedColumnsPanel();
+    SelectComputedColumnByName(ToQString(updated.name));
+    SetStatusMessage(QStringLiteral("Computed column updated: ") + ToQString(updated.name));
+}
+
+void DatabaseEditorMainWindow::DeleteSelectedComputedColumn()
+{
+    const QString columnName = CurrentComputedColumnName();
+    if (columnName.isEmpty())
+    {
+        ShowError(QStringLiteral("Delete Computed Column Failed"), QStringLiteral("Select a computed column in the Session Computed Columns panel."));
+        return;
+    }
+
+    const QMessageBox::StandardButton answer = QMessageBox::question(
+        this,
+        QStringLiteral("Delete Computed Column"),
+        QStringLiteral("Delete session computed column \"%1\"?").arg(columnName));
+    if (answer != QMessageBox::Yes)
+    {
+        return;
+    }
+
+    const QVector<sc::ComputedColumnDef> columnsBeforeDelete = session_->CurrentSessionComputedColumns();
+    QString fallbackSelection;
+    for (int index = 0; index < columnsBeforeDelete.size(); ++index)
+    {
+        if (ToQString(columnsBeforeDelete[index].name).compare(columnName, Qt::CaseInsensitive) != 0)
+        {
+            continue;
+        }
+
+        if (index + 1 < columnsBeforeDelete.size())
+        {
+            fallbackSelection = ToQString(columnsBeforeDelete[index + 1].name);
+        }
+        else if (index - 1 >= 0)
+        {
+            fallbackSelection = ToQString(columnsBeforeDelete[index - 1].name);
+        }
+        break;
+    }
+
+    QString error;
+    if (!session_->RemoveSessionComputedColumn(columnName, &error))
+    {
+        ShowError(QStringLiteral("Delete Computed Column Failed"), error);
+        return;
+    }
+
+    recordModel_->Refresh();
+    UpdateComputedColumnsPanel();
+    SelectComputedColumnByName(fallbackSelection);
+    SetStatusMessage(QStringLiteral("Computed column deleted: ") + columnName);
 }
 
 void DatabaseEditorMainWindow::AddRecord()
@@ -545,6 +649,7 @@ void DatabaseEditorMainWindow::UpdateRecordInspector()
 
 void DatabaseEditorMainWindow::UpdateComputedColumnsPanel()
 {
+    const QString selectedName = CurrentComputedColumnName();
     computedColumnsTree_->clear();
 
     const QVector<sc::ComputedColumnDef> columns = session_->CurrentSessionComputedColumns();
@@ -574,11 +679,13 @@ void DatabaseEditorMainWindow::UpdateComputedColumnsPanel()
         auto* root = new QTreeWidgetItem(
             computedColumnsTree_,
             {ToQString(column.displayName.empty() ? column.name : column.displayName), definition});
+        root->setData(0, Qt::UserRole, ToQString(column.name));
         root->addChild(new QTreeWidgetItem({QStringLiteral("Name"), ToQString(column.name)}));
         root->addChild(new QTreeWidgetItem({QStringLiteral("Value Kind"), ValueKindToText(column.valueKind)}));
         root->addChild(new QTreeWidgetItem({QStringLiteral("Cacheable"), column.cacheable ? QStringLiteral("true") : QStringLiteral("false")}));
     }
     computedColumnsTree_->expandAll();
+    SelectComputedColumnByName(selectedName);
 }
 
 void DatabaseEditorMainWindow::UpdateGridSummary()
@@ -606,6 +713,39 @@ QModelIndex DatabaseEditorMainWindow::CurrentSourceIndex() const
 {
     const QModelIndex proxyIndex = dataTable_->currentIndex();
     return proxyIndex.isValid() ? filterModel_->mapToSource(proxyIndex) : QModelIndex{};
+}
+
+QString DatabaseEditorMainWindow::CurrentComputedColumnName() const
+{
+    QTreeWidgetItem* item = computedColumnsTree_->currentItem();
+    if (item == nullptr)
+    {
+        return {};
+    }
+
+    while (item->parent() != nullptr)
+    {
+        item = item->parent();
+    }
+    return item->data(0, Qt::UserRole).toString();
+}
+
+void DatabaseEditorMainWindow::SelectComputedColumnByName(const QString& name)
+{
+    if (name.isEmpty())
+    {
+        return;
+    }
+
+    for (int index = 0; index < computedColumnsTree_->topLevelItemCount(); ++index)
+    {
+        QTreeWidgetItem* item = computedColumnsTree_->topLevelItem(index);
+        if (item != nullptr && item->data(0, Qt::UserRole).toString().compare(name, Qt::CaseInsensitive) == 0)
+        {
+            computedColumnsTree_->setCurrentItem(item);
+            return;
+        }
+    }
 }
 
 void DatabaseEditorMainWindow::ShowError(const QString& title, const QString& message)

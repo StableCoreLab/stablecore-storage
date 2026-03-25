@@ -656,20 +656,195 @@ bool DatabaseSession::AddSessionComputedColumn(const sc::ComputedColumnDef& colu
         return false;
     }
 
-    sc::ErrorCode rc = currentTableView_->AddComputedColumn(column);
-    if (sc::Failed(rc))
+    QVector<sc::ComputedColumnDef>* columns = CurrentSessionComputedColumnsStorage();
+    if (columns == nullptr)
     {
         if (outError != nullptr)
         {
-            *outError = ErrorToString(rc);
+            *outError = QStringLiteral("No table is selected.");
         }
         return false;
     }
 
-    sessionComputedColumnsByTable_[currentTableName_].push_back(column);
+    const QString requestedName = ToQString(column.name).trimmed();
+    if (requestedName.isEmpty())
+    {
+        if (outError != nullptr)
+        {
+            *outError = QStringLiteral("Computed column name is required.");
+        }
+        return false;
+    }
+
+    for (const sc::ComputedColumnDef& existing : *columns)
+    {
+        if (ToQString(existing.name).compare(requestedName, Qt::CaseInsensitive) == 0)
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("A computed column with the same name already exists.");
+            }
+            return false;
+        }
+    }
+
+    columns->push_back(column);
+    if (!RebuildCurrentTableView(outError))
+    {
+        columns->removeLast();
+        return false;
+    }
+
     emit CurrentTableChanged();
     emit RecordsChanged();
     return true;
+}
+
+bool DatabaseSession::UpdateSessionComputedColumn(
+    const QString& originalName,
+    const sc::ComputedColumnDef& column,
+    QString* outError)
+{
+    QVector<sc::ComputedColumnDef>* columns = CurrentSessionComputedColumnsStorage();
+    if (columns == nullptr)
+    {
+        if (outError != nullptr)
+        {
+            *outError = QStringLiteral("No table is selected.");
+        }
+        return false;
+    }
+
+    const QString originalKey = originalName.trimmed();
+    const QString newName = ToQString(column.name).trimmed();
+    if (originalKey.isEmpty() || newName.isEmpty())
+    {
+        if (outError != nullptr)
+        {
+            *outError = QStringLiteral("Computed column name is required.");
+        }
+        return false;
+    }
+
+    int targetIndex = -1;
+    for (int index = 0; index < columns->size(); ++index)
+    {
+        const QString existingName = ToQString(columns->at(index).name);
+        if (existingName.compare(originalKey, Qt::CaseInsensitive) == 0)
+        {
+            targetIndex = index;
+        }
+        else if (existingName.compare(newName, Qt::CaseInsensitive) == 0)
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("A computed column with the same name already exists.");
+            }
+            return false;
+        }
+    }
+
+    if (targetIndex < 0)
+    {
+        if (outError != nullptr)
+        {
+            *outError = QStringLiteral("The selected computed column no longer exists.");
+        }
+        return false;
+    }
+
+    const sc::ComputedColumnDef previous = columns->at(targetIndex);
+    (*columns)[targetIndex] = column;
+    if (!RebuildCurrentTableView(outError))
+    {
+        (*columns)[targetIndex] = previous;
+        return false;
+    }
+
+    emit CurrentTableChanged();
+    emit RecordsChanged();
+    return true;
+}
+
+bool DatabaseSession::RemoveSessionComputedColumn(const QString& name, QString* outError)
+{
+    QVector<sc::ComputedColumnDef>* columns = CurrentSessionComputedColumnsStorage();
+    if (columns == nullptr)
+    {
+        if (outError != nullptr)
+        {
+            *outError = QStringLiteral("No table is selected.");
+        }
+        return false;
+    }
+
+    const QString key = name.trimmed();
+    for (int index = 0; index < columns->size(); ++index)
+    {
+        if (ToQString(columns->at(index).name).compare(key, Qt::CaseInsensitive) != 0)
+        {
+            continue;
+        }
+
+        const sc::ComputedColumnDef removed = columns->at(index);
+        columns->removeAt(index);
+        if (!RebuildCurrentTableView(outError))
+        {
+            columns->insert(index, removed);
+            return false;
+        }
+
+        emit CurrentTableChanged();
+        emit RecordsChanged();
+        return true;
+    }
+
+    if (outError != nullptr)
+    {
+        *outError = QStringLiteral("The selected computed column no longer exists.");
+    }
+    return false;
+}
+
+bool DatabaseSession::GetSessionComputedColumn(
+    const QString& name,
+    sc::ComputedColumnDef* outColumn,
+    QString* outError) const
+{
+    if (outColumn == nullptr)
+    {
+        if (outError != nullptr)
+        {
+            *outError = QStringLiteral("Output column is null.");
+        }
+        return false;
+    }
+
+    const QVector<sc::ComputedColumnDef>* columns = CurrentSessionComputedColumnsStorage();
+    if (columns == nullptr)
+    {
+        if (outError != nullptr)
+        {
+            *outError = QStringLiteral("No table is selected.");
+        }
+        return false;
+    }
+
+    const QString key = name.trimmed();
+    for (const sc::ComputedColumnDef& column : *columns)
+    {
+        if (ToQString(column.name).compare(key, Qt::CaseInsensitive) == 0)
+        {
+            *outColumn = column;
+            return true;
+        }
+    }
+
+    if (outError != nullptr)
+    {
+        *outError = QStringLiteral("The selected computed column no longer exists.");
+    }
+    return false;
 }
 
 QVector<sc::ComputedColumnDef> DatabaseSession::CurrentSessionComputedColumns() const
@@ -814,6 +989,22 @@ bool DatabaseSession::BuildRecordSnapshot(
     }
 
     return true;
+}
+
+QVector<sc::ComputedColumnDef>* DatabaseSession::CurrentSessionComputedColumnsStorage()
+{
+    return currentTableName_.isEmpty() ? nullptr : &sessionComputedColumnsByTable_[currentTableName_];
+}
+
+const QVector<sc::ComputedColumnDef>* DatabaseSession::CurrentSessionComputedColumnsStorage() const
+{
+    if (currentTableName_.isEmpty())
+    {
+        return nullptr;
+    }
+
+    const auto it = sessionComputedColumnsByTable_.find(currentTableName_);
+    return it == sessionComputedColumnsByTable_.end() ? nullptr : &it.value();
 }
 
 bool DatabaseSession::LoadTableNames(QString* outError)

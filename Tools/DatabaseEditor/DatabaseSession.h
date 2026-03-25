@@ -59,6 +59,15 @@ public:
         QVector<RelationCandidate>* outCandidates,
         QString* outError) const;
     bool AddSessionComputedColumn(const stablecore::storage::ComputedColumnDef& column, QString* outError);
+    bool UpdateSessionComputedColumn(
+        const QString& originalName,
+        const stablecore::storage::ComputedColumnDef& column,
+        QString* outError);
+    bool RemoveSessionComputedColumn(const QString& name, QString* outError);
+    bool GetSessionComputedColumn(
+        const QString& name,
+        stablecore::storage::ComputedColumnDef* outColumn,
+        QString* outError) const;
     QVector<stablecore::storage::ComputedColumnDef> CurrentSessionComputedColumns() const;
 
     QString BuildHealthSummary() const;
@@ -75,6 +84,8 @@ signals:
     void RecordsChanged();
 
 private:
+    QVector<stablecore::storage::ComputedColumnDef>* CurrentSessionComputedColumnsStorage();
+    const QVector<stablecore::storage::ComputedColumnDef>* CurrentSessionComputedColumnsStorage() const;
     bool LoadTableNames(QString* outError);
     bool RebuildCurrentTableView(QString* outError);
     bool BeginAndCommitSingleAction(

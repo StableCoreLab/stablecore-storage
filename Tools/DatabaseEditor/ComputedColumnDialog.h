@@ -17,6 +17,10 @@ class ComputedColumnDialog final : public QDialog
 
 public:
     explicit ComputedColumnDialog(const QString& currentTableName, QWidget* parent = nullptr);
+    ComputedColumnDialog(
+        const QString& currentTableName,
+        const stablecore::storage::ComputedColumnDef& initialValue,
+        QWidget* parent = nullptr);
 
     bool BuildDefinition(stablecore::storage::ComputedColumnDef* outColumn, QString* outError) const;
 
@@ -24,6 +28,8 @@ private slots:
     void UpdateModeVisibility();
 
 private:
+    void BuildForm();
+    void ApplyInitialValue(const stablecore::storage::ComputedColumnDef& initialValue);
     stablecore::storage::ValueKind CurrentValueKind() const;
     stablecore::storage::ComputedFieldKind CurrentComputedKind() const;
     stablecore::storage::AggregateKind CurrentAggregateKind() const;

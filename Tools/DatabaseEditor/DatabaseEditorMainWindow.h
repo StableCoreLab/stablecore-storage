@@ -34,6 +34,8 @@ private slots:
     void CreateTable();
     void AddColumn();
     void AddSessionComputedColumn();
+    void EditSelectedComputedColumn();
+    void DeleteSelectedComputedColumn();
     void AddRecord();
     void DeleteSelectedRecord();
     void EditSelectedRelation();
@@ -51,6 +53,8 @@ private slots:
 
 private:
     QModelIndex CurrentSourceIndex() const;
+    QString CurrentComputedColumnName() const;
+    void SelectComputedColumnByName(const QString& name);
     void BuildUi();
     void BuildMenus();
     void ShowError(const QString& title, const QString& message);
