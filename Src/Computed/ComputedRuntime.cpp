@@ -485,13 +485,6 @@ struct CacheKeyHash
     }
 };
 
-bool operator==(const ComputedCacheKey& lhs, const ComputedCacheKey& rhs) noexcept
-{
-    return lhs.recordId == rhs.recordId
-        && lhs.columnName == rhs.columnName
-        && lhs.version == rhs.version;
-}
-
 bool DependencyMatchesChange(const FieldDependency& dependency, const DataChange& change) noexcept
 {
     return (dependency.tableName.empty() || dependency.tableName == change.tableName)

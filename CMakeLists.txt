@@ -1,10 +1,23 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(stablecore_storage LANGUAGES CXX)
+project(stablecore_storage LANGUAGES C CXX)
 
 include(CTest)
 include(FetchContent)
-find_package(SQLite3 REQUIRED)
+
+add_library(sqlite3 STATIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/../ThirdParty/sqlite/sqlite3.c
+)
+
+target_include_directories(sqlite3
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/../ThirdParty/sqlite
+)
+
+target_compile_definitions(sqlite3
+    PRIVATE
+        SQLITE_THREADSAFE=1
+)
 
 add_library(stablecore_storage
     Src/Factory.cpp
@@ -22,14 +35,19 @@ target_include_directories(stablecore_storage
 )
 
 target_compile_features(stablecore_storage PUBLIC cxx_std_20)
-target_link_libraries(stablecore_storage PRIVATE SQLite::SQLite3)
+
+target_link_libraries(stablecore_storage
+    PRIVATE
+        sqlite3
+)
 
 add_executable(stablecore_storage_memory_example
     Examples/MemoryExample.cpp
 )
 
 target_link_libraries(stablecore_storage_memory_example
-    PRIVATE stablecore_storage
+    PRIVATE
+        stablecore_storage
 )
 
 add_executable(stablecore_storage_product_example
@@ -37,10 +55,11 @@ add_executable(stablecore_storage_product_example
 )
 
 target_link_libraries(stablecore_storage_product_example
-    PRIVATE stablecore_storage
+    PRIVATE
+        stablecore_storage
 )
 
-option(STABLECORE_STORAGE_BUILD_TESTS "Build tests" OFF)
+option(STABLECORE_STORAGE_BUILD_TESTS "Build tests" ON)
 
 if (STABLECORE_STORAGE_BUILD_TESTS)
     enable_testing()

@@ -45,6 +45,13 @@ struct ComputedCacheKey
     RecordId recordId{0};
     std::wstring columnName;
     VersionId version{0};
+
+    bool operator==(const ComputedCacheKey& other) const noexcept
+    {
+        return recordId == other.recordId
+            && columnName == other.columnName
+            && version == other.version;
+    }
 };
 
 struct ComputedCacheEntry

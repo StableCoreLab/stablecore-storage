@@ -2008,6 +2008,8 @@ void SqliteDatabase::DeleteJournalTransaction(std::int64_t txId)
     stmt.Step();
 }
 
+}  // namespace
+
 ErrorCode CreateSqliteDatabase(const wchar_t* path, DbPtr& outDatabase)
 {
     if (path == nullptr)
@@ -2027,5 +2029,4 @@ ErrorCode CreateSqliteDatabase(const wchar_t* path, DbPtr& outDatabase)
     }
 }
 
-}  // namespace
 }  // namespace stablecore::storage
