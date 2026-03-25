@@ -5,6 +5,7 @@
 Current implementation includes:
 
 - Public V1 headers under `Include/StableCore/Storage`
+- Shared library target `stablecore_storage` (`.dll` on Windows)
 - In-memory database baseline with transaction, schema, undo/redo, changeset, and relation field support
 - SQLite persistence backend under `Src/Sqlite`
 - Computed-column metadata baseline in public types for upper-layer table tools
@@ -15,6 +16,7 @@ Current implementation includes:
 - M1 example under `Examples/MemoryExample.cpp`
 - Product integration example under `Examples/ProductIntegrationExample.cpp`
 - M1/M2/M3 baseline tests under `Tests/`
+- Optional Qt database editor under `Tools/DatabaseEditor`
 
 Quick in-memory usage:
 
@@ -50,6 +52,41 @@ db->Commit(edit.Get());
 ```
 
 Computed columns are modeled separately from storage schema facts. Use `ColumnDef` for persisted fact/relation columns and `ComputedColumnDef` for read-only derived columns owned by upper-layer table or calculation modules.
+
+## Build Notes
+
+Default Visual Studio generation script:
+
+```bat
+stablecore-storage\GenerateVs2022.bat
+```
+
+Current defaults:
+
+- `stablecore_storage` is generated as a shared library
+- database editor generation is enabled by default
+
+Database editor requires `Qt 6.8 Widgets`. Before running the script, set one of:
+
+```bat
+set QT6_8_x64=C:\Qt\6.8.0\msvc2022_64
+```
+
+or:
+
+```bat
+set CMAKE_PREFIX_PATH=C:\Qt\6.8.0\msvc2022_64
+```
+
+or:
+
+```bat
+set Qt6_DIR=C:\Qt\6.8.0\msvc2022_64\lib\cmake\Qt6
+```
+
+If Qt is not configured, CMake will fail while generating the editor target.
+
+Top-level `CMakeLists.txt` and `GenerateVs2022.bat` both support reading `QT6_8_x64` directly and will derive `Qt6_DIR` from it automatically.
 
 For higher-level integration:
 

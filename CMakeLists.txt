@@ -7,9 +7,40 @@ include(FetchContent)
 
 option(STABLECORE_STORAGE_BUILD_DB_EDITOR "Build the Qt database editor tool" OFF)
 
+set(STABLECORE_STORAGE_BIN_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/Bin")
+
+function(stablecore_configure_output_dirs target_name)
+    if (MSVC)
+        set_target_properties(${target_name} PROPERTIES
+            RUNTIME_OUTPUT_DIRECTORY "${STABLECORE_STORAGE_BIN_ROOT}/$<CONFIG>/$<PLATFORM_ID>"
+            LIBRARY_OUTPUT_DIRECTORY "${STABLECORE_STORAGE_BIN_ROOT}/$<CONFIG>/$<PLATFORM_ID>"
+            ARCHIVE_OUTPUT_DIRECTORY "${STABLECORE_STORAGE_BIN_ROOT}/$<CONFIG>/$<PLATFORM_ID>"
+            PDB_OUTPUT_DIRECTORY "${STABLECORE_STORAGE_BIN_ROOT}/$<CONFIG>/$<PLATFORM_ID>"
+            COMPILE_PDB_OUTPUT_DIRECTORY "${STABLECORE_STORAGE_BIN_ROOT}/$<CONFIG>/$<PLATFORM_ID>"
+            PDB_NAME "${target_name}"
+            COMPILE_PDB_NAME "${target_name}"
+        )
+    else()
+        set_target_properties(${target_name} PROPERTIES
+            RUNTIME_OUTPUT_DIRECTORY "${STABLECORE_STORAGE_BIN_ROOT}/$<CONFIG>/$<PLATFORM_ID>"
+            LIBRARY_OUTPUT_DIRECTORY "${STABLECORE_STORAGE_BIN_ROOT}/$<CONFIG>/$<PLATFORM_ID>"
+            ARCHIVE_OUTPUT_DIRECTORY "${STABLECORE_STORAGE_BIN_ROOT}/$<CONFIG>/$<PLATFORM_ID>"
+        )
+    endif()
+endfunction()
+
+if (NOT DEFINED CMAKE_PREFIX_PATH AND DEFINED ENV{QT6_8_x64} AND NOT "$ENV{QT6_8_x64}" STREQUAL "")
+    set(CMAKE_PREFIX_PATH "$ENV{QT6_8_x64}")
+endif()
+
+if (NOT DEFINED Qt6_DIR AND DEFINED ENV{QT6_8_x64} AND NOT "$ENV{QT6_8_x64}" STREQUAL "")
+    set(Qt6_DIR "$ENV{QT6_8_x64}/lib/cmake/Qt6")
+endif()
+
 add_library(sqlite3 STATIC
     ${CMAKE_CURRENT_SOURCE_DIR}/../ThirdParty/sqlite/sqlite3.c
 )
+stablecore_configure_output_dirs(sqlite3)
 
 target_include_directories(sqlite3
     PUBLIC
@@ -21,7 +52,7 @@ target_compile_definitions(sqlite3
         SQLITE_THREADSAFE=1
 )
 
-add_library(stablecore_storage
+add_library(stablecore_storage SHARED
     Src/Factory.cpp
     Src/Batch/BatchOperations.cpp
     Src/Computed/ComputedRuntime.cpp
@@ -31,6 +62,7 @@ add_library(stablecore_storage
     Src/Memory/MemoryDatabase.cpp
     Src/Sqlite/SqliteAdapter.cpp
 )
+stablecore_configure_output_dirs(stablecore_storage)
 
 target_include_directories(stablecore_storage
     PUBLIC
@@ -38,6 +70,10 @@ target_include_directories(stablecore_storage
 )
 
 target_compile_features(stablecore_storage PUBLIC cxx_std_20)
+
+set_target_properties(stablecore_storage PROPERTIES
+    WINDOWS_EXPORT_ALL_SYMBOLS ON
+)
 
 target_link_libraries(stablecore_storage
     PRIVATE
@@ -47,6 +83,7 @@ target_link_libraries(stablecore_storage
 add_executable(stablecore_storage_memory_example
     Examples/MemoryExample.cpp
 )
+stablecore_configure_output_dirs(stablecore_storage_memory_example)
 
 target_link_libraries(stablecore_storage_memory_example
     PRIVATE
@@ -56,6 +93,7 @@ target_link_libraries(stablecore_storage_memory_example
 add_executable(stablecore_storage_product_example
     Examples/ProductIntegrationExample.cpp
 )
+stablecore_configure_output_dirs(stablecore_storage_product_example)
 
 target_link_libraries(stablecore_storage_product_example
     PRIVATE
@@ -97,6 +135,7 @@ if (STABLECORE_STORAGE_BUILD_TESTS)
         Tests/PerformanceSmokeTests.cpp
         Tests/TableViewTests.cpp
     )
+    stablecore_configure_output_dirs(stablecore_storage_tests)
 
     target_link_libraries(stablecore_storage_tests
         PRIVATE

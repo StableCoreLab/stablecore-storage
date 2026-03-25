@@ -10,7 +10,8 @@ if not exist "%BUILD_DIR%" (
     mkdir "%BUILD_DIR%"
 )
 
-cmake -S "%SCRIPT_DIR%" -B "%BUILD_DIR%" -G "Visual Studio 17 2022" -A x64
+cmake -S "%SCRIPT_DIR%" -B "%BUILD_DIR%" -G "Visual Studio 17 2022" -A x64 -DSTABLECORE_STORAGE_BUILD_DB_EDITOR=ON
+
 if errorlevel 1 (
     echo.
     echo Failed to generate Visual Studio 2022 solution.
@@ -22,3 +23,4 @@ echo Solution generated successfully:
 echo   %BUILD_DIR%\stablecore_storage.sln
 
 endlocal
+pause

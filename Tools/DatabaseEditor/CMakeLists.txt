@@ -15,6 +15,7 @@ add_executable(stablecore_storage_db_editor
     RelationPickerDialog.h
     main.cpp
 )
+stablecore_configure_output_dirs(stablecore_storage_db_editor)
 
 target_link_libraries(stablecore_storage_db_editor
     PRIVATE
