@@ -1,0 +1,217 @@
+#include "RecordTableModel.h"
+
+namespace sc = stablecore::storage;
+
+namespace stablecore::storage::editor
+{
+namespace
+{
+
+QString ToQString(const std::wstring& text)
+{
+    return QString::fromStdWString(text);
+}
+
+QVariant ValueToVariant(const sc::Value& value)
+{
+    switch (value.GetKind())
+    {
+    case sc::ValueKind::Null:
+        return QVariant{};
+    case sc::ValueKind::Int64:
+    {
+        std::int64_t v = 0;
+        value.AsInt64(&v);
+        return QVariant::fromValue<qlonglong>(v);
+    }
+    case sc::ValueKind::Double:
+    {
+        double v = 0.0;
+        value.AsDouble(&v);
+        return v;
+    }
+    case sc::ValueKind::Bool:
+    {
+        bool v = false;
+        value.AsBool(&v);
+        return v;
+    }
+    case sc::ValueKind::String:
+    {
+        std::wstring v;
+        value.AsStringCopy(&v);
+        return ToQString(v);
+    }
+    case sc::ValueKind::RecordId:
+    {
+        sc::RecordId v = 0;
+        value.AsRecordId(&v);
+        return QVariant::fromValue<qlonglong>(v);
+    }
+    case sc::ValueKind::Enum:
+    {
+        std::wstring v;
+        value.AsEnumCopy(&v);
+        return ToQString(v);
+    }
+    default:
+        return QStringLiteral("<unsupported>");
+    }
+}
+
+}  // namespace
+
+RecordTableModel::RecordTableModel(DatabaseSession* session, QObject* parent)
+    : QAbstractTableModel(parent)
+    , session_(session)
+{
+    connect(session_, &DatabaseSession::CurrentTableChanged, this, &RecordTableModel::Refresh);
+    connect(session_, &DatabaseSession::RecordsChanged, this, &RecordTableModel::Refresh);
+}
+
+int RecordTableModel::rowCount(const QModelIndex& parent) const
+{
+    return parent.isValid() ? 0 : rows_.size();
+}
+
+int RecordTableModel::columnCount(const QModelIndex& parent) const
+{
+    return parent.isValid() ? 0 : columns_.size();
+}
+
+QVariant RecordTableModel::data(const QModelIndex& index, int role) const
+{
+    if (!index.isValid() || index.row() < 0 || index.row() >= rows_.size() || index.column() < 0 || index.column() >= columns_.size())
+    {
+        return QVariant{};
+    }
+
+    if (role != Qt::DisplayRole && role != Qt::EditRole)
+    {
+        return QVariant{};
+    }
+
+    sc::IComputedTableView* view = session_->CurrentTableView();
+    if (view == nullptr)
+    {
+        return QVariant{};
+    }
+
+    sc::Value value;
+    const sc::ErrorCode rc = view->GetCellValue(rows_[index.row()].recordId, columns_[index.column()].name.c_str(), &value);
+    if (rc == sc::SC_E_VALUE_IS_NULL)
+    {
+        return QVariant{};
+    }
+    if (sc::Failed(rc))
+    {
+        return role == Qt::DisplayRole ? QStringLiteral("<error>") : QVariant{};
+    }
+    return ValueToVariant(value);
+}
+
+QVariant RecordTableModel::headerData(int section, Qt::Orientation orientation, int role) const
+{
+    if (role != Qt::DisplayRole)
+    {
+        return QVariant{};
+    }
+
+    if (orientation == Qt::Vertical)
+    {
+        return section + 1;
+    }
+
+    if (section < 0 || section >= columns_.size())
+    {
+        return QVariant{};
+    }
+
+    return ToQString(columns_[section].displayName.empty() ? columns_[section].name : columns_[section].displayName);
+}
+
+Qt::ItemFlags RecordTableModel::flags(const QModelIndex& index) const
+{
+    if (!index.isValid())
+    {
+        return Qt::NoItemFlags;
+    }
+
+    Qt::ItemFlags result = Qt::ItemIsSelectable | Qt::ItemIsEnabled;
+    if (columns_[index.column()].layer == sc::TableColumnLayer::Fact && columns_[index.column()].editable)
+    {
+        result |= Qt::ItemIsEditable;
+    }
+    return result;
+}
+
+bool RecordTableModel::setData(const QModelIndex& index, const QVariant& value, int role)
+{
+    if (role != Qt::EditRole || !index.isValid())
+    {
+        return false;
+    }
+
+    QString error;
+    const bool ok = session_->SetCellValue(
+        rows_[index.row()].recordId,
+        ToQString(columns_[index.column()].name),
+        value,
+        &error);
+    if (ok)
+    {
+        emit dataChanged(index, index, {Qt::DisplayRole, Qt::EditRole});
+    }
+    return ok;
+}
+
+sc::RecordId RecordTableModel::RecordIdAt(int row) const
+{
+    if (row < 0 || row >= rows_.size())
+    {
+        return 0;
+    }
+    return rows_[row].recordId;
+}
+
+void RecordTableModel::Refresh()
+{
+    beginResetModel();
+    columns_.clear();
+    rows_.clear();
+
+    sc::IComputedTableView* view = session_->CurrentTableView();
+    if (view != nullptr)
+    {
+        std::int32_t columnCount = 0;
+        if (view->GetColumnCount(&columnCount) == sc::SC_OK)
+        {
+            for (std::int32_t index = 0; index < columnCount; ++index)
+            {
+                sc::TableViewColumnDef column;
+                if (view->GetColumn(index, &column) == sc::SC_OK)
+                {
+                    columns_.push_back(column);
+                }
+            }
+        }
+
+        sc::RecordCursorPtr cursor;
+        if (view->EnumerateRecords(cursor) == sc::SC_OK)
+        {
+            bool hasRow = false;
+            while (cursor->MoveNext(&hasRow) == sc::SC_OK && hasRow)
+            {
+                sc::RecordPtr record;
+                if (cursor->GetCurrent(record) == sc::SC_OK)
+                {
+                    rows_.push_back(RowData{record->GetId()});
+                }
+            }
+        }
+    }
+
+    endResetModel();
+}
+
+}  // namespace stablecore::storage::editor

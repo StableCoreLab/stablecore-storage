@@ -5,6 +5,8 @@ project(stablecore_storage LANGUAGES C CXX)
 include(CTest)
 include(FetchContent)
 
+option(STABLECORE_STORAGE_BUILD_DB_EDITOR "Build the Qt database editor tool" OFF)
+
 add_library(sqlite3 STATIC
     ${CMAKE_CURRENT_SOURCE_DIR}/../ThirdParty/sqlite/sqlite3.c
 )
@@ -59,6 +61,34 @@ target_link_libraries(stablecore_storage_product_example
     PRIVATE
         stablecore_storage
 )
+
+if (STABLECORE_STORAGE_BUILD_DB_EDITOR)
+    set(CMAKE_AUTOMOC ON)
+    set(CMAKE_AUTOUIC OFF)
+    set(CMAKE_AUTORCC OFF)
+
+    find_package(Qt6 6.8 REQUIRED COMPONENTS Widgets)
+
+    add_executable(stablecore_storage_db_editor
+        Tools/DatabaseEditor/AddColumnDialog.cpp
+        Tools/DatabaseEditor/AddColumnDialog.h
+        Tools/DatabaseEditor/DatabaseEditorMainWindow.cpp
+        Tools/DatabaseEditor/DatabaseEditorMainWindow.h
+        Tools/DatabaseEditor/DatabaseSession.cpp
+        Tools/DatabaseEditor/DatabaseSession.h
+        Tools/DatabaseEditor/RecordTableModel.cpp
+        Tools/DatabaseEditor/RecordTableModel.h
+        Tools/DatabaseEditor/main.cpp
+    )
+
+    target_link_libraries(stablecore_storage_db_editor
+        PRIVATE
+            stablecore_storage
+            Qt6::Widgets
+    )
+
+    target_compile_features(stablecore_storage_db_editor PRIVATE cxx_std_20)
+endif()
 
 option(STABLECORE_STORAGE_BUILD_TESTS "Build tests" ON)
 

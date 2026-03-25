@@ -666,6 +666,8 @@ public:
     ErrorCode Rollback(IEditSession* edit) override;
     ErrorCode Undo() override;
     ErrorCode Redo() override;
+    ErrorCode GetTableCount(std::int32_t* outCount) override;
+    ErrorCode GetTableName(std::int32_t index, std::wstring* outName) override;
     ErrorCode GetTable(const wchar_t* name, TablePtr& outTable) override;
     ErrorCode CreateTable(const wchar_t* name, TablePtr& outTable) override;
     ErrorCode AddObserver(IDatabaseObserver* observer) override;
@@ -1575,6 +1577,34 @@ ErrorCode SqliteDatabase::GetTable(const wchar_t* name, TablePtr& outTable)
         return SC_E_TABLE_NOT_FOUND;
     }
     outTable = it->second;
+    return SC_OK;
+}
+
+ErrorCode SqliteDatabase::GetTableCount(std::int32_t* outCount)
+{
+    if (outCount == nullptr)
+    {
+        return SC_E_POINTER;
+    }
+
+    *outCount = static_cast<std::int32_t>(tables_.size());
+    return SC_OK;
+}
+
+ErrorCode SqliteDatabase::GetTableName(std::int32_t index, std::wstring* outName)
+{
+    if (outName == nullptr)
+    {
+        return SC_E_POINTER;
+    }
+    if (index < 0 || static_cast<std::size_t>(index) >= tables_.size())
+    {
+        return SC_E_INVALIDARG;
+    }
+
+    auto it = tables_.begin();
+    std::advance(it, index);
+    *outName = it->first;
     return SC_OK;
 }
 

@@ -118,6 +118,8 @@ public:
     virtual ErrorCode Undo() = 0;
     virtual ErrorCode Redo() = 0;
 
+    virtual ErrorCode GetTableCount(std::int32_t* outCount) = 0;
+    virtual ErrorCode GetTableName(std::int32_t index, std::wstring* outName) = 0;
     virtual ErrorCode GetTable(const wchar_t* name, TablePtr& outTable) = 0;
     virtual ErrorCode CreateTable(const wchar_t* name, TablePtr& outTable) = 0;
 
