@@ -6,9 +6,9 @@ Current implementation includes:
 
 - Public V1 headers under `Include/StableCore/Storage`
 - In-memory database baseline with transaction, schema, undo/redo, changeset, and relation field support
-- SQLite factory placeholder under `Src/Sqlite`
+- SQLite persistence backend under `Src/Sqlite`
 - M1 example under `Examples/MemoryExample.cpp`
-- M1 tests under `Tests/`
+- M1/M2 tests under `Tests/`
 
 Quick in-memory usage:
 

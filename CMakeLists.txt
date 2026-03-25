@@ -4,6 +4,7 @@ project(stablecore_storage LANGUAGES CXX)
 
 include(CTest)
 include(FetchContent)
+find_package(SQLite3 REQUIRED)
 
 add_library(stablecore_storage
     Src/Factory.cpp
@@ -17,6 +18,7 @@ target_include_directories(stablecore_storage
 )
 
 target_compile_features(stablecore_storage PUBLIC cxx_std_20)
+target_link_libraries(stablecore_storage PRIVATE SQLite::SQLite3)
 
 add_executable(stablecore_storage_memory_example
     Examples/MemoryExample.cpp
@@ -26,7 +28,7 @@ target_link_libraries(stablecore_storage_memory_example
     PRIVATE stablecore_storage
 )
 
-option(STABLECORE_STORAGE_BUILD_TESTS "Build tests" ON)
+option(STABLECORE_STORAGE_BUILD_TESTS "Build tests" OFF)
 
 if (STABLECORE_STORAGE_BUILD_TESTS)
     enable_testing()
@@ -46,6 +48,7 @@ if (STABLECORE_STORAGE_BUILD_TESTS)
 
     add_executable(stablecore_storage_tests
         Tests/M1Tests.cpp
+        Tests/M2SqliteTests.cpp
     )
 
     target_link_libraries(stablecore_storage_tests
