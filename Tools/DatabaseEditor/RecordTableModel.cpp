@@ -86,7 +86,7 @@ QVariant RecordTableModel::data(const QModelIndex& index, int role) const
         return QVariant{};
     }
 
-    if (role != Qt::DisplayRole && role != Qt::EditRole)
+    if (role != Qt::DisplayRole && role != Qt::EditRole && role != Qt::ToolTipRole)
     {
         return QVariant{};
     }
@@ -105,7 +105,7 @@ QVariant RecordTableModel::data(const QModelIndex& index, int role) const
     }
     if (sc::Failed(rc))
     {
-        return role == Qt::DisplayRole ? QStringLiteral("<error>") : QVariant{};
+        return role == Qt::DisplayRole || role == Qt::ToolTipRole ? QStringLiteral("<error>") : QVariant{};
     }
     return ValueToVariant(value);
 }
@@ -172,6 +172,20 @@ sc::RecordId RecordTableModel::RecordIdAt(int row) const
         return 0;
     }
     return rows_[row].recordId;
+}
+
+sc::TableViewColumnDef RecordTableModel::ColumnAt(int column) const
+{
+    if (column < 0 || column >= columns_.size())
+    {
+        return {};
+    }
+    return columns_[column];
+}
+
+int RecordTableModel::RowCountValue() const noexcept
+{
+    return rows_.size();
 }
 
 void RecordTableModel::Refresh()

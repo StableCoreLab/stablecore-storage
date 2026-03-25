@@ -1,5 +1,7 @@
 #include "DatabaseSession.h"
 
+#include <algorithm>
+
 #include <QStringList>
 
 namespace sc = stablecore::storage;
@@ -12,11 +14,6 @@ namespace
 QString ToQString(const std::wstring& text)
 {
     return QString::fromStdWString(text);
-}
-
-std::wstring ToWString(const QString& text)
-{
-    return text.toStdWString();
 }
 
 QString ValueToDisplayString(const sc::Value& value)
@@ -66,6 +63,38 @@ QString ValueToDisplayString(const sc::Value& value)
     }
 }
 
+QString PickRecordLabel(
+    const QVector<QPair<QString, QString>>& previewFields,
+    sc::RecordId recordId)
+{
+    static const QStringList preferredNames = {
+        QStringLiteral("Name"),
+        QStringLiteral("Title"),
+        QStringLiteral("Code")
+    };
+
+    for (const QString& preferred : preferredNames)
+    {
+        for (const auto& field : previewFields)
+        {
+            if (field.first.compare(preferred, Qt::CaseInsensitive) == 0 && !field.second.trimmed().isEmpty())
+            {
+                return field.second;
+            }
+        }
+    }
+
+    for (const auto& field : previewFields)
+    {
+        if (!field.second.trimmed().isEmpty())
+        {
+            return field.first + QStringLiteral(": ") + field.second;
+        }
+    }
+
+    return QStringLiteral("Record %1").arg(recordId);
+}
+
 }  // namespace
 
 DatabaseSession::DatabaseSession(QObject* parent)
@@ -93,17 +122,17 @@ QStringList DatabaseSession::TableNames() const
     return tableNames_;
 }
 
-sc::IDatabase* Database() const noexcept
+sc::IDatabase* DatabaseSession::Database() const noexcept
 {
     return db_.Get();
 }
 
-sc::ITable* CurrentTable() const noexcept
+sc::ITable* DatabaseSession::CurrentTable() const noexcept
 {
     return currentTable_.Get();
 }
 
-sc::IComputedTableView* CurrentTableView() const noexcept
+sc::IComputedTableView* DatabaseSession::CurrentTableView() const noexcept
 {
     return currentTableView_.Get();
 }
@@ -113,6 +142,7 @@ bool DatabaseSession::CreateDatabase(const QString& filePath, QString* outError)
     db_.Reset();
     currentTable_.Reset();
     currentTableView_.Reset();
+    sessionComputedColumnsByTable_.clear();
 
     const sc::ErrorCode rc = sc::CreateSqliteDatabase(filePath.toStdWString().c_str(), db_);
     if (sc::Failed(rc))
@@ -212,20 +242,13 @@ bool DatabaseSession::SelectTable(const QString& tableName, QString* outError)
         return false;
     }
 
-    sc::ComputedTableViewPtr view;
-    rc = sc::CreateComputedTableView(db_.Get(), tableName.toStdWString().c_str(), nullptr, view);
-    if (sc::Failed(rc))
+    currentTable_ = table;
+    currentTableName_ = tableName;
+    if (!RebuildCurrentTableView(outError))
     {
-        if (outError != nullptr)
-        {
-            *outError = ErrorToString(rc);
-        }
         return false;
     }
 
-    currentTable_ = table;
-    currentTableView_ = view;
-    currentTableName_ = tableName;
     emit CurrentTableChanged();
     emit RecordsChanged();
     return true;
@@ -440,6 +463,220 @@ bool DatabaseSession::SetCellValue(
     return ok;
 }
 
+bool DatabaseSession::GetColumnDef(const QString& columnName, sc::ColumnDef* outColumn, QString* outError) const
+{
+    if (outColumn == nullptr)
+    {
+        if (outError != nullptr)
+        {
+            *outError = QStringLiteral("Output column is null.");
+        }
+        return false;
+    }
+    if (!currentTable_)
+    {
+        if (outError != nullptr)
+        {
+            *outError = QStringLiteral("No table is selected.");
+        }
+        return false;
+    }
+
+    sc::SchemaPtr schema;
+    sc::ErrorCode rc = currentTable_->GetSchema(schema);
+    if (sc::Failed(rc))
+    {
+        if (outError != nullptr)
+        {
+            *outError = ErrorToString(rc);
+        }
+        return false;
+    }
+
+    rc = schema->FindColumn(columnName.toStdWString().c_str(), outColumn);
+    if (sc::Failed(rc))
+    {
+        if (outError != nullptr)
+        {
+            *outError = ErrorToString(rc);
+        }
+        return false;
+    }
+
+    return true;
+}
+
+bool DatabaseSession::BuildRelationCandidates(
+    const QString& targetTableName,
+    QVector<RelationCandidate>* outCandidates,
+    QString* outError) const
+{
+    if (outCandidates == nullptr)
+    {
+        if (outError != nullptr)
+        {
+            *outError = QStringLiteral("Output candidates is null.");
+        }
+        return false;
+    }
+    outCandidates->clear();
+
+    if (!db_)
+    {
+        if (outError != nullptr)
+        {
+            *outError = QStringLiteral("No database is open.");
+        }
+        return false;
+    }
+
+    sc::TablePtr targetTable;
+    sc::ErrorCode rc = db_->GetTable(targetTableName.toStdWString().c_str(), targetTable);
+    if (sc::Failed(rc))
+    {
+        if (outError != nullptr)
+        {
+            *outError = ErrorToString(rc);
+        }
+        return false;
+    }
+
+    sc::SchemaPtr schema;
+    rc = targetTable->GetSchema(schema);
+    if (sc::Failed(rc))
+    {
+        if (outError != nullptr)
+        {
+            *outError = ErrorToString(rc);
+        }
+        return false;
+    }
+
+    QVector<sc::ColumnDef> columns;
+    std::int32_t columnCount = 0;
+    rc = schema->GetColumnCount(&columnCount);
+    if (sc::Failed(rc))
+    {
+        if (outError != nullptr)
+        {
+            *outError = ErrorToString(rc);
+        }
+        return false;
+    }
+
+    for (std::int32_t index = 0; index < columnCount; ++index)
+    {
+        sc::ColumnDef column;
+        rc = schema->GetColumn(index, &column);
+        if (sc::Failed(rc))
+        {
+            if (outError != nullptr)
+            {
+                *outError = ErrorToString(rc);
+            }
+            return false;
+        }
+        columns.push_back(column);
+    }
+
+    sc::RecordCursorPtr cursor;
+    rc = targetTable->EnumerateRecords(cursor);
+    if (sc::Failed(rc))
+    {
+        if (outError != nullptr)
+        {
+            *outError = ErrorToString(rc);
+        }
+        return false;
+    }
+
+    bool hasRow = false;
+    while (cursor->MoveNext(&hasRow) == sc::SC_OK && hasRow)
+    {
+        sc::RecordPtr record;
+        rc = cursor->GetCurrent(record);
+        if (sc::Failed(rc))
+        {
+            if (outError != nullptr)
+            {
+                *outError = ErrorToString(rc);
+            }
+            return false;
+        }
+
+        RelationCandidate candidate;
+        candidate.recordId = record->GetId();
+        candidate.previewFields.push_back(qMakePair(QStringLiteral("RecordId"), QString::number(candidate.recordId)));
+
+        for (const sc::ColumnDef& column : columns)
+        {
+            if (column.valueKind == sc::ValueKind::Null)
+            {
+                continue;
+            }
+
+            sc::Value value;
+            const sc::ErrorCode valueRc = record->GetValue(column.name.c_str(), &value);
+            if (valueRc == sc::SC_E_VALUE_IS_NULL)
+            {
+                continue;
+            }
+            if (sc::Failed(valueRc))
+            {
+                continue;
+            }
+
+            candidate.previewFields.push_back(qMakePair(
+                ToQString(column.displayName.empty() ? column.name : column.displayName),
+                ValueToDisplayString(value)));
+        }
+
+        candidate.label = PickRecordLabel(candidate.previewFields, candidate.recordId);
+        outCandidates->push_back(candidate);
+    }
+
+    std::sort(
+        outCandidates->begin(),
+        outCandidates->end(),
+        [](const RelationCandidate& left, const RelationCandidate& right)
+        {
+            return left.label.localeAwareCompare(right.label) < 0;
+        });
+    return true;
+}
+
+bool DatabaseSession::AddSessionComputedColumn(const sc::ComputedColumnDef& column, QString* outError)
+{
+    if (!currentTableView_)
+    {
+        if (outError != nullptr)
+        {
+            *outError = QStringLiteral("No table is selected.");
+        }
+        return false;
+    }
+
+    sc::ErrorCode rc = currentTableView_->AddComputedColumn(column);
+    if (sc::Failed(rc))
+    {
+        if (outError != nullptr)
+        {
+            *outError = ErrorToString(rc);
+        }
+        return false;
+    }
+
+    sessionComputedColumnsByTable_[currentTableName_].push_back(column);
+    emit CurrentTableChanged();
+    emit RecordsChanged();
+    return true;
+}
+
+QVector<sc::ComputedColumnDef> DatabaseSession::CurrentSessionComputedColumns() const
+{
+    return sessionComputedColumnsByTable_.value(currentTableName_);
+}
+
 QString DatabaseSession::BuildHealthSummary() const
 {
     if (!IsOpen())
@@ -608,6 +845,39 @@ bool DatabaseSession::LoadTableNames(QString* outError)
         }
         tableNames_.push_back(ToQString(name));
     }
+    return true;
+}
+
+bool DatabaseSession::RebuildCurrentTableView(QString* outError)
+{
+    currentTableView_.Reset();
+
+    sc::ComputedTableViewPtr view;
+    sc::ErrorCode rc = sc::CreateComputedTableView(db_.Get(), currentTableName_.toStdWString().c_str(), nullptr, view);
+    if (sc::Failed(rc))
+    {
+        if (outError != nullptr)
+        {
+            *outError = ErrorToString(rc);
+        }
+        return false;
+    }
+
+    const QVector<sc::ComputedColumnDef> computedColumns = sessionComputedColumnsByTable_.value(currentTableName_);
+    for (const sc::ComputedColumnDef& column : computedColumns)
+    {
+        rc = view->AddComputedColumn(column);
+        if (sc::Failed(rc))
+        {
+            if (outError != nullptr)
+            {
+                *outError = ErrorToString(rc);
+            }
+            return false;
+        }
+    }
+
+    currentTableView_ = view;
     return true;
 }
 

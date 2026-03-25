@@ -5,9 +5,12 @@
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QInputDialog>
+#include <QItemSelectionModel>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QPushButton>
+#include <QRegularExpression>
 #include <QSplitter>
 #include <QStatusBar>
 #include <QToolBar>
@@ -52,7 +55,9 @@ DatabaseEditorMainWindow::DatabaseEditorMainWindow(QWidget* parent)
     : QMainWindow(parent)
     , session_(new DatabaseSession(this))
     , recordModel_(new RecordTableModel(session_, this))
+    , filterModel_(new RecordFilterProxyModel(this))
 {
+    filterModel_->setSourceModel(recordModel_);
     BuildUi();
     BuildMenus();
 
@@ -61,6 +66,7 @@ DatabaseEditorMainWindow::DatabaseEditorMainWindow(QWidget* parent)
         tablesList_->clear();
         tablesList_->addItems(session_->TableNames());
         diagnosticsText_->setPlainText(session_->BuildHealthSummary());
+        UpdateGridSummary();
         SetStatusMessage(QStringLiteral("Database opened."));
     });
     connect(session_, &DatabaseSession::TablesChanged, this, [this]()
@@ -81,10 +87,14 @@ DatabaseEditorMainWindow::DatabaseEditorMainWindow(QWidget* parent)
     {
         UpdateSchemaInspector();
         UpdateRecordInspector();
+        UpdateComputedColumnsPanel();
         diagnosticsText_->setPlainText(session_->BuildHealthSummary());
+        dataTable_->resizeColumnsToContents();
+        UpdateGridSummary();
         SetStatusMessage(QStringLiteral("Table selected: ") + session_->CurrentTableName());
     });
-    connect(dataTable_->selectionModel(), &QItemSelectionModel::selectionChanged, this, &DatabaseEditorMainWindow::UpdateRecordInspector);
+    connect(recordModel_, &QAbstractItemModel::modelReset, this, &DatabaseEditorMainWindow::UpdateGridSummary);
+    connect(dataTable_->selectionModel(), &QItemSelectionModel::selectionChanged, this, &DatabaseEditorMainWindow::OnGridSelectionChanged);
 }
 
 void DatabaseEditorMainWindow::BuildUi()
@@ -99,11 +109,42 @@ void DatabaseEditorMainWindow::BuildUi()
     tablesList_->setMinimumWidth(220);
     connect(tablesList_, &QListWidget::itemSelectionChanged, this, &DatabaseEditorMainWindow::OnTableSelectionChanged);
 
-    dataTable_ = new QTableView(splitter);
-    dataTable_->setModel(recordModel_);
+    auto* centerWidget = new QWidget(splitter);
+    auto* centerLayout = new QVBoxLayout(centerWidget);
+    centerLayout->setContentsMargins(0, 0, 0, 0);
+
+    auto* toolsLayout = new QHBoxLayout();
+    tableSummaryLabel_ = new QLabel(QStringLiteral("No table selected"), centerWidget);
+    filterEdit_ = new QLineEdit(centerWidget);
+    filterEdit_->setPlaceholderText(QStringLiteral("Filter current table"));
+    auto* clearFilterButton = new QPushButton(QStringLiteral("Clear"), centerWidget);
+    auto* relationButton = new QPushButton(QStringLiteral("Pick Relation"), centerWidget);
+    auto* computedButton = new QPushButton(QStringLiteral("Add Computed Column"), centerWidget);
+
+    toolsLayout->addWidget(tableSummaryLabel_, 1);
+    toolsLayout->addWidget(filterEdit_, 2);
+    toolsLayout->addWidget(clearFilterButton);
+    toolsLayout->addWidget(relationButton);
+    toolsLayout->addWidget(computedButton);
+    centerLayout->addLayout(toolsLayout);
+
+    dataTable_ = new QTableView(centerWidget);
+    dataTable_->setModel(filterModel_);
     dataTable_->horizontalHeader()->setStretchLastSection(true);
+    dataTable_->horizontalHeader()->setSectionsMovable(true);
+    dataTable_->setAlternatingRowColors(true);
     dataTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
     dataTable_->setSelectionMode(QAbstractItemView::SingleSelection);
+    dataTable_->setSortingEnabled(true);
+    dataTable_->setWordWrap(false);
+    centerLayout->addWidget(dataTable_, 1);
+
+    connect(filterEdit_, &QLineEdit::textChanged, this, &DatabaseEditorMainWindow::OnFilterTextChanged);
+    connect(clearFilterButton, &QPushButton::clicked, filterEdit_, &QLineEdit::clear);
+    connect(relationButton, &QPushButton::clicked, this, &DatabaseEditorMainWindow::EditSelectedRelation);
+    connect(computedButton, &QPushButton::clicked, this, &DatabaseEditorMainWindow::AddSessionComputedColumn);
+
+    splitter->addWidget(centerWidget);
 
     auto* inspectorDock = new QDockWidget(QStringLiteral("Inspector"), this);
     auto* inspectorWidget = new QWidget(inspectorDock);
@@ -121,6 +162,12 @@ void DatabaseEditorMainWindow::BuildUi()
 
     inspectorDock->setWidget(inspectorWidget);
     addDockWidget(Qt::RightDockWidgetArea, inspectorDock);
+
+    auto* computedDock = new QDockWidget(QStringLiteral("Session Computed Columns"), this);
+    computedColumnsTree_ = new QTreeWidget(computedDock);
+    computedColumnsTree_->setHeaderLabels({QStringLiteral("Column"), QStringLiteral("Definition")});
+    computedDock->setWidget(computedColumnsTree_);
+    addDockWidget(Qt::RightDockWidgetArea, computedDock);
 
     auto* diagnosticsDock = new QDockWidget(QStringLiteral("Diagnostics"), this);
     diagnosticsText_ = new QPlainTextEdit(diagnosticsDock);
@@ -141,8 +188,10 @@ void DatabaseEditorMainWindow::BuildMenus()
     auto* tableMenu = menuBar()->addMenu(QStringLiteral("&Table"));
     tableMenu->addAction(QStringLiteral("Create Table..."), this, &DatabaseEditorMainWindow::CreateTable);
     tableMenu->addAction(QStringLiteral("Add Column..."), this, &DatabaseEditorMainWindow::AddColumn);
+    tableMenu->addAction(QStringLiteral("Add Session Computed Column..."), this, &DatabaseEditorMainWindow::AddSessionComputedColumn);
     tableMenu->addAction(QStringLiteral("Add Record"), this, &DatabaseEditorMainWindow::AddRecord);
     tableMenu->addAction(QStringLiteral("Delete Selected Record"), this, &DatabaseEditorMainWindow::DeleteSelectedRecord);
+    tableMenu->addAction(QStringLiteral("Pick Selected Relation..."), this, &DatabaseEditorMainWindow::EditSelectedRelation);
     tableMenu->addSeparator();
     tableMenu->addAction(QStringLiteral("Undo"), this, &DatabaseEditorMainWindow::UndoLastAction);
     tableMenu->addAction(QStringLiteral("Redo"), this, &DatabaseEditorMainWindow::RedoLastAction);
@@ -157,8 +206,10 @@ void DatabaseEditorMainWindow::BuildMenus()
     toolbar->addSeparator();
     toolbar->addAction(QStringLiteral("New Table"), this, &DatabaseEditorMainWindow::CreateTable);
     toolbar->addAction(QStringLiteral("Add Column"), this, &DatabaseEditorMainWindow::AddColumn);
+    toolbar->addAction(QStringLiteral("Add Computed"), this, &DatabaseEditorMainWindow::AddSessionComputedColumn);
     toolbar->addAction(QStringLiteral("Add Record"), this, &DatabaseEditorMainWindow::AddRecord);
     toolbar->addAction(QStringLiteral("Delete Record"), this, &DatabaseEditorMainWindow::DeleteSelectedRecord);
+    toolbar->addAction(QStringLiteral("Pick Relation"), this, &DatabaseEditorMainWindow::EditSelectedRelation);
     toolbar->addAction(QStringLiteral("Undo"), this, &DatabaseEditorMainWindow::UndoLastAction);
     toolbar->addAction(QStringLiteral("Redo"), this, &DatabaseEditorMainWindow::RedoLastAction);
     toolbar->addSeparator();
@@ -236,6 +287,38 @@ void DatabaseEditorMainWindow::AddColumn()
     recordModel_->Refresh();
 }
 
+void DatabaseEditorMainWindow::AddSessionComputedColumn()
+{
+    if (!session_->CurrentTable())
+    {
+        ShowError(QStringLiteral("Add Computed Column Failed"), QStringLiteral("No table is selected."));
+        return;
+    }
+
+    ComputedColumnDialog dialog(session_->CurrentTableName(), this);
+    if (dialog.exec() != QDialog::Accepted)
+    {
+        return;
+    }
+
+    sc::ComputedColumnDef definition;
+    QString error;
+    if (!dialog.BuildDefinition(&definition, &error))
+    {
+        ShowError(QStringLiteral("Add Computed Column Failed"), error);
+        return;
+    }
+
+    if (!session_->AddSessionComputedColumn(definition, &error))
+    {
+        ShowError(QStringLiteral("Add Computed Column Failed"), error);
+        return;
+    }
+
+    recordModel_->Refresh();
+    UpdateComputedColumnsPanel();
+}
+
 void DatabaseEditorMainWindow::AddRecord()
 {
     QString error;
@@ -247,7 +330,7 @@ void DatabaseEditorMainWindow::AddRecord()
 
 void DatabaseEditorMainWindow::DeleteSelectedRecord()
 {
-    const QModelIndex index = dataTable_->currentIndex();
+    const QModelIndex index = CurrentSourceIndex();
     if (!index.isValid())
     {
         return;
@@ -273,6 +356,60 @@ void DatabaseEditorMainWindow::DeleteSelectedRecord()
     {
         ShowError(QStringLiteral("Delete Record Failed"), error);
     }
+}
+
+void DatabaseEditorMainWindow::EditSelectedRelation()
+{
+    const QModelIndex index = CurrentSourceIndex();
+    if (!index.isValid())
+    {
+        return;
+    }
+
+    const sc::TableViewColumnDef tableColumn = recordModel_->ColumnAt(index.column());
+    if (tableColumn.layer != sc::TableColumnLayer::Fact)
+    {
+        ShowError(QStringLiteral("Pick Relation Failed"), QStringLiteral("Computed columns cannot store relation values."));
+        return;
+    }
+
+    sc::ColumnDef column;
+    QString error;
+    if (!session_->GetColumnDef(ToQString(tableColumn.name), &column, &error))
+    {
+        ShowError(QStringLiteral("Pick Relation Failed"), error);
+        return;
+    }
+    if (column.columnKind != sc::ColumnKind::Relation)
+    {
+        ShowError(QStringLiteral("Pick Relation Failed"), QStringLiteral("The selected column is not a relation field."));
+        return;
+    }
+
+    QVector<DatabaseSession::RelationCandidate> candidates;
+    if (!session_->BuildRelationCandidates(ToQString(column.referenceTable), &candidates, &error))
+    {
+        ShowError(QStringLiteral("Pick Relation Failed"), error);
+        return;
+    }
+
+    RelationPickerDialog dialog(ToQString(column.referenceTable), candidates, this);
+    if (dialog.exec() != QDialog::Accepted)
+    {
+        return;
+    }
+
+    if (!session_->SetCellValue(
+            recordModel_->RecordIdAt(index.row()),
+            ToQString(tableColumn.name),
+            QVariant::fromValue<qlonglong>(dialog.SelectedRecordId()),
+            &error))
+    {
+        ShowError(QStringLiteral("Pick Relation Failed"), error);
+        return;
+    }
+
+    recordModel_->Refresh();
 }
 
 void DatabaseEditorMainWindow::UndoLastAction()
@@ -315,6 +452,7 @@ void DatabaseEditorMainWindow::RefreshCurrentView()
     recordModel_->Refresh();
     UpdateSchemaInspector();
     UpdateRecordInspector();
+    UpdateComputedColumnsPanel();
     diagnosticsText_->setPlainText(session_->BuildHealthSummary());
 }
 
@@ -339,6 +477,20 @@ void DatabaseEditorMainWindow::OnTableSelectionChanged()
     }
 
     recordModel_->Refresh();
+}
+
+void DatabaseEditorMainWindow::OnGridSelectionChanged()
+{
+    UpdateRecordInspector();
+    UpdateGridSummary();
+}
+
+void DatabaseEditorMainWindow::OnFilterTextChanged(const QString& text)
+{
+    filterModel_->setFilterRegularExpression(QRegularExpression(
+        QRegularExpression::escape(text),
+        QRegularExpression::CaseInsensitiveOption));
+    UpdateGridSummary();
 }
 
 void DatabaseEditorMainWindow::UpdateSchemaInspector()
@@ -370,7 +522,7 @@ void DatabaseEditorMainWindow::UpdateRecordInspector()
 {
     recordTree_->clear();
 
-    const QModelIndex index = dataTable_->currentIndex();
+    const QModelIndex index = CurrentSourceIndex();
     if (!index.isValid())
     {
         return;
@@ -389,6 +541,71 @@ void DatabaseEditorMainWindow::UpdateRecordInspector()
         recordTree_->addTopLevelItem(new QTreeWidgetItem({pair.first, pair.second}));
     }
     recordTree_->expandAll();
+}
+
+void DatabaseEditorMainWindow::UpdateComputedColumnsPanel()
+{
+    computedColumnsTree_->clear();
+
+    const QVector<sc::ComputedColumnDef> columns = session_->CurrentSessionComputedColumns();
+    for (const sc::ComputedColumnDef& column : columns)
+    {
+        QString definition;
+        switch (column.kind)
+        {
+        case sc::ComputedFieldKind::Expression:
+            definition = QStringLiteral("Expression: ") + ToQString(column.expression);
+            break;
+        case sc::ComputedFieldKind::Rule:
+            definition = QStringLiteral("Rule: ") + ToQString(column.ruleId);
+            break;
+        case sc::ComputedFieldKind::Aggregate:
+            definition = QStringLiteral("Aggregate: ") + ToQString(column.aggregateRelation);
+            if (!column.aggregateField.empty())
+            {
+                definition += QStringLiteral(" / ") + ToQString(column.aggregateField);
+            }
+            break;
+        default:
+            definition = QStringLiteral("Unknown");
+            break;
+        }
+
+        auto* root = new QTreeWidgetItem(
+            computedColumnsTree_,
+            {ToQString(column.displayName.empty() ? column.name : column.displayName), definition});
+        root->addChild(new QTreeWidgetItem({QStringLiteral("Name"), ToQString(column.name)}));
+        root->addChild(new QTreeWidgetItem({QStringLiteral("Value Kind"), ValueKindToText(column.valueKind)}));
+        root->addChild(new QTreeWidgetItem({QStringLiteral("Cacheable"), column.cacheable ? QStringLiteral("true") : QStringLiteral("false")}));
+    }
+    computedColumnsTree_->expandAll();
+}
+
+void DatabaseEditorMainWindow::UpdateGridSummary()
+{
+    const QString tableName = session_->CurrentTableName();
+    if (tableName.isEmpty())
+    {
+        tableSummaryLabel_->setText(QStringLiteral("No table selected"));
+        return;
+    }
+
+    const QModelIndex current = CurrentSourceIndex();
+    const QString selected = current.isValid()
+        ? QStringLiteral(" | Selected RecordId=%1").arg(recordModel_->RecordIdAt(current.row()))
+        : QString();
+
+    tableSummaryLabel_->setText(QStringLiteral("%1 | Rows %2/%3%4")
+        .arg(tableName)
+        .arg(filterModel_->rowCount())
+        .arg(recordModel_->RowCountValue())
+        .arg(selected));
+}
+
+QModelIndex DatabaseEditorMainWindow::CurrentSourceIndex() const
+{
+    const QModelIndex proxyIndex = dataTable_->currentIndex();
+    return proxyIndex.isValid() ? filterModel_->mapToSource(proxyIndex) : QModelIndex{};
 }
 
 void DatabaseEditorMainWindow::ShowError(const QString& title, const QString& message)

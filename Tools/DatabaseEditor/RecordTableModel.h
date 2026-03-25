@@ -23,6 +23,8 @@ public:
     bool setData(const QModelIndex& index, const QVariant& value, int role = Qt::EditRole) override;
 
     stablecore::storage::RecordId RecordIdAt(int row) const;
+    stablecore::storage::TableViewColumnDef ColumnAt(int column) const;
+    int RowCountValue() const noexcept;
     void Refresh();
 
 private:

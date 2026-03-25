@@ -72,12 +72,18 @@ if (STABLECORE_STORAGE_BUILD_DB_EDITOR)
     add_executable(stablecore_storage_db_editor
         Tools/DatabaseEditor/AddColumnDialog.cpp
         Tools/DatabaseEditor/AddColumnDialog.h
+        Tools/DatabaseEditor/ComputedColumnDialog.cpp
+        Tools/DatabaseEditor/ComputedColumnDialog.h
         Tools/DatabaseEditor/DatabaseEditorMainWindow.cpp
         Tools/DatabaseEditor/DatabaseEditorMainWindow.h
         Tools/DatabaseEditor/DatabaseSession.cpp
         Tools/DatabaseEditor/DatabaseSession.h
+        Tools/DatabaseEditor/RecordFilterProxyModel.cpp
+        Tools/DatabaseEditor/RecordFilterProxyModel.h
         Tools/DatabaseEditor/RecordTableModel.cpp
         Tools/DatabaseEditor/RecordTableModel.h
+        Tools/DatabaseEditor/RelationPickerDialog.cpp
+        Tools/DatabaseEditor/RelationPickerDialog.h
         Tools/DatabaseEditor/main.cpp
     )
 

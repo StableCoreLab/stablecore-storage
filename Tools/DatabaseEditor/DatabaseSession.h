@@ -2,6 +2,7 @@
 
 #include <functional>
 
+#include <QHash>
 #include <QString>
 #include <QStringList>
 #include <QPair>
@@ -19,6 +20,13 @@ class DatabaseSession final : public QObject
     Q_OBJECT
 
 public:
+    struct RelationCandidate
+    {
+        stablecore::storage::RecordId recordId{0};
+        QString label;
+        QVector<QPair<QString, QString>> previewFields;
+    };
+
     explicit DatabaseSession(QObject* parent = nullptr);
 
     bool IsOpen() const noexcept;
@@ -45,6 +53,13 @@ public:
         const QString& columnName,
         const QVariant& value,
         QString* outError);
+    bool GetColumnDef(const QString& columnName, stablecore::storage::ColumnDef* outColumn, QString* outError) const;
+    bool BuildRelationCandidates(
+        const QString& targetTableName,
+        QVector<RelationCandidate>* outCandidates,
+        QString* outError) const;
+    bool AddSessionComputedColumn(const stablecore::storage::ComputedColumnDef& column, QString* outError);
+    QVector<stablecore::storage::ComputedColumnDef> CurrentSessionComputedColumns() const;
 
     QString BuildHealthSummary() const;
     bool BuildSchemaSnapshot(QVector<stablecore::storage::ColumnDef>* outColumns, QString* outError) const;
@@ -61,6 +76,7 @@ signals:
 
 private:
     bool LoadTableNames(QString* outError);
+    bool RebuildCurrentTableView(QString* outError);
     bool BeginAndCommitSingleAction(
         const wchar_t* actionName,
         const std::function<stablecore::storage::ErrorCode()>& action,
@@ -77,6 +93,7 @@ private:
     QString databasePath_;
     QString currentTableName_;
     QStringList tableNames_;
+    QHash<QString, QVector<stablecore::storage::ComputedColumnDef>> sessionComputedColumnsByTable_;
 };
 
 }  // namespace stablecore::storage::editor
