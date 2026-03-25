@@ -28,6 +28,13 @@ struct StorageHealthReport
     std::vector<DiagnosticEntry> diagnostics;
 };
 
+class IDatabaseDiagnosticsProvider
+{
+public:
+    virtual ~IDatabaseDiagnosticsProvider() = default;
+    virtual ErrorCode CollectDiagnostics(StorageHealthReport* outReport) const = 0;
+};
+
 ErrorCode BuildStorageHealthReport(
     IDatabase* database,
     const wchar_t* backendName,

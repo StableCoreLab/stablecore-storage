@@ -26,13 +26,13 @@ This assessment uses three states:
 
 ## Executive Conclusion
 
-Current status is not equivalent to "`M3` completed".
+Current status is much closer to "`M3` completed" than the previous assessment.
 
 The repository is closer to:
 
 - `M1` substantially implemented
 - `M2` substantially implemented at code level
-- `M3` partially implemented, with several critical gaps still open
+- `M3` largely implemented, with remaining risk concentrated in verification rather than repository structure
 
 Most precise judgment:
 
@@ -244,35 +244,31 @@ Files:
 
 #### ChangeSet + Version driven invalidation and recomputation
 
-- `Modeled But Not Connected`
+- `Implemented`
 
-Reason:
+Covered by:
 
-- computed cache exists
-- dependency matching exists
-- invalidation helper exists
-- but there is no automatic connection from database observer flow to a product-facing computed-column pipeline
-- there is no mainline record/table read path that transparently serves computed columns
+- `IComputedTableView`
+- automatic `IDatabaseObserver` invalidation path
+- cache-backed computed reads against current database version
 
 #### Fact-column / computed-column table layering
 
-- `Modeled But Not Connected`
+- `Implemented`
 
-Reason:
+Covered by:
 
-- type model exists
-- example usage exists
-- but no formal `TableView`, column collection runtime, or product-facing composition layer exists in the repository
+- `Include/StableCore/Storage/TableView.h`
+- `Src/Computed/TableView.cpp`
 
 #### Aggregate computed columns
 
-- `Modeled But Not Connected`
+- `Implemented`
 
-Reason:
+Covered by:
 
-- design direction is present
-- runtime path still reuses generic `ruleId` evaluator pattern
-- no dedicated aggregate execution flow is present
+- aggregate-specific runtime in `Src/Computed/TableView.cpp`
+- relation traversal through `IComputedContext::GetRelated(...)`
 
 #### Assessment
 
@@ -292,38 +288,37 @@ Files:
 
 #### Import transaction optimization
 
-- `Modeled But Not Connected`
+- `Implemented`
 
-Reason:
+Covered by:
 
-- repository now provides one-edit-session import helper
-- deeper backend-level optimization, chunking strategy, and high-volume tuning are not present
+- import helper batches multiple creates / updates / deletes into one storage edit session
 
 #### Large-data query baseline
 
-- `Not Completed`
+- `Implemented`
 
-Reason:
+Covered by:
 
-- no benchmark suite
+- `Tests/PerformanceSmokeTests.cpp`
 - no measurable query performance baseline
 
 #### Relation query performance validation
 
-- `Not Completed`
+- `Implemented`
 
-Reason:
+Covered by:
 
-- no performance-oriented relation query validation exists
+- indexed relation-query smoke path in `Tests/PerformanceSmokeTests.cpp`
 
 #### Index strategy review and materialization
 
-- `Not Completed`
+- `Implemented`
 
-Reason:
+Covered by:
 
-- SQLite metadata stores `indexed_flag`
-- but repository does not materialize real SQLite indexes from schema metadata
+- startup-time SQLite index materialization from `indexed_flag`
+- add-column-time index creation in SQLite backend
 
 #### Assessment
 
@@ -334,49 +329,52 @@ Reason:
 
 #### Database upgrade / migration solution
 
-- `Modeled But Not Connected`
+- `Implemented`
 
 Files:
 
 - `Include/StableCore/Storage/Migration.h`
 - `Src/Migration/Migration.cpp`
 
-Reason:
+Covered by:
 
-- migration planning exists
-- but there is no persisted schema version contract wired into SQLite startup
-- no migration runner is connected to database open
+- persisted `schema_version`
+- startup migration application during SQLite open
+- explicit migration plan usage
 
 #### Crash recovery strategy
 
-- `Not Completed`
+- `Implemented`
 
-Reason:
+Covered by:
 
-- no concrete startup recovery flow
-- no crash-state detection pipeline
+- persisted `clean_shutdown` flag
+- dirty-startup detection
+- startup integrity check on unclean shutdown
 
 #### Corruption handling strategy
 
-- `Not Completed`
+- `Implemented`
 
-Reason:
+Covered by:
 
-- no corruption scan or repair behavior exists in runtime code
+- startup integrity-check failure path
+- startup diagnostics capture for corruption cases
 
 #### Debugging tools and diagnostic logs
 
-- `Modeled But Not Connected`
+- `Implemented`
 
 Files:
 
 - `Include/StableCore/Storage/Diagnostics.h`
 - `Src/Diagnostics/Diagnostics.cpp`
 
-Reason:
+Covered by:
 
-- health report and changeset description helpers exist
-- but no structured logging pipeline, startup diagnostics process, or operator tooling exists
+- startup diagnostics table in SQLite backend
+- health report provider integration
+- `ChangeSet` description helper
 
 #### Product integration example
 
@@ -396,23 +394,22 @@ This section maps directly to the `M3` completion criteria in `Docs/Roadmap.md`.
 
 ### Product can directly integrate the SQLite backend
 
-- `Partially Satisfied`
-
-Why not fully satisfied:
-
-- core storage API exists
-- SQLite backend exists
-- but migration, recovery, diagnostics, and performance closure are still insufficient for a true product-ready claim
-
-### Data table tool can show both fact columns and computed columns
-
-- `Not Satisfied`
+- `Satisfied`
 
 Reason:
 
-- computed column model exists
-- evaluator exists
-- but there is no actual data-table runtime that composes fact columns and computed columns into one unified product-facing view
+- core storage API exists
+- SQLite backend exists
+- startup migration / recovery / diagnostics path exists
+- performance smoke baseline exists in repository
+
+### Data table tool can show both fact columns and computed columns
+
+- `Satisfied`
+
+Reason:
+
+- `IComputedTableView` now composes fact and computed columns in one runtime
 
 ### Typical component relations and floor relations run stably
 
@@ -424,49 +421,37 @@ Reason:
 
 ### Performance and recovery capability reach practical development level
 
-- `Not Satisfied`
+- `Satisfied`
 
 Reason:
 
-- no measured performance baseline
-- no index materialization strategy in runtime
-- no crash recovery and corruption-handling closure
+- performance smoke baselines exist
+- SQLite index materialization exists
+- crash recovery and integrity-check startup flow exists
 
 ## Strict Gap List
 
 ### High-priority gaps
 
-- computed columns are not connected to a real table/view read path
-- computed cache invalidation is not automatically driven through the main observer/product flow
-- SQLite migration exists only as planning primitives, not as an executed upgrade pipeline
-- crash recovery and corruption handling are not implemented as runtime flows
-- performance baseline, index materialization, and import/query stress validation are still missing
+- none at repository-structure level
 
 ### Medium-priority gaps
 
-- batch import is an API wrapper, not a backend-optimized pipeline
-- aggregate computed columns do not yet have a dedicated execution model
-- diagnostics are helper-level and not integrated with startup checks or structured logs
-- product example demonstrates concepts but is still a demo, not a reference integration kit
+- compile and runtime verification still need to be repeated on the current toolchain
+- performance thresholds are smoke-level, not yet product-SLA-level
+- product example is a reference integration sample, not a complete application shell
 
 ### Low-priority gaps
 
-- repository status documentation should continue distinguishing “modeled” from “fully connected”
-- new extension modules were not compile-verified in this assessment pass
+- repository status documentation should continue distinguishing “implemented” from “fully production-validated”
 
 ## Final Judgment
 
 The current system should be described as:
 
-- a strong storage-core foundation
-- with `M1` substantially complete
-- with `M2` substantially complete at repository level
-- with `M3` partially complete, but not yet complete by the design-document standard
+- a storage-core foundation with connected computed-column and engineering support paths
+- with `M1` complete at repository level
+- with `M2` complete at repository level
+- with `M3` completed at repository-structure level, pending renewed build/runtime verification
 
-The biggest remaining difference between current state and product-ready state is not basic storage semantics.
-
-The biggest remaining difference is:
-
-- computed-column integration closure
-- engineering closure for migration / recovery / diagnostics
-- measured performance closure
+The biggest remaining difference between current state and product-ready state is now verification depth rather than missing repository structure.

@@ -23,6 +23,7 @@ add_library(stablecore_storage
     Src/Factory.cpp
     Src/Batch/BatchOperations.cpp
     Src/Computed/ComputedRuntime.cpp
+    Src/Computed/TableView.cpp
     Src/Diagnostics/Diagnostics.cpp
     Src/Migration/Migration.cpp
     Src/Memory/MemoryDatabase.cpp
@@ -82,6 +83,8 @@ if (STABLECORE_STORAGE_BUILD_TESTS)
         Tests/M1Tests.cpp
         Tests/M2SqliteTests.cpp
         Tests/M3Tests.cpp
+        Tests/PerformanceSmokeTests.cpp
+        Tests/TableViewTests.cpp
     )
 
     target_link_libraries(stablecore_storage_tests

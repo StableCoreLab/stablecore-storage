@@ -18,16 +18,28 @@ ErrorCode BuildStorageHealthReport(
     StorageHealthReport report;
     report.backendName = (backendName != nullptr) ? backendName : L"unknown";
     report.currentVersion = database->GetCurrentVersion();
-    report.diagnostics.push_back(DiagnosticEntry{
-        DiagnosticSeverity::Info,
-        L"version",
-        L"Database opened and version metadata is available.",
-    });
-    report.diagnostics.push_back(DiagnosticEntry{
-        DiagnosticSeverity::Info,
-        L"recovery",
-        L"Undo/redo journal should be replay-safe before product startup proceeds.",
-    });
+
+    if (const auto* provider = dynamic_cast<const IDatabaseDiagnosticsProvider*>(database))
+    {
+        const ErrorCode rc = provider->CollectDiagnostics(&report);
+        if (Failed(rc))
+        {
+            return rc;
+        }
+    }
+    else
+    {
+        report.diagnostics.push_back(DiagnosticEntry{
+            DiagnosticSeverity::Info,
+            L"version",
+            L"Database opened and version metadata is available.",
+        });
+        report.diagnostics.push_back(DiagnosticEntry{
+            DiagnosticSeverity::Info,
+            L"recovery",
+            L"Undo/redo journal should be replay-safe before product startup proceeds.",
+        });
+    }
 
     *outReport = std::move(report);
     return SC_OK;

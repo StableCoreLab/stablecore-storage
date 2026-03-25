@@ -315,6 +315,14 @@ enum class ComputedFieldKind
     Aggregate,
 };
 
+enum class AggregateKind
+{
+    Count,
+    Sum,
+    Min,
+    Max,
+};
+
 struct FieldDependency
 {
     std::wstring tableName;
@@ -338,6 +346,9 @@ struct ComputedColumnDef
     std::wstring expression;
     std::wstring ruleId;
     ComputedDependencySet dependencies;
+    AggregateKind aggregateKind{AggregateKind::Count};
+    std::wstring aggregateRelation;
+    std::wstring aggregateField;
 
     bool cacheable{true};
     bool editable{false};

@@ -9,8 +9,9 @@ Current implementation includes:
 - SQLite persistence backend under `Src/Sqlite`
 - Computed-column metadata baseline in public types for upper-layer table tools
 - Minimal computed runtime (`expression`, `ruleId`, cache model)
+- Unified computed table view with fact/computed column composition
 - Batch edit/import helpers
-- Migration planning and diagnostics helpers
+- Migration, startup recovery, index materialization, and diagnostics helpers
 - M1 example under `Examples/MemoryExample.cpp`
 - Product integration example under `Examples/ProductIntegrationExample.cpp`
 - M1/M2/M3 baseline tests under `Tests/`
@@ -53,9 +54,10 @@ Computed columns are modeled separately from storage schema facts. Use `ColumnDe
 For higher-level integration:
 
 - `Computed.h` provides expression/rule evaluation and cache invalidation primitives.
+- `TableView.h` provides a product-facing table view that combines fact columns and computed columns.
 - `Batch.h` provides batch-edit/import helpers that reuse the database transaction model.
 - `Migration.h` provides explicit migration planning primitives.
-- `Diagnostics.h` provides health-report and `ChangeSet` description helpers.
+- `Diagnostics.h` provides health-report, startup diagnostics, and `ChangeSet` description helpers.
 
 面向未来算量产品的通用存储内核。
 

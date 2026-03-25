@@ -9,4 +9,5 @@
 #include "StableCore/Storage/Migration.h"
 #include "StableCore/Storage/RefCounted.h"
 #include "StableCore/Storage/RefPtr.h"
+#include "StableCore/Storage/TableView.h"
 #include "StableCore/Storage/Types.h"

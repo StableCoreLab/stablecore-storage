@@ -4,6 +4,7 @@
 #include <map>
 #include <memory>
 #include <set>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -12,6 +13,8 @@
 
 #include <sqlite3.h>
 
+#include "StableCore/Storage/Diagnostics.h"
+#include "StableCore/Storage/Migration.h"
 #include "StableCore/Storage/RefCounted.h"
 
 #if defined(_WIN32)
@@ -25,6 +28,7 @@ namespace
 
 constexpr int kStackUndo = 0;
 constexpr int kStackRedo = 1;
+constexpr std::int32_t kSqliteSchemaVersion = 2;
 
 std::string ToUtf8(const std::wstring& text)
 {
@@ -347,6 +351,24 @@ RecordState FromSqliteRecordState(int state) noexcept { return static_cast<Recor
 int ToSqliteJournalOp(JournalOp op) noexcept { return static_cast<int>(op); }
 JournalOp FromSqliteJournalOp(int op) noexcept { return static_cast<JournalOp>(op); }
 
+std::wstring SanitizeIdentifier(const std::wstring& input)
+{
+    std::wstring result;
+    result.reserve(input.size());
+    for (wchar_t ch : input)
+    {
+        if (::iswalnum(ch) != 0)
+        {
+            result.push_back(ch);
+        }
+        else
+        {
+            result.push_back(L'_');
+        }
+    }
+    return result;
+}
+
 void BindValueForStorage(SqliteStmt& stmt, int kindIndex, int intIndex, int doubleIndex, int boolIndex, int textIndex, const Value& value)
 {
     stmt.BindInt(kindIndex, ToSqliteValueKind(value.GetKind()));
@@ -633,10 +655,11 @@ private:
     std::unordered_map<RecordId, std::shared_ptr<SqliteRecordData>> records_;
 };
 
-class SqliteDatabase final : public IDatabase, public RefCountedObject
+class SqliteDatabase final : public IDatabase, public IDatabaseDiagnosticsProvider, public RefCountedObject
 {
 public:
     explicit SqliteDatabase(const std::wstring& path);
+    ~SqliteDatabase() override;
 
     ErrorCode BeginEdit(const wchar_t* name, EditPtr& outEdit) override;
     ErrorCode Commit(IEditSession* edit) override;
@@ -648,6 +671,7 @@ public:
     ErrorCode AddObserver(IDatabaseObserver* observer) override;
     ErrorCode RemoveObserver(IDatabaseObserver* observer) override;
     VersionId GetCurrentVersion() const noexcept override { return version_; }
+    ErrorCode CollectDiagnostics(StorageHealthReport* outReport) const override;
 
     bool HasActiveEdit() const noexcept { return static_cast<bool>(activeEdit_); }
     RecordId AllocateRecordId() noexcept { return nextRecordId_++; }
@@ -667,8 +691,16 @@ private:
     void InitializeSchema();
     void LoadMetadata();
     void SaveMetadata();
+    void SaveMetadataKey(const wchar_t* key, const std::wstring& value);
     void LoadTables();
     void LoadJournalStacks();
+    void EnsureMigrationAndRecovery();
+    void ApplyMigrationPlan();
+    void MaterializeIndexes();
+    void EnsureColumnIndex(std::int64_t tableRowId, const std::wstring& columnName);
+    void RunStartupIntegrityCheck();
+    void LogStartupDiagnostic(DiagnosticSeverity severity, const std::wstring& category, const std::wstring& message);
+    void SetCleanShutdownFlag(bool cleanShutdown);
     ErrorCode ValidateActiveEdit(IEditSession* edit) const;
     ErrorCode ValidateWrite(SqliteTable* table, const std::shared_ptr<SqliteRecordData>& data, const std::wstring& fieldName, const Value& value);
     bool IsRecordReferenced(const std::wstring& tableName, RecordId recordId) const;
@@ -694,6 +726,11 @@ private:
     SqliteDb db_;
     VersionId version_{0};
     RecordId nextRecordId_{1};
+    std::int32_t schemaVersion_{0};
+    bool cleanShutdown_{true};
+    bool dirtyStartupDetected_{false};
+    bool corruptionDetected_{false};
+    std::vector<DiagnosticEntry> startupDiagnostics_;
     std::map<std::wstring, TablePtr> tables_;
     std::vector<IDatabaseObserver*> observers_;
     RefPtr<SqliteEditSession> activeEdit_;
@@ -993,13 +1030,30 @@ SqliteDatabase::SqliteDatabase(const std::wstring& path)
 {
     InitializeSchema();
     LoadMetadata();
+    EnsureMigrationAndRecovery();
     LoadTables();
+    MaterializeIndexes();
     LoadJournalStacks();
+    SetCleanShutdownFlag(false);
+}
+
+SqliteDatabase::~SqliteDatabase()
+{
+    try
+    {
+        SetCleanShutdownFlag(true);
+    }
+    catch (...)
+    {
+    }
 }
 
 void SqliteDatabase::InitializeSchema()
 {
     db_.Execute("CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);");
+    db_.Execute(
+        "CREATE TABLE IF NOT EXISTS startup_diagnostics ("
+        "diag_id INTEGER PRIMARY KEY AUTOINCREMENT, severity INTEGER NOT NULL, category TEXT NOT NULL, message TEXT NOT NULL);");
     db_.Execute("CREATE TABLE IF NOT EXISTS tables (table_id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE);");
     db_.Execute(
         "CREATE TABLE IF NOT EXISTS schema_columns ("
@@ -1019,6 +1073,7 @@ void SqliteDatabase::InitializeSchema()
         "PRIMARY KEY(table_id, record_id, column_name));");
     db_.Execute("CREATE INDEX IF NOT EXISTS idx_records_table_state ON records(table_id, state);");
     db_.Execute("CREATE INDEX IF NOT EXISTS idx_field_values_lookup ON field_values(table_id, column_name, value_kind, int64_value, text_value);");
+    db_.Execute("CREATE INDEX IF NOT EXISTS idx_field_values_record ON field_values(table_id, record_id, column_name);");
     db_.Execute(
         "CREATE TABLE IF NOT EXISTS journal_transactions ("
         "tx_id INTEGER PRIMARY KEY AUTOINCREMENT, action_name TEXT NOT NULL, stack_kind INTEGER NOT NULL, stack_order INTEGER NOT NULL);");
@@ -1035,6 +1090,8 @@ void SqliteDatabase::LoadMetadata()
 {
     version_ = 0;
     nextRecordId_ = 1;
+    schemaVersion_ = 0;
+    cleanShutdown_ = true;
 
     SqliteStmt stmt = db_.Prepare("SELECT key, value FROM metadata;");
     bool hasRow = false;
@@ -1046,6 +1103,14 @@ void SqliteDatabase::LoadMetadata()
         {
             version_ = static_cast<VersionId>(std::stoull(value));
         }
+        else if (key == L"schema_version")
+        {
+            schemaVersion_ = static_cast<std::int32_t>(std::stoi(value));
+        }
+        else if (key == L"clean_shutdown")
+        {
+            cleanShutdown_ = (value == L"1");
+        }
         else if (key == L"next_record_id")
         {
             nextRecordId_ = static_cast<RecordId>(std::stoll(value));
@@ -1055,17 +1120,19 @@ void SqliteDatabase::LoadMetadata()
 
 void SqliteDatabase::SaveMetadata()
 {
+    SaveMetadataKey(L"version", std::to_wstring(version_));
+    SaveMetadataKey(L"next_record_id", std::to_wstring(nextRecordId_));
+    SaveMetadataKey(L"schema_version", std::to_wstring(schemaVersion_));
+    SaveMetadataKey(L"clean_shutdown", cleanShutdown_ ? L"1" : L"0");
+}
+
+void SqliteDatabase::SaveMetadataKey(const wchar_t* key, const std::wstring& value)
+{
     SqliteStmt stmt = db_.Prepare(
         "INSERT INTO metadata(key, value) VALUES(?, ?)"
         " ON CONFLICT(key) DO UPDATE SET value=excluded.value;");
-
-    stmt.BindText(1, L"version");
-    stmt.BindText(2, std::to_wstring(version_));
-    stmt.Step();
-    stmt.Reset();
-
-    stmt.BindText(1, L"next_record_id");
-    stmt.BindText(2, std::to_wstring(nextRecordId_));
+    stmt.BindText(1, key != nullptr ? key : L"");
+    stmt.BindText(2, value);
     stmt.Step();
 }
 
@@ -1177,6 +1244,168 @@ void SqliteDatabase::LoadJournalStacks()
             redoStack_.push_back(std::move(persisted));
         }
     }
+}
+
+void SqliteDatabase::EnsureMigrationAndRecovery()
+{
+    if (schemaVersion_ <= 0)
+    {
+        schemaVersion_ = 1;
+    }
+
+    dirtyStartupDetected_ = !cleanShutdown_;
+    if (dirtyStartupDetected_)
+    {
+        LogStartupDiagnostic(DiagnosticSeverity::Warning, L"startup", L"Detected previous unclean shutdown. Running integrity check.");
+        RunStartupIntegrityCheck();
+    }
+
+    if (schemaVersion_ < kSqliteSchemaVersion)
+    {
+        ApplyMigrationPlan();
+    }
+
+    SaveMetadata();
+}
+
+void SqliteDatabase::ApplyMigrationPlan()
+{
+    std::vector<MigrationStep> steps;
+    steps.push_back(MigrationStep{
+        1,
+        2,
+        L"sqlite-schema-v2",
+        L"Add startup diagnostics table and field-value record lookup index.",
+    });
+
+    MigrationPlan plan;
+    const ErrorCode planRc = BuildMigrationPlan(schemaVersion_, kSqliteSchemaVersion, steps, &plan);
+    if (Failed(planRc))
+    {
+        throw std::runtime_error("failed to build sqlite migration plan");
+    }
+
+    for (const MigrationStep& step : plan.orderedSteps)
+    {
+        if (step.fromVersion == 1 && step.toVersion == 2)
+        {
+            db_.Execute(
+                "CREATE TABLE IF NOT EXISTS startup_diagnostics ("
+                "diag_id INTEGER PRIMARY KEY AUTOINCREMENT, severity INTEGER NOT NULL, category TEXT NOT NULL, message TEXT NOT NULL);");
+            db_.Execute("CREATE INDEX IF NOT EXISTS idx_field_values_record ON field_values(table_id, record_id, column_name);");
+        }
+        schemaVersion_ = step.toVersion;
+        std::wstringstream message;
+        message << L"Applied migration " << step.name << L" to schema version " << schemaVersion_ << L".";
+        LogStartupDiagnostic(DiagnosticSeverity::Info, L"migration", message.str());
+    }
+}
+
+void SqliteDatabase::MaterializeIndexes()
+{
+    for (const auto& [_, tableRef] : tables_)
+    {
+        const auto* table = static_cast<SqliteTable*>(tableRef.Get());
+        if (table == nullptr)
+        {
+            continue;
+        }
+
+        SchemaPtr schema;
+        if (Failed(tableRef->GetSchema(schema)) || !schema)
+        {
+            continue;
+        }
+
+        std::int32_t count = 0;
+        if (Failed(schema->GetColumnCount(&count)))
+        {
+            continue;
+        }
+
+        for (std::int32_t index = 0; index < count; ++index)
+        {
+            ColumnDef column;
+            if (Failed(schema->GetColumn(index, &column)))
+            {
+                continue;
+            }
+            if (column.indexed)
+            {
+                EnsureColumnIndex(table->TableRowId(), column.name);
+            }
+        }
+    }
+}
+
+void SqliteDatabase::EnsureColumnIndex(std::int64_t tableRowId, const std::wstring& columnName)
+{
+    const std::wstring indexName = L"idx_fv_" + std::to_wstring(tableRowId) + L"_" + SanitizeIdentifier(columnName);
+    const std::string sql = ToUtf8(
+        L"CREATE INDEX IF NOT EXISTS " + indexName
+        + L" ON field_values(table_id, column_name, int64_value, double_value, bool_value, text_value);");
+    db_.Execute(sql.c_str());
+}
+
+void SqliteDatabase::RunStartupIntegrityCheck()
+{
+    SqliteStmt stmt = db_.Prepare("PRAGMA integrity_check;");
+    bool hasRow = false;
+    while (stmt.Step(&hasRow) == SC_OK && hasRow)
+    {
+        const std::wstring result = stmt.ColumnText(0);
+        if (result != L"ok")
+        {
+            corruptionDetected_ = true;
+            LogStartupDiagnostic(DiagnosticSeverity::Error, L"integrity", std::wstring(L"SQLite integrity check failed: ") + result);
+            throw std::runtime_error("sqlite integrity check failed");
+        }
+    }
+
+    LogStartupDiagnostic(DiagnosticSeverity::Info, L"integrity", L"SQLite integrity check passed.");
+}
+
+void SqliteDatabase::LogStartupDiagnostic(DiagnosticSeverity severity, const std::wstring& category, const std::wstring& message)
+{
+    startupDiagnostics_.push_back(DiagnosticEntry{severity, category, message});
+    SqliteStmt stmt = db_.Prepare("INSERT INTO startup_diagnostics(severity, category, message) VALUES(?, ?, ?);");
+    stmt.BindInt(1, static_cast<int>(severity));
+    stmt.BindText(2, category);
+    stmt.BindText(3, message);
+    stmt.Step();
+}
+
+void SqliteDatabase::SetCleanShutdownFlag(bool cleanShutdown)
+{
+    cleanShutdown_ = cleanShutdown;
+    SaveMetadataKey(L"clean_shutdown", cleanShutdown_ ? L"1" : L"0");
+}
+
+ErrorCode SqliteDatabase::CollectDiagnostics(StorageHealthReport* outReport) const
+{
+    if (outReport == nullptr)
+    {
+        return SC_E_POINTER;
+    }
+
+    outReport->diagnostics.insert(outReport->diagnostics.end(), startupDiagnostics_.begin(), startupDiagnostics_.end());
+    if (dirtyStartupDetected_)
+    {
+        outReport->diagnostics.push_back(DiagnosticEntry{
+            DiagnosticSeverity::Warning,
+            L"startup",
+            L"Current session followed an unclean shutdown.",
+        });
+    }
+    if (corruptionDetected_)
+    {
+        outReport->diagnostics.push_back(DiagnosticEntry{
+            DiagnosticSeverity::Error,
+            L"integrity",
+            L"Corruption was detected during startup integrity checks.",
+        });
+    }
+    return SC_OK;
 }
 
 ErrorCode SqliteDatabase::BeginEdit(const wchar_t* name, EditPtr& outEdit)
@@ -1710,6 +1939,10 @@ ErrorCode SqliteDatabase::PersistAddedColumn(SqliteSchema* schema, const ColumnD
     }
 
     schema->LoadColumn(def);
+    if (def.indexed)
+    {
+        EnsureColumnIndex(schema->TableRowId(), def.name);
+    }
     return SC_OK;
 }
 

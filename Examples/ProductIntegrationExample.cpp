@@ -8,33 +8,6 @@ namespace sc = stablecore::storage;
 namespace
 {
 
-class BeamComputedContext final : public sc::IComputedContext, public sc::RefCountedObject
-{
-public:
-    explicit BeamComputedContext(sc::RecordPtr record)
-        : record_(std::move(record))
-    {
-    }
-
-    sc::ErrorCode GetValue(const wchar_t* fieldName, sc::Value* outValue) override
-    {
-        return record_->GetValue(fieldName, outValue);
-    }
-
-    sc::ErrorCode GetRef(const wchar_t* fieldName, sc::RecordId* outValue) override
-    {
-        return record_->GetRef(fieldName, outValue);
-    }
-
-    sc::ErrorCode GetRelated(const wchar_t*, sc::RecordCursorPtr&) override
-    {
-        return sc::SC_E_NOTIMPL;
-    }
-
-private:
-    sc::RecordPtr record_;
-};
-
 class QuantityObserver final : public sc::IDatabaseObserver
 {
 public:
@@ -117,6 +90,12 @@ int main()
     sc::ExecuteImport(db.Get(), beamImport, sc::ImportOptions{L"Import Beams"}, &importResult);
     std::wcout << L"Imported beams, version=" << importResult.committedVersion << L"\n";
 
+    sc::ComputedTableViewPtr beamView;
+    if (sc::Failed(sc::CreateComputedTableView(db.Get(), L"Beam", nullptr, beamView)))
+    {
+        return 1;
+    }
+
     sc::ComputedColumnDef volumeColumn;
     volumeColumn.name = L"Volume";
     volumeColumn.displayName = L"Volume";
@@ -128,9 +107,10 @@ int main()
         {L"Beam", L"Width"},
         {L"Beam", L"Height"},
     };
+    beamView->AddComputedColumn(volumeColumn);
 
     sc::RecordCursorPtr beamCursor;
-    beamTable->EnumerateRecords(beamCursor);
+    beamView->EnumerateRecords(beamCursor);
     bool hasBeam = false;
     beamCursor->MoveNext(&hasBeam);
     if (!hasBeam)
@@ -141,9 +121,8 @@ int main()
     sc::RecordPtr beam;
     beamCursor->GetCurrent(beam);
 
-    sc::RefPtr<BeamComputedContext> context = sc::MakeRef<BeamComputedContext>(beam);
     sc::Value volume;
-    if (sc::Failed(sc::EvaluateComputedColumn(volumeColumn, context.Get(), nullptr, &volume)))
+    if (sc::Failed(beamView->GetCellValue(beam->GetId(), L"Volume", &volume)))
     {
         return 1;
     }
