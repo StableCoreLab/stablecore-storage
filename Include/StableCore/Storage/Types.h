@@ -51,6 +51,12 @@ enum class ColumnKind
     Relation,
 };
 
+enum class TableColumnLayer
+{
+    Fact,
+    Computed,
+};
+
 enum class ChangeSource
 {
     UserEdit,
@@ -300,6 +306,41 @@ struct ColumnDef
     std::wstring unit;
     std::wstring referenceTable;
     Value defaultValue;
+};
+
+enum class ComputedFieldKind
+{
+    Expression,
+    Rule,
+    Aggregate,
+};
+
+struct FieldDependency
+{
+    std::wstring tableName;
+    std::wstring fieldName;
+};
+
+struct ComputedDependencySet
+{
+    std::vector<FieldDependency> factFields;
+    std::vector<FieldDependency> relationFields;
+};
+
+struct ComputedColumnDef
+{
+    std::wstring name;
+    std::wstring displayName;
+    ValueKind valueKind{ValueKind::Null};
+    TableColumnLayer layer{TableColumnLayer::Computed};
+
+    ComputedFieldKind kind{ComputedFieldKind::Expression};
+    std::wstring expression;
+    std::wstring ruleId;
+    ComputedDependencySet dependencies;
+
+    bool cacheable{true};
+    bool editable{false};
 };
 
 struct QueryCondition

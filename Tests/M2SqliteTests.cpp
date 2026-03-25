@@ -180,3 +180,46 @@ TEST(StorageM2Sqlite, PersistedQueryAndDelete)
         EXPECT_EQ(width, 500);
     }
 }
+
+TEST(StorageM2Sqlite, PersistedSchemaRejectsInvalidReferenceTableUsage)
+{
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_M2_SchemaValidation.sqlite");
+
+    sc::DbPtr db;
+    EXPECT_EQ(sc::CreateSqliteDatabase(dbPath.c_str(), db), sc::SC_OK);
+
+    sc::TablePtr beamTable;
+    EXPECT_EQ(db->CreateTable(L"Beam", beamTable), sc::SC_OK);
+
+    sc::SchemaPtr schema;
+    EXPECT_EQ(beamTable->GetSchema(schema), sc::SC_OK);
+
+    sc::ColumnDef factWithRef;
+    factWithRef.name = L"Width";
+    factWithRef.valueKind = sc::ValueKind::Int64;
+    factWithRef.referenceTable = L"Floor";
+    EXPECT_EQ(schema->AddColumn(factWithRef), sc::SC_E_SCHEMA_VIOLATION);
+
+    sc::ColumnDef relationWithoutRef;
+    relationWithoutRef.name = L"FloorRef";
+    relationWithoutRef.valueKind = sc::ValueKind::RecordId;
+    relationWithoutRef.columnKind = sc::ColumnKind::Relation;
+    EXPECT_EQ(schema->AddColumn(relationWithoutRef), sc::SC_E_SCHEMA_VIOLATION);
+}
+
+TEST(StorageM2Sqlite, PersistedEmptyQueryIsNotError)
+{
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_M2_EmptyQuery.sqlite");
+
+    sc::DbPtr db;
+    EXPECT_EQ(sc::CreateSqliteDatabase(dbPath.c_str(), db), sc::SC_OK);
+
+    sc::TablePtr beamTable = CreateBeamTable(db);
+
+    sc::RecordCursorPtr cursor;
+    EXPECT_EQ(beamTable->FindRecords({L"Width", sc::Value::FromInt64(12345)}, cursor), sc::SC_OK);
+
+    bool hasRow = true;
+    EXPECT_EQ(cursor->MoveNext(&hasRow), sc::SC_OK);
+    EXPECT_FALSE(hasRow);
+}

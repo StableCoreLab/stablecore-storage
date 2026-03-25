@@ -51,14 +51,25 @@ ErrorCode ValidateColumnDef(const ColumnDef& def)
         {
             return SC_E_SCHEMA_VIOLATION;
         }
+        if (def.referenceTable.empty())
+        {
+            return SC_E_SCHEMA_VIOLATION;
+        }
         if (!def.defaultValue.IsNull() && def.defaultValue.GetKind() != ValueKind::RecordId)
         {
             return SC_E_SCHEMA_VIOLATION;
         }
     }
-    else if (!def.defaultValue.IsNull() && def.defaultValue.GetKind() != def.valueKind)
+    else
     {
-        return SC_E_SCHEMA_VIOLATION;
+        if (!def.referenceTable.empty())
+        {
+            return SC_E_SCHEMA_VIOLATION;
+        }
+        if (!def.defaultValue.IsNull() && def.defaultValue.GetKind() != def.valueKind)
+        {
+            return SC_E_SCHEMA_VIOLATION;
+        }
     }
 
     if (!def.nullable && def.defaultValue.IsNull())
@@ -367,6 +378,7 @@ private:
 
     ErrorCode ValidateActiveEdit(IEditSession* edit) const;
     ErrorCode ValidateWrite(MemoryTable* table, const std::shared_ptr<MemoryRecordData>& data, const std::wstring& fieldName, const Value& value);
+    bool IsRecordReferenced(const std::wstring& tableName, RecordId recordId) const;
     JournalLookup LookupRecordJournalState(const std::wstring& tableName, RecordId recordId) const;
     void RemoveFieldJournalEntries(const std::wstring& tableName, RecordId recordId);
     void RemoveAllJournalEntriesForRecord(const std::wstring& tableName, RecordId recordId);
@@ -733,6 +745,10 @@ ErrorCode MemoryDatabase::DeleteRecord(MemoryTable* table, const std::shared_ptr
     {
         return SC_E_RECORD_DELETED;
     }
+    if (IsRecordReferenced(table->Name(), data->id))
+    {
+        return SC_E_CONSTRAINT_VIOLATION;
+    }
 
     const JournalLookup lookup = LookupRecordJournalState(table->Name(), data->id);
     if (lookup.deletedInActiveEdit)
@@ -752,6 +768,64 @@ ErrorCode MemoryDatabase::DeleteRecord(MemoryTable* table, const std::shared_ptr
     RemoveFieldJournalEntries(table->Name(), data->id);
     RecordJournal(table->Name(), data->id, L"", Value::Null(), Value::Null(), false, true, JournalOp::DeleteRecord);
     return SC_OK;
+}
+
+bool MemoryDatabase::IsRecordReferenced(const std::wstring& tableName, RecordId recordId) const
+{
+    for (const auto& [_, tableRef] : tables_)
+    {
+        auto* table = static_cast<MemoryTable*>(tableRef.Get());
+        if (table == nullptr)
+        {
+            continue;
+        }
+
+        SchemaPtr schema;
+        if (Failed(table->GetSchema(schema)) || !schema)
+        {
+            continue;
+        }
+
+        std::int32_t columnCount = 0;
+        if (Failed(schema->GetColumnCount(&columnCount)))
+        {
+            continue;
+        }
+
+        for (std::int32_t columnIndex = 0; columnIndex < columnCount; ++columnIndex)
+        {
+            ColumnDef column;
+            if (Failed(schema->GetColumn(columnIndex, &column)))
+            {
+                continue;
+            }
+            if (column.columnKind != ColumnKind::Relation || column.referenceTable != tableName)
+            {
+                continue;
+            }
+
+            for (const auto& [candidateId, candidateData] : table->Records())
+            {
+                if (candidateData == nullptr || candidateData->state == RecordState::Deleted)
+                {
+                    continue;
+                }
+                const auto valueIt = candidateData->values.find(column.name);
+                if (valueIt == candidateData->values.end())
+                {
+                    continue;
+                }
+
+                RecordId referencedId = 0;
+                if (Succeeded(valueIt->second.AsRecordId(&referencedId)) && referencedId == recordId)
+                {
+                    return true;
+                }
+            }
+        }
+    }
+
+    return false;
 }
 
 void MemoryDatabase::RecordCreate(MemoryTable* table, const std::shared_ptr<MemoryRecordData>& data)

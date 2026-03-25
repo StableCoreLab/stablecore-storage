@@ -305,13 +305,31 @@ ErrorCode ValidateColumnDef(const ColumnDef& def)
     {
         return SC_E_INVALIDARG;
     }
-    if (def.columnKind == ColumnKind::Relation && def.valueKind != ValueKind::RecordId)
+    if (def.columnKind == ColumnKind::Relation)
     {
-        return SC_E_SCHEMA_VIOLATION;
+        if (def.valueKind != ValueKind::RecordId)
+        {
+            return SC_E_SCHEMA_VIOLATION;
+        }
+        if (def.referenceTable.empty())
+        {
+            return SC_E_SCHEMA_VIOLATION;
+        }
+        if (!def.defaultValue.IsNull() && def.defaultValue.GetKind() != ValueKind::RecordId)
+        {
+            return SC_E_SCHEMA_VIOLATION;
+        }
     }
-    if (!def.defaultValue.IsNull() && def.defaultValue.GetKind() != def.valueKind)
+    else
     {
-        return SC_E_SCHEMA_VIOLATION;
+        if (!def.referenceTable.empty())
+        {
+            return SC_E_SCHEMA_VIOLATION;
+        }
+        if (!def.defaultValue.IsNull() && def.defaultValue.GetKind() != def.valueKind)
+        {
+            return SC_E_SCHEMA_VIOLATION;
+        }
     }
     if (!def.nullable && def.defaultValue.IsNull())
     {
@@ -653,6 +671,7 @@ private:
     void LoadJournalStacks();
     ErrorCode ValidateActiveEdit(IEditSession* edit) const;
     ErrorCode ValidateWrite(SqliteTable* table, const std::shared_ptr<SqliteRecordData>& data, const std::wstring& fieldName, const Value& value);
+    bool IsRecordReferenced(const std::wstring& tableName, RecordId recordId) const;
     JournalLookup LookupRecordJournalState(const std::wstring& tableName, RecordId recordId) const;
     void RemoveFieldJournalEntries(const std::wstring& tableName, RecordId recordId);
     void RemoveAllJournalEntriesForRecord(const std::wstring& tableName, RecordId recordId);
@@ -1557,6 +1576,10 @@ ErrorCode SqliteDatabase::DeleteRecord(SqliteTable* table, const std::shared_ptr
     {
         return SC_E_RECORD_DELETED;
     }
+    if (IsRecordReferenced(table->Name(), data->id))
+    {
+        return SC_E_CONSTRAINT_VIOLATION;
+    }
 
     const JournalLookup lookup = LookupRecordJournalState(table->Name(), data->id);
     if (lookup.deletedInActiveEdit)
@@ -1575,6 +1598,65 @@ ErrorCode SqliteDatabase::DeleteRecord(SqliteTable* table, const std::shared_ptr
     RemoveFieldJournalEntries(table->Name(), data->id);
     RecordJournal(table->Name(), data->id, L"", Value::Null(), Value::Null(), false, true, JournalOp::DeleteRecord);
     return SC_OK;
+}
+
+bool SqliteDatabase::IsRecordReferenced(const std::wstring& tableName, RecordId recordId) const
+{
+    for (const auto& [_, tableRef] : tables_)
+    {
+        auto* table = static_cast<SqliteTable*>(tableRef.Get());
+        if (table == nullptr)
+        {
+            continue;
+        }
+
+        SchemaPtr schema;
+        if (Failed(table->GetSchema(schema)) || !schema)
+        {
+            continue;
+        }
+
+        std::int32_t columnCount = 0;
+        if (Failed(schema->GetColumnCount(&columnCount)))
+        {
+            continue;
+        }
+
+        for (std::int32_t columnIndex = 0; columnIndex < columnCount; ++columnIndex)
+        {
+            ColumnDef column;
+            if (Failed(schema->GetColumn(columnIndex, &column)))
+            {
+                continue;
+            }
+            if (column.columnKind != ColumnKind::Relation || column.referenceTable != tableName)
+            {
+                continue;
+            }
+
+            for (const auto& [candidateId, candidateData] : table->Records())
+            {
+                if (candidateData == nullptr || candidateData->state == RecordState::Deleted)
+                {
+                    continue;
+                }
+
+                const auto valueIt = candidateData->values.find(column.name);
+                if (valueIt == candidateData->values.end())
+                {
+                    continue;
+                }
+
+                RecordId referencedId = 0;
+                if (Succeeded(valueIt->second.AsRecordId(&referencedId)) && referencedId == recordId)
+                {
+                    return true;
+                }
+            }
+        }
+    }
+
+    return false;
 }
 
 void SqliteDatabase::RecordCreate(SqliteTable* table, const std::shared_ptr<SqliteRecordData>& data)

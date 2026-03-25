@@ -49,6 +49,7 @@ if (STABLECORE_STORAGE_BUILD_TESTS)
     add_executable(stablecore_storage_tests
         Tests/M1Tests.cpp
         Tests/M2SqliteTests.cpp
+        Tests/M3Tests.cpp
     )
 
     target_link_libraries(stablecore_storage_tests

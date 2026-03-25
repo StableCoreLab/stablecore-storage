@@ -7,8 +7,9 @@ Current implementation includes:
 - Public V1 headers under `Include/StableCore/Storage`
 - In-memory database baseline with transaction, schema, undo/redo, changeset, and relation field support
 - SQLite persistence backend under `Src/Sqlite`
+- Computed-column metadata baseline in public types for upper-layer table tools
 - M1 example under `Examples/MemoryExample.cpp`
-- M1/M2 tests under `Tests/`
+- M1/M2/M3 baseline tests under `Tests/`
 
 Quick in-memory usage:
 
@@ -42,6 +43,8 @@ beam->SetInt64(L"Width", 300);
 
 db->Commit(edit.Get());
 ```
+
+Computed columns are modeled separately from storage schema facts. Use `ColumnDef` for persisted fact/relation columns and `ComputedColumnDef` for read-only derived columns owned by upper-layer table or calculation modules.
 
 面向未来算量产品的通用存储内核。
 

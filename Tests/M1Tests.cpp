@@ -95,6 +95,30 @@ TEST(StorageM1, SchemaRejectsInvalidRelationDefault)
     EXPECT_EQ(schema->AddColumn(relation), sc::SC_E_SCHEMA_VIOLATION);
 }
 
+TEST(StorageM1, SchemaRejectsInvalidReferenceTableUsage)
+{
+    sc::DbPtr db;
+    EXPECT_EQ(sc::CreateInMemoryDatabase(db), sc::SC_OK);
+
+    sc::TablePtr table;
+    EXPECT_EQ(db->CreateTable(L"Beam", table), sc::SC_OK);
+
+    sc::SchemaPtr schema;
+    EXPECT_EQ(table->GetSchema(schema), sc::SC_OK);
+
+    sc::ColumnDef factWithRef;
+    factWithRef.name = L"Width";
+    factWithRef.valueKind = sc::ValueKind::Int64;
+    factWithRef.referenceTable = L"Floor";
+    EXPECT_EQ(schema->AddColumn(factWithRef), sc::SC_E_SCHEMA_VIOLATION);
+
+    sc::ColumnDef relationWithoutRef;
+    relationWithoutRef.name = L"FloorRef";
+    relationWithoutRef.valueKind = sc::ValueKind::RecordId;
+    relationWithoutRef.columnKind = sc::ColumnKind::Relation;
+    EXPECT_EQ(schema->AddColumn(relationWithoutRef), sc::SC_E_SCHEMA_VIOLATION);
+}
+
 TEST(StorageM1, TransactionCommitAndQuery)
 {
     sc::DbPtr db;
@@ -258,4 +282,30 @@ TEST(StorageM1, GetStringCopyAndDefaultValue)
 
     std::wstring name;
     EXPECT_EQ(beam->GetStringCopy(L"Name", &name), sc::SC_E_VALUE_IS_NULL);
+}
+
+TEST(StorageM1, WriteRequiresActiveEditAndEmptyQueryIsNotError)
+{
+    sc::DbPtr db;
+    EXPECT_EQ(sc::CreateInMemoryDatabase(db), sc::SC_OK);
+
+    sc::TablePtr beamTable = CreateBeamTable(db);
+
+    sc::EditPtr seedEdit;
+    EXPECT_EQ(db->BeginEdit(L"seed", seedEdit), sc::SC_OK);
+
+    sc::RecordPtr beam;
+    EXPECT_EQ(beamTable->CreateRecord(beam), sc::SC_OK);
+    EXPECT_EQ(db->Commit(seedEdit.Get()), sc::SC_OK);
+
+    EXPECT_EQ(beam->SetInt64(L"Width", 200), sc::SC_E_NO_ACTIVE_EDIT);
+
+    sc::RecordCursorPtr cursor;
+    EXPECT_EQ(beamTable->FindRecords({L"Width", sc::Value::FromInt64(999)}, cursor), sc::SC_OK);
+
+    bool hasRow = true;
+    EXPECT_EQ(cursor->MoveNext(&hasRow), sc::SC_OK);
+    EXPECT_FALSE(hasRow);
+    sc::RecordPtr current;
+    EXPECT_EQ(cursor->GetCurrent(current), sc::SC_FALSE_RESULT);
 }
