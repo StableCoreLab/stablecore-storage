@@ -11,6 +11,7 @@
 #include <QMessageBox>
 #include <QPushButton>
 #include <QRegularExpression>
+#include <QSignalBlocker>
 #include <QSplitter>
 #include <QStatusBar>
 #include <QToolBar>
@@ -63,14 +64,25 @@ DatabaseEditorMainWindow::DatabaseEditorMainWindow(QWidget* parent)
 
     connect(session_, &DatabaseSession::DatabaseOpened, this, [this]()
     {
+        const QSignalBlocker blocker(tablesList_);
+        const QString current = session_->CurrentTableName();
         tablesList_->clear();
         tablesList_->addItems(session_->TableNames());
+        if (!current.isEmpty())
+        {
+            const QList<QListWidgetItem*> matches = tablesList_->findItems(current, Qt::MatchExactly);
+            if (!matches.isEmpty())
+            {
+                tablesList_->setCurrentItem(matches.front());
+            }
+        }
         diagnosticsText_->setPlainText(session_->BuildHealthSummary());
         UpdateGridSummary();
         SetStatusMessage(QStringLiteral("Database opened."));
     });
     connect(session_, &DatabaseSession::TablesChanged, this, [this]()
     {
+        const QSignalBlocker blocker(tablesList_);
         const QString current = session_->CurrentTableName();
         tablesList_->clear();
         tablesList_->addItems(session_->TableNames());
@@ -85,6 +97,16 @@ DatabaseEditorMainWindow::DatabaseEditorMainWindow(QWidget* parent)
     });
     connect(session_, &DatabaseSession::CurrentTableChanged, this, [this]()
     {
+        const QString current = session_->CurrentTableName();
+        if (!current.isEmpty())
+        {
+            const QSignalBlocker blocker(tablesList_);
+            const QList<QListWidgetItem*> matches = tablesList_->findItems(current, Qt::MatchExactly);
+            if (!matches.isEmpty())
+            {
+                tablesList_->setCurrentItem(matches.front());
+            }
+        }
         UpdateSchemaInspector();
         UpdateRecordInspector();
         UpdateComputedColumnsPanel();

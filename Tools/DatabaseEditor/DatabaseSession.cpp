@@ -215,9 +215,18 @@ bool DatabaseSession::CreateTable(const QString& tableName, QString* outError)
         return false;
     }
 
-    LoadTableNames(outError);
+    if (!LoadTableNames(outError))
+    {
+        return false;
+    }
+
+    if (!SelectTable(tableName, outError))
+    {
+        return false;
+    }
+
     emit TablesChanged();
-    return SelectTable(tableName, outError);
+    return true;
 }
 
 bool DatabaseSession::SelectTable(const QString& tableName, QString* outError)
@@ -242,10 +251,17 @@ bool DatabaseSession::SelectTable(const QString& tableName, QString* outError)
         return false;
     }
 
+    const QString previousTableName = currentTableName_;
+    sc::TablePtr previousTable = currentTable_;
+    sc::ComputedTableViewPtr previousTableView = currentTableView_;
+
     currentTable_ = table;
     currentTableName_ = tableName;
     if (!RebuildCurrentTableView(outError))
     {
+        currentTable_ = previousTable;
+        currentTableView_ = previousTableView;
+        currentTableName_ = previousTableName;
         return false;
     }
 

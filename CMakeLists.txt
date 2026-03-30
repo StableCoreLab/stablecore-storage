@@ -146,4 +146,30 @@ if (STABLECORE_STORAGE_BUILD_TESTS)
 
     include(GoogleTest)
     gtest_discover_tests(stablecore_storage_tests)
+
+    if (STABLECORE_STORAGE_BUILD_DB_EDITOR)
+        add_executable(stablecore_storage_db_editor_tests
+            Tests/DatabaseEditorSessionTests.cpp
+            Tools/DatabaseEditor/DatabaseSession.cpp
+            Tools/DatabaseEditor/DatabaseSession.h
+        )
+        stablecore_configure_output_dirs(stablecore_storage_db_editor_tests)
+
+        target_include_directories(stablecore_storage_db_editor_tests
+            PRIVATE
+                ${CMAKE_CURRENT_SOURCE_DIR}/Tools/DatabaseEditor
+        )
+
+        target_link_libraries(stablecore_storage_db_editor_tests
+            PRIVATE
+                stablecore_storage
+                GTest::gtest
+                GTest::gtest_main
+                Qt6::Core
+        )
+
+        target_compile_features(stablecore_storage_db_editor_tests PRIVATE cxx_std_20)
+        include(GoogleTest)
+        gtest_discover_tests(stablecore_storage_db_editor_tests)
+    endif()
 endif()
