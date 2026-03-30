@@ -10,21 +10,27 @@ option(STABLECORE_STORAGE_BUILD_DB_EDITOR "Build the Qt database editor tool" OF
 set(STABLECORE_STORAGE_BIN_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/Bin")
 
 function(stablecore_configure_output_dirs target_name)
+    if (MSVC AND CMAKE_GENERATOR MATCHES "Visual Studio")
+        set(stablecore_output_platform "${CMAKE_VS_PLATFORM_NAME}")
+    else()
+        set(stablecore_output_platform "$<PLATFORM_ID>")
+    endif()
+
     if (MSVC)
         set_target_properties(${target_name} PROPERTIES
-            RUNTIME_OUTPUT_DIRECTORY "${STABLECORE_STORAGE_BIN_ROOT}/$<CONFIG>/$<PLATFORM_ID>"
-            LIBRARY_OUTPUT_DIRECTORY "${STABLECORE_STORAGE_BIN_ROOT}/$<CONFIG>/$<PLATFORM_ID>"
-            ARCHIVE_OUTPUT_DIRECTORY "${STABLECORE_STORAGE_BIN_ROOT}/$<CONFIG>/$<PLATFORM_ID>"
-            PDB_OUTPUT_DIRECTORY "${STABLECORE_STORAGE_BIN_ROOT}/$<CONFIG>/$<PLATFORM_ID>"
-            COMPILE_PDB_OUTPUT_DIRECTORY "${STABLECORE_STORAGE_BIN_ROOT}/$<CONFIG>/$<PLATFORM_ID>"
+            RUNTIME_OUTPUT_DIRECTORY "${STABLECORE_STORAGE_BIN_ROOT}/$<CONFIG>/${stablecore_output_platform}"
+            LIBRARY_OUTPUT_DIRECTORY "${STABLECORE_STORAGE_BIN_ROOT}/$<CONFIG>/${stablecore_output_platform}"
+            ARCHIVE_OUTPUT_DIRECTORY "${STABLECORE_STORAGE_BIN_ROOT}/$<CONFIG>/${stablecore_output_platform}"
+            PDB_OUTPUT_DIRECTORY "${STABLECORE_STORAGE_BIN_ROOT}/$<CONFIG>/${stablecore_output_platform}"
+            COMPILE_PDB_OUTPUT_DIRECTORY "${STABLECORE_STORAGE_BIN_ROOT}/$<CONFIG>/${stablecore_output_platform}"
             PDB_NAME "${target_name}"
             COMPILE_PDB_NAME "${target_name}"
         )
     else()
         set_target_properties(${target_name} PROPERTIES
-            RUNTIME_OUTPUT_DIRECTORY "${STABLECORE_STORAGE_BIN_ROOT}/$<CONFIG>/$<PLATFORM_ID>"
-            LIBRARY_OUTPUT_DIRECTORY "${STABLECORE_STORAGE_BIN_ROOT}/$<CONFIG>/$<PLATFORM_ID>"
-            ARCHIVE_OUTPUT_DIRECTORY "${STABLECORE_STORAGE_BIN_ROOT}/$<CONFIG>/$<PLATFORM_ID>"
+            RUNTIME_OUTPUT_DIRECTORY "${STABLECORE_STORAGE_BIN_ROOT}/$<CONFIG>/${stablecore_output_platform}"
+            LIBRARY_OUTPUT_DIRECTORY "${STABLECORE_STORAGE_BIN_ROOT}/$<CONFIG>/${stablecore_output_platform}"
+            ARCHIVE_OUTPUT_DIRECTORY "${STABLECORE_STORAGE_BIN_ROOT}/$<CONFIG>/${stablecore_output_platform}"
         )
     endif()
 endfunction()
