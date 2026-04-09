@@ -1,0 +1,26 @@
+* text=auto
+
+# ===== C++ 源码（统一 LF）=====
+*.cpp  text eol=lf
+*.h    text eol=lf
+*.hpp  text eol=lf
+*.c    text eol=lf
+*.cc   text eol=lf
+*.cxx  text eol=lf
+*.inl  text eol=lf
+*.ixx  text eol=lf
+*.cppm text eol=lf
+
+# ===== 配置文件 =====
+*.cmake text eol=lf
+*.txt   text eol=lf
+*.md    text eol=lf
+*.json  text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+
+# ===== VS 工程文件（CRLF）=====
+*.sln     text eol=crlf
+*.vcxproj text eol=crlf
+*.filters text eol=crlf
+*.props   text eol=crlf
