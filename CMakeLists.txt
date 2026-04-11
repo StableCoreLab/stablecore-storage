@@ -77,6 +77,11 @@ target_include_directories(stablecore_storage
 
 target_compile_features(stablecore_storage PUBLIC cxx_std_20)
 
+if (MSVC)
+    target_compile_options(stablecore_storage PRIVATE /utf-8)
+    target_compile_options(sqlite3 PRIVATE /utf-8)
+endif()
+
 set_target_properties(stablecore_storage PROPERTIES
     WINDOWS_EXPORT_ALL_SYMBOLS ON
 )
@@ -91,6 +96,10 @@ add_executable(stablecore_storage_memory_example
 )
 stablecore_configure_output_dirs(stablecore_storage_memory_example)
 
+if (MSVC)
+    target_compile_options(stablecore_storage_memory_example PRIVATE /utf-8)
+endif()
+
 target_link_libraries(stablecore_storage_memory_example
     PRIVATE
         stablecore_storage
@@ -100,6 +109,10 @@ add_executable(stablecore_storage_product_example
     Examples/ProductIntegrationExample.cpp
 )
 stablecore_configure_output_dirs(stablecore_storage_product_example)
+
+if (MSVC)
+    target_compile_options(stablecore_storage_product_example PRIVATE /utf-8)
+endif()
 
 target_link_libraries(stablecore_storage_product_example
     PRIVATE
@@ -143,6 +156,10 @@ if (STABLECORE_STORAGE_BUILD_TESTS)
     )
     stablecore_configure_output_dirs(stablecore_storage_tests)
 
+    if (MSVC)
+        target_compile_options(stablecore_storage_tests PRIVATE /utf-8)
+    endif()
+
     target_link_libraries(stablecore_storage_tests
         PRIVATE
             stablecore_storage
@@ -160,6 +177,10 @@ if (STABLECORE_STORAGE_BUILD_TESTS)
             Tools/DatabaseEditor/DatabaseSession.h
         )
         stablecore_configure_output_dirs(stablecore_storage_db_editor_tests)
+
+        if (MSVC)
+            target_compile_options(stablecore_storage_db_editor_tests PRIVATE /utf-8)
+        endif()
 
         target_include_directories(stablecore_storage_db_editor_tests
             PRIVATE
