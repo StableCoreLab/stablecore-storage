@@ -23,4 +23,4 @@ echo Solution generated successfully:
 echo   %BUILD_DIR%\SCStorage.sln
 
 endlocal
-pause
+
