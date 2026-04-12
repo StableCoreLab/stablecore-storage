@@ -1,73 +1,60 @@
-# Computed Table View And SQLite Startup
+# 计算列表视图与 SQLite 启动能力说明
 
-This document records the completion of the previously open repository gaps around:
+本文记录此前仓库中几个关键缺口的收敛情况，重点包括：
 
-- computed-column integration closure
-- SQLite startup migration / recovery / diagnostics
-- index materialization
+- 计算列视图闭环
+- SQLite 启动、迁移、恢复与诊断
+- 索引物化策略
 
-## Computed Table View
+## 计算列表视图
 
-Implemented in:
+已实现内容：
 
-- `Include/StableCore/Storage/TableView.h`
-- `Src/Computed/TableView.cpp`
+- 为表提供统一的计算列表视图抽象。
+- 同时暴露事实列与计算列，供 UI 和上层调用统一读取。
+- 支持按记录读取指定列的当前值。
+- 支持在视图层挂载会话级计算列定义。
 
-Capabilities:
+设计价值：
 
-- combines fact columns and computed columns in one runtime view
-- enumerates underlying storage records
-- reads fact cells directly from storage
-- evaluates computed cells on demand
-- caches computed results by `recordId + columnName + version`
-- invalidates computed cache automatically via `IDatabaseObserver`
+- 数据表编辑工具不必区分“事实列读取”和“计算列读取”两套通道。
+- 计算列的缓存、失效和重建都可以封装在视图层。
+- 上层接入时可以把表视图当作更稳定的展示模型。
 
-Supported computed kinds:
+当前约束：
 
-- `Expression`
-- `Rule`
-- `Aggregate`
+- 计算列仍以 V1 范围为主，不追求完整表达式语言。
+- 复杂业务规则仍建议通过 ruleId 注册机制扩展。
 
-Aggregate baseline:
+## SQLite 启动流程
 
-- relation traversal via `IComputedContext::GetRelated(...)`
-- count / sum / min / max
-- relation descriptor format: `TargetTable.RelationField`
+当前启动链路覆盖：
 
-## SQLite Startup Flow
+- 打开 SQLite 数据库文件。
+- 初始化基础元数据表。
+- 读取表定义与列定义。
+- 加载持久化 Journal、恢复 Undo/Redo 所需状态。
+- 输出启动阶段诊断信息。
 
-Implemented in:
+设计目标：
 
-- `Src/Sqlite/SqliteAdapter.cpp`
+- 即使数据库存在旧版本或历史事务，也能给出可预期的启动行为。
+- 启动失败时尽量返回清晰错误，而不是静默崩溃。
+- 启动成功后，上层能够获得已对齐的数据库对象图。
 
-Startup behavior:
+## 索引物化
 
-1. open SQLite database
-2. initialize physical schema if missing
-3. load metadata
-4. run migration plan if `schema_version` is behind
-5. detect dirty shutdown through `clean_shutdown`
-6. run `PRAGMA integrity_check` on dirty startup
-7. load tables and journal stacks
-8. materialize indexes declared by schema metadata
-9. mark current session as unclean until clean destruction
+当前策略：
 
-Metadata keys:
+- 对常见等值查询和关系查询形态预留索引支持。
+- 在持久化层统一管理索引创建与使用。
+- 用性能冒烟测试验证索引主路径是否生效。
 
-- `version`
-- `next_record_id`
-- `schema_version`
-- `clean_shutdown`
+现阶段结论：
 
-Diagnostics persistence:
+- 仓库已经具备“最小可研发”的索引能力。
+- 性能调优仍需在真实业务数据规模下继续迭代。
 
-- SQLite startup diagnostics are inserted into `startup_diagnostics`
-- health-report building can now query database-provided diagnostics through `IDatabaseDiagnosticsProvider`
+## 小结
 
-## Index Materialization
-
-Repository baseline now includes:
-
-- default physical lookup indexes
-- runtime creation of per-column field-SCValue indexes for columns with `indexed=true`
-- add-column-time index creation for persisted SQLite schema changes
+随着上述能力补齐，Storage 仓库已经从“只有存储内核”向“可被产品直接集成的存储子系统”推进了一步。后续重点不再是从零设计，而是继续补强覆盖面、边界测试和工程质量。

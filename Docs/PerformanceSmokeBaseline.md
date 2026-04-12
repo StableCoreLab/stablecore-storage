@@ -1,29 +1,28 @@
-# Performance Smoke Baseline
+# 性能冒烟基线
 
-This repository now includes smoke-level performance validation in:
+当前仓库已经包含基础级别的性能冒烟验证，主要位于：
 
-- `Tests/PerformanceSmokeTests.cpp`
+- Tests/PerformanceSmokeTests.cpp
 
-Scope:
+验证范围：
 
-- bulk import through `ExecuteImport(...)`
-- indexed equality query on persisted SQLite data
-- relation-query-shaped lookup through indexed relation columns
+- 通过 ExecuteImport(...) 执行批量导入。
+- 在持久化 SQLite 数据上执行索引等值查询。
+- 通过关系列执行接近真实业务形态的查找。
 
-Current purpose:
+本文强调的不是“严格性能指标”，而是“最低可接受能力基线”：
 
-- verify that the repository contains executable performance scenarios
-- ensure performance-sensitive code paths exist in regression coverage
+- 主路径不会因明显低效实现而失去可用性。
+- 索引存在时能体现出基础收益。
+- 批量导入与关系查询不会在小到中等数据量下出现明显失控。
 
-What this is not:
+当前结论：
 
-- a formal product SLA benchmark
-- a statistically rigorous benchmark suite
-- a replacement for environment-specific profiling
+- 仓库已经建立性能回归的最小护栏。
+- 这些测试更适合发现明显退化，不适合替代正式基准测试。
 
-Recommended next step when validating on a real machine:
+后续建议：
 
-1. record import elapsed time
-2. record equality-query elapsed time
-3. record relation-query elapsed time
-4. compare against project-specific acceptance thresholds
+- 增加不同数据规模的分层样本。
+- 将性能结果纳入持续集成趋势跟踪。
+- 对导入、查询、恢复分别建立更细的基线。

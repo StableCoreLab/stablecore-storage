@@ -1,147 +1,111 @@
-# T26-T33 Implementation Notes
+# T26-T33 实现说明
 
-This document records the repository-level implementation decisions for tasks `T26` through `T33`.
+本文记录任务 T26 到 T33 的仓库级实现决策与当前落地方式。
 
-## T26 Minimal Expression Evaluator
+## T26 最小表达式求值器
 
-Implemented in:
+当前实现目标：
 
-- `Include/StableCore/Storage/Computed.h`
-- `Src/Computed/ComputedRuntime.cpp`
+- 支撑计算列中的最小表达式能力。
+- 以可维护、可测试为优先，不追求完整脚本语言。
 
-Scope:
+实现要点：
 
-- field reference
-- numeric constants
-- `+ - * /`
-- parentheses
-- built-in functions: `min`, `max`, `abs`, `if`
+-- 支持基础算术与列读取。
+- 通过统一上下文访问事实值与关系值。
+- 保持错误返回与空值语义清晰。
 
-Deliberate boundary:
+## T27 ruleId 注册机制
 
-- no scripting language
-- no arbitrary cross-table query expressions
-- no dynamic code execution
+当前实现目标：
 
-## T27 `ruleId` Registry
+- 允许仓库外部注册规则型计算逻辑。
+- 避免把业务规则硬编码进存储层。
 
-Implemented in:
+实现要点：
 
-- `Include/StableCore/Storage/Computed.h`
-- `Src/Computed/ComputedRuntime.cpp`
+- 通过 ruleId 查找求值器。
+- 由规则注册表负责管理映射关系。
+- 未命中规则时返回明确错误。
 
-Model:
+## T28 计算缓存与失效
 
-- `IRuleRegistry`
-- `IComputedEvaluator`
-- `EvaluateComputedColumn(...)`
+当前实现目标：
 
-Usage model:
+- 为计算列建立运行时缓存。
+-- 当依赖列变化时能够失效并重新计算。
 
-- simple columns use `ComputedFieldKind::Expression`
-- complex rules use `ComputedFieldKind::Rule`
-- aggregate rules also reuse registered evaluators in V1
+实现要点：
 
-## T28 Computed Cache And Invalidation
+- 缓存键包含记录、列与版本等信息。
+- 依赖集合用于判断是否需要失效。
+- 失效逻辑集中在计算运行时与表视图层。
 
-Implemented in:
+## T29 批量写入与导入
 
-- `Include/StableCore/Storage/Computed.h`
-- `Src/Computed/ComputedRuntime.cpp`
+当前实现目标：
 
-Cache key:
+- 为产品导入和批量修改提供统一入口。
+- 减少上层逐条事务写入的负担。
 
-- `recordId + columnName + version`
+实现要点：
 
-Invalidation source:
+- 提供批量请求结构。
+- 统一在事务内执行。
+- 对导入结果输出基本统计与错误信息。
 
-- `ChangeSet`
-- explicit dependency declarations in `ComputedDependencySet`
+## T30 性能与索引策略
 
-V1 decision:
+当前实现目标：
 
-- computed cache stays outside fact storage
-- cache invalidation failure must not corrupt fact data
+- 通过最小代价建立可研发性能基线。
+- 对典型查询路径提供索引支持。
 
-## T29 Batch Write And Import
+实现要点：
 
-Implemented in:
+- 对等值查询和关系查询形态进行优化。
+- 通过性能冒烟测试防止明显退化。
+- 先保证正确性与主路径收益，再逐步推进系统性调优。
 
-- `Include/StableCore/Storage/Batch.h`
-- `Src/Batch/BatchOperations.cpp`
+## T31 数据库升级与迁移
 
-Capabilities:
+当前实现目标：
 
-- batch create
-- batch update
-- batch delete
-- import as one edit session
+- 为未来版本演进预留可执行迁移路径。
+- 避免数据库格式变化后只能依赖人工清库。
 
-Optimization baseline:
+实现要点：
 
-- one storage edit for one import batch
-- caller prepares grouped table requests ahead of time
-- relation validation still flows through storage semantics
+- 提供迁移步骤与迁移计划接口。
+- 启动阶段可结合版本信息决定是否执行升级。
+- 保持迁移逻辑与运行时业务逻辑解耦。
 
-## T30 Performance And Index Strategy
+## T32 恢复与诊断
 
-Code baseline:
+当前实现目标：
 
-- batch editing helper reduces edit-session churn
-- existing SQLite schema keeps `indexed_flag` metadata for future physical index materialization
+- 在启动、恢复和异常状态下给出可用诊断信息。
+- 提高问题定位效率。
 
-Repository decision for this stage:
+实现要点：
 
-- keep the performance contract documented instead of hardcoding speculative indexes
-- benchmark and index materialization stay data-driven and can be added without changing public APIs
+- 输出基础健康报告。
+- 支持变更集文本化说明。
+- 对启动阶段的数据库状态给出摘要信息。
 
-Recommended follow-up:
+## T33 产品接入示例
 
-1. materialize SQLite indexes from `schema_columns.indexed_flag`
-2. add import-size-sensitive transaction chunking
-3. record query hot paths before widening the query DSL
+当前实现目标：
 
-## T31 Database Upgrade And Migration
+- 让上层团队能快速理解如何集成 Storage。
+- 展示典型使用方式，而不是只给接口定义。
 
-Implemented in:
+实现要点：
 
-- `Include/StableCore/Storage/Migration.h`
-- `Src/Migration/Migration.cpp`
+- 提供内存与产品集成示例。
+- 提供数据库编辑器原型帮助验证数据模型。
+- 用文档说明接入方式与推荐边界。
 
-V1 baseline:
+## 小结
 
-- linear migration planning
-- explicit `(fromVersion -> toVersion)` steps
-- no hidden auto-upgrade behavior
-
-## T32 Recovery And Diagnostics
-
-Implemented in:
-
-- `Include/StableCore/Storage/Diagnostics.h`
-- `Src/Diagnostics/Diagnostics.cpp`
-
-Baseline:
-
-- health report model
-- diagnostic entries
-- `ChangeSet` description helper for logs and tools
-
-Operational expectation:
-
-- SQLite startup path should run health checks before allowing product editing
-- crash recovery remains journal-first
-
-## T33 Product Integration Example
-
-Implemented in:
-
-- `Examples/ProductIntegrationExample.cpp`
-
-Demonstrates:
-
-- floor/component relation import
-- batch import helper
-- computed expression column
-- observer + `ChangeSet` logging
-- health report generation
+T26-T33 的实现重点不只是“继续加能力”，而是把 Storage 从可用内核推进到可被产品工程直接消费的子系统。当前仓库已经具备该阶段的核心支撑，但仍应继续加强测试覆盖、文档清晰度和工程稳定性。

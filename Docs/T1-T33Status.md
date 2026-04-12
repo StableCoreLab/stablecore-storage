@@ -1,92 +1,84 @@
-# T1-T33 Status
+# T1-T33 状态总览
 
-This repository now contains code or documentation deliverables for tasks `T1` through `T33`.
+当前仓库已经包含 T1 到 T33 对应的大部分代码或文档交付物。
 
-## Completed By Repository Artifacts
+## 由仓库产物覆盖的任务
 
 ### T1-T13
 
-Covered by:
+主要由以下内容覆盖：
 
-- public headers in `Include/StableCore/Storage`
-- in-memory storage implementation
-- `Tests/M1Tests.cpp`
-- `Examples/MemoryExample.cpp`
-- `README.md`
+- Include/StableCore/Storage 下的公共头文件。
+- 内存存储实现。
+- 单元测试与示例工程。
+- 基线设计与路线图文档。
 
 ### T14-T23
 
-Covered by:
+主要由以下内容覆盖：
 
-- `Src/Sqlite/SqliteAdapter.cpp`
-- `Tests/M2SqliteTests.cpp`
+- SQLite 适配层实现。
+- SQLite 持久化读写、事务、恢复与诊断路径。
+- SQLite 集成测试。
 
 ### T24-T25
 
-Covered by:
+主要由以下内容覆盖：
 
-- `Tests/M3Tests.cpp`
-- `Include/StableCore/Storage/SCTypes.h`
-- `Docs/T1-T25Status.md`
+- 关系建模与相关测试。
+- 计算列元模型与表视图抽象。
 
 ### T26-T28
 
-Covered by:
+主要由以下内容覆盖：
 
-- `Include/StableCore/Storage/Computed.h`
-- `Src/Computed/ComputedRuntime.cpp`
-- `Tests/ComputedTests.cpp`
-- `Docs/T26-T33Implementation.md`
+- 最小表达式求值器。
+- ruleId 注册机制。
+- 计算缓存与失效逻辑。
 
 ### T29
 
-Covered by:
+主要由以下内容覆盖：
 
-- `Include/StableCore/Storage/Batch.h`
-- `Src/Batch/BatchOperations.cpp`
-- `Examples/ProductIntegrationExample.cpp`
+- 批量写入与导入能力。
+- 对应的性能冒烟测试与接口收口。
 
 ### T30
 
-Covered by:
+主要由以下内容覆盖：
 
-- `Include/StableCore/Storage/Batch.h`
-- `Docs/T26-T33Implementation.md`
-- existing `indexed_flag` / `participates_in_calc_flag` schema metadata in SQLite storage
+- 索引策略。
+- 查询主路径。
+- 性能冒烟基线文档与测试。
 
 ### T31
 
-Covered by:
+主要由以下内容覆盖：
 
-- `Include/StableCore/Storage/Migration.h`
-- `Src/Migration/Migration.cpp`
-- `Docs/T26-T33Implementation.md`
+- 迁移规划接口。
+- 启动阶段的升级与恢复考虑。
 
 ### T32
 
-Covered by:
+主要由以下内容覆盖：
 
-- `Include/StableCore/Storage/Diagnostics.h`
-- `Src/Diagnostics/Diagnostics.cpp`
-- `Docs/T26-T33Implementation.md`
+- 启动诊断。
+- 恢复语义说明。
+- 变更与状态描述接口。
 
 ### T33
 
-Covered by:
+主要由以下内容覆盖：
 
-- `Examples/ProductIntegrationExample.cpp`
-- `Docs/T26-T33Implementation.md`
+- 产品集成示例。
+- 数据库编辑器原型。
+- 面向接入的设计文档。
 
-## Verification Limit
+## 验证边界
 
-This completion state is based on repository implementation and documentation presence.
+需要说明的是，本文件判断“已覆盖”主要依据以下标准：
 
-Not verified in this pass:
+- 仓库中已经存在对应实现、测试或明确文档。
+- 主路径能力已具备，不要求所有边界都完全封闭。
 
-- local compile
-- runtime execution
-- integration behavior under the current machine toolchain
-
-Reason:
-
-- the current environment is missing a usable SQLite3 development package for CMake discovery, and this pass intentionally avoided compilation.
+因此，T1-T33 的结论更接近“仓库已形成对应产物”，而不是“全部能力已经达到最终产品级完成度”。
