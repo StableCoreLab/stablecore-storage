@@ -4,6 +4,8 @@ project(StablecoreStorage LANGUAGES C CXX)
 
 include(CTest)
 include(FetchContent)
+include(GNUInstallDirs)
+include(CMakePackageConfigHelpers)
 
 option(STABLECORE_STORAGE_BUILD_DB_EDITOR "Build the Qt database editor tool" OFF)
 
@@ -13,6 +15,16 @@ set(STABLECORE_STORAGE_PRODUCT_EXAMPLE_TARGET SCStorageProductExample)
 set(STABLECORE_STORAGE_TESTS_TARGET SCStorageTests)
 set(STABLECORE_STORAGE_DB_EDITOR_TESTS_TARGET SCStorageDatabaseEditorTests)
 set(STABLECORE_STORAGE_BIN_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../Bin")
+set(STABLECORE_STORAGE_INSTALL_CMAKE_DIR "${CMAKE_INSTALL_LIBDIR}/cmake/StablecoreStorage")
+
+if (MSVC AND CMAKE_SIZEOF_VOID_P EQUAL 8)
+    set(STABLECORE_STORAGE_INSTALL_PLATFORM "x64")
+else()
+    set(STABLECORE_STORAGE_INSTALL_PLATFORM "${CMAKE_SYSTEM_PROCESSOR}")
+endif()
+
+set(STABLECORE_STORAGE_INSTALL_BIN_DIR "${CMAKE_INSTALL_BINDIR}/$<CONFIG>/${STABLECORE_STORAGE_INSTALL_PLATFORM}")
+set(STABLECORE_STORAGE_INSTALL_LIB_DIR "${CMAKE_INSTALL_LIBDIR}/$<CONFIG>/${STABLECORE_STORAGE_INSTALL_PLATFORM}")
 
 function(stablecore_configure_output_dirs target_name)
     if (MSVC AND CMAKE_GENERATOR MATCHES "Visual Studio")
@@ -63,8 +75,9 @@ stablecore_configure_output_dirs(${STABLECORE_STORAGE_TARGET})
 
 target_include_directories(${STABLECORE_STORAGE_TARGET}
     PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}/Include
-        ${CMAKE_CURRENT_SOURCE_DIR}/../ThirdParty/Sqlite
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/Include>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../ThirdParty/Sqlite>
+        $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
 
 target_compile_features(${STABLECORE_STORAGE_TARGET} PUBLIC cxx_std_20)
@@ -114,6 +127,21 @@ if (STABLECORE_STORAGE_BUILD_DB_EDITOR)
     add_subdirectory(Tools/DatabaseEditor)
 endif()
 
+set(STABLECORE_STORAGE_PUBLIC_HEADERS
+    Include/StableCore/Storage/Batch.h
+    Include/StableCore/Storage/Computed.h
+    Include/StableCore/Storage/Diagnostics.h
+    Include/StableCore/Storage/Errors.h
+    Include/StableCore/Storage/Factory.h
+    Include/StableCore/Storage/Interfaces.h
+    Include/StableCore/Storage/Migration.h
+    Include/StableCore/Storage/RefCounted.h
+    Include/StableCore/Storage/RefPtr.h
+    Include/StableCore/Storage/Storage.h
+    Include/StableCore/Storage/TableView.h
+    Include/StableCore/Storage/Types.h
+)
+
 option(STABLECORE_STORAGE_BUILD_TESTS "Build tests" ON)
 
 if (STABLECORE_STORAGE_BUILD_TESTS)
@@ -123,6 +151,8 @@ if (STABLECORE_STORAGE_BUILD_TESTS)
 
     if (NOT GTest_FOUND)
         set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+        set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
+        set(INSTALL_GMOCK OFF CACHE BOOL "" FORCE)
 
         FetchContent_Declare(
             googletest
@@ -186,3 +216,49 @@ if (STABLECORE_STORAGE_BUILD_TESTS)
         gtest_discover_tests(${STABLECORE_STORAGE_DB_EDITOR_TESTS_TARGET})
     endif()
 endif()
+
+install(TARGETS ${STABLECORE_STORAGE_TARGET}
+    EXPORT StablecoreStorageTargets
+    RUNTIME DESTINATION ${STABLECORE_STORAGE_INSTALL_BIN_DIR}
+    LIBRARY DESTINATION ${STABLECORE_STORAGE_INSTALL_BIN_DIR}
+    ARCHIVE DESTINATION ${STABLECORE_STORAGE_INSTALL_LIB_DIR}
+    INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+)
+
+install(FILES ${STABLECORE_STORAGE_PUBLIC_HEADERS}
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/StableCore/Storage
+)
+
+install(TARGETS ${STABLECORE_STORAGE_MEMORY_EXAMPLE_TARGET} ${STABLECORE_STORAGE_PRODUCT_EXAMPLE_TARGET}
+    RUNTIME DESTINATION ${STABLECORE_STORAGE_INSTALL_BIN_DIR}
+)
+
+if (STABLECORE_STORAGE_BUILD_DB_EDITOR)
+    install(TARGETS SCStorageDatabaseEditor
+        RUNTIME DESTINATION ${STABLECORE_STORAGE_INSTALL_BIN_DIR}
+    )
+endif()
+
+install(EXPORT StablecoreStorageTargets
+    FILE StablecoreStorageTargets.cmake
+    NAMESPACE Stablecore::
+    DESTINATION ${STABLECORE_STORAGE_INSTALL_CMAKE_DIR}
+)
+
+configure_package_config_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/cmake/StablecoreStorageConfig.cmake.in
+    ${CMAKE_CURRENT_BINARY_DIR}/StablecoreStorageConfig.cmake
+    INSTALL_DESTINATION ${STABLECORE_STORAGE_INSTALL_CMAKE_DIR}
+)
+
+write_basic_package_version_file(
+    ${CMAKE_CURRENT_BINARY_DIR}/StablecoreStorageConfigVersion.cmake
+    VERSION 1.0.0
+    COMPATIBILITY SameMajorVersion
+)
+
+install(FILES
+    ${CMAKE_CURRENT_BINARY_DIR}/StablecoreStorageConfig.cmake
+    ${CMAKE_CURRENT_BINARY_DIR}/StablecoreStorageConfigVersion.cmake
+    DESTINATION ${STABLECORE_STORAGE_INSTALL_CMAKE_DIR}
+)
