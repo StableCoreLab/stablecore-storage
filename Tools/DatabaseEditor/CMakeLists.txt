@@ -17,8 +17,6 @@ add_executable(SCStorageDatabaseEditor
 )
 SCStorageConfigureOutputDirs(SCStorageDatabaseEditor)
 
-SCEnableUtf8ForTargets(SCStorageDatabaseEditor)
-
 target_link_libraries(SCStorageDatabaseEditor
         PRIVATE
         ${SCSTORAGE_TARGET}

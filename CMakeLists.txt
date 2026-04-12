@@ -61,6 +61,8 @@ function(SCStorageConfigureOutputDirs target_name)
             ARCHIVE_OUTPUT_DIRECTORY "${SCSTORAGE_BIN_ROOT}/$<CONFIG>/${SCSTORAGE_OUTPUT_PLATFORM}"
         )
     endif()
+
+    SCEnableUtf8ForTargets(${target_name})
 endfunction()
 
 if (NOT DEFINED CMAKE_PREFIX_PATH AND DEFINED ENV{QT6_8_x64} AND NOT "$ENV{QT6_8_x64}" STREQUAL "")
@@ -92,7 +94,6 @@ target_include_directories(${SCSTORAGE_TARGET}
 )
 
 target_compile_features(${SCSTORAGE_TARGET} PUBLIC cxx_std_20)
-SCEnableUtf8ForTargets(${SCSTORAGE_TARGET})
 if (MSVC)
     target_compile_options(${SCSTORAGE_TARGET} PRIVATE /MP)
 endif()
@@ -105,8 +106,6 @@ add_executable(${SCSTORAGE_MEMORY_EXAMPLE_TARGET}
     Examples/MemoryExample.cpp
 )
 SCStorageConfigureOutputDirs(${SCSTORAGE_MEMORY_EXAMPLE_TARGET})
-
-SCEnableUtf8ForTargets(${SCSTORAGE_MEMORY_EXAMPLE_TARGET})
 if (MSVC)
     target_compile_options(${SCSTORAGE_MEMORY_EXAMPLE_TARGET} PRIVATE /MP)
 endif()
@@ -120,8 +119,6 @@ add_executable(${SCSTORAGE_PRODUCT_EXAMPLE_TARGET}
     Examples/ProductIntegrationExample.cpp
 )
 SCStorageConfigureOutputDirs(${SCSTORAGE_PRODUCT_EXAMPLE_TARGET})
-
-SCEnableUtf8ForTargets(${SCSTORAGE_PRODUCT_EXAMPLE_TARGET})
 if (MSVC)
     target_compile_options(${SCSTORAGE_PRODUCT_EXAMPLE_TARGET} PRIVATE /MP)
 endif()
@@ -184,8 +181,6 @@ if (SCSTORAGE_BUILD_TESTS)
         Tests/TableViewTests.cpp
     )
     SCStorageConfigureOutputDirs(${SCSTORAGE_TESTS_TARGET})
-
-    SCEnableUtf8ForTargets(${SCSTORAGE_TESTS_TARGET})
     if (MSVC)
         target_compile_options(${SCSTORAGE_TESTS_TARGET} PRIVATE /MP)
     endif()
@@ -207,8 +202,6 @@ if (SCSTORAGE_BUILD_TESTS)
             Tools/DatabaseEditor/DatabaseSession.h
         )
         SCStorageConfigureOutputDirs(${SCSTORAGE_DB_EDITOR_TESTS_TARGET})
-
-        SCEnableUtf8ForTargets(${SCSTORAGE_DB_EDITOR_TESTS_TARGET})
         if (MSVC)
             target_compile_options(${SCSTORAGE_DB_EDITOR_TESTS_TARGET} PRIVATE /MP)
         endif()
