@@ -1,24 +1,34 @@
 # StableCore Storage
 
-## Current Status
+本文件为 Storage 模块的总体说明，采用统一中文术语：
 
-Current implementation includes:
+- 表（Table）
+- 记录（Record）
+- 列（Column，通常称“列”）
+- 计算列（Computed / 计算列）
+- 变更集（ChangeSet）
+- 撤销/重做（Undo/Redo）
 
-- Public V1 headers under `Include/StableCore/Storage`
-- Shared library target `SCStorage` (`.dll` on Windows)
-- In-memory database baseline with transaction, schema, undo/redo, changeset, and relation field support
-- SQLite persistence backend under `Src/Sqlite`
-- Computed-column metadata baseline in public types for upper-layer table tools
-- Minimal computed runtime (`expression`, `ruleId`, cache model)
-- Unified computed table view with fact/computed column composition
-- Batch edit/import helpers
-- Migration, startup recovery, index materialization, and diagnostics helpers
-- M1 example under `Examples/MemoryExample.cpp`
-- Product integration example under `Examples/ProductIntegrationExample.cpp`
-- M1/M2/M3 baseline tests under `Tests/`
-- Optional Qt database editor under `Tools/DatabaseEditor`
+目标：描述模块的定位、核心概念、构建与使用说明以及 V1 范围。
 
-Quick in-memory usage:
+## 概要
+
+目前实现要点：
+
+- 公共 V1 头文件位于 `Include/StableCore/Storage`
+- 生成共享库目标 `SCStorage`（Windows 为 `.dll`）
+- 内存型数据库（支持事务、Schema、撤销/重做、变更集与关系列）
+- SQLite 持久化后端（位于 `Src/Sqlite`）
+- 在公共类型中提供计算列元数据支持，供上层表工具使用
+- 简要的计算运行时：表达式、ruleId、缓存模型
+- 统一的表视图（合并事实列与计算列）
+- 批量编辑/导入辅助工具
+- 迁移、启动恢复、索引物化与诊断辅助
+- 示例：`Examples/MemoryExample.cpp`、`Examples/ProductIntegrationExample.cpp`
+- 测试：`Tests/` 下包含基础测试
+- 可选的 Qt 数据库编辑器：`Tools/DatabaseEditor`
+
+示例：内存数据库快速用法（C++）：
 
 ```cpp
 #include "StableCore/Storage/SCStorage.h"
@@ -51,313 +61,95 @@ beam->SetInt64(L"Width", 300);
 db->Commit(edit.Get());
 ```
 
-Computed columns are modeled separately from storage schema facts. Use `ColumnDef` for persisted fact/relation columns and `ComputedColumnDef` for read-only derived columns owned by upper-layer table or calculation modules.
+说明：计算列（ComputedColumn）由上层展示或计算模块管理；事实列（SchemaColumn）由存储层持久化。
 
-## Build Notes
+## 构建说明
 
-Default Visual Studio generation script:
+生成脚本（默认 Visual Studio）：
 
 ```bat
 Storage\GenerateStorageVs2022.bat
 ```
 
-Current defaults:
+默认选项说明：
 
-- `SCStorage` is generated as a shared library
-- database editor generation is enabled by default
+- `SCStorage` 生成为共享库
+- 数据库编辑器默认不会参与构建，需要显式开启
 
-Database editor requires `Qt 6.8 Widgets`. Before running the script, set one of:
+数据库编辑器依赖 Qt 6.8 Widgets。运行前请在环境中设置其中一个变量：
 
 ```bat
 set QT6_8_x64=C:\Qt\6.8.0\msvc2022_64
 ```
 
-or:
+或：
 
 ```bat
 set CMAKE_PREFIX_PATH=C:\Qt\6.8.0\msvc2022_64
 ```
 
-or:
+或：
 
 ```bat
 set Qt6_DIR=C:\Qt\6.8.0\msvc2022_64\lib\cmake\Qt6
 ```
 
-If Qt is not configured, CMake will fail while generating the editor target.
+若未正确配置 Qt，CMake 在生成编辑器目标时会失败。`CMakeLists.txt` 与 `GenerateStorageVs2022.bat` 都支持读取 `QT6_8_x64` 并自动推导 `Qt6_DIR`。
 
-Top-level `CMakeLists.txt` and `GenerateStorageVs2022.bat` both support reading `QT6_8_x64` directly and will derive `Qt6_DIR` from it automatically.
+## 核心概念（统一术语）
 
-For higher-level integration:
+- Database（数据库）：管理表、事务、版本与观察者。
+- Table（表）：管理记录、Schema 与基础查询。
+- Record（记录）：事实数据载体，具有稳定的 `recordId`。
+- Column（列）：表中的字段，区分事实列（持久化）与计算列（派生、只读或会话级）。
+- EditSession / Transaction（事务）：包裹写操作，提交后生成 `ChangeSet`。
+- Journal（日志）：用于记录事务内变更以支持撤销/重做和恢复。
 
-- `Computed.h` provides expression/rule evaluation and cache invalidation primitives.
-- `TableView.h` provides a product-facing table view that combines fact columns and computed columns.
-- `Batch.h` provides batch-edit/import helpers that reuse the database transaction model.
-- `Migration.h` provides explicit migration planning primitives.
-- `Diagnostics.h` provides health-report, startup diagnostics, and `ChangeSet` description helpers.
+## 设计定位与分层
 
-面向未来算量产品的通用存储内核�?
+本库定位为算量产品的事实数据存储引擎（Storage），不包含上层领域模型或完整计算引擎。推荐的分层：
 
-核心目标�?
+1. Storage：保存事实数据、关系数据、事务与版本信息。
+2. Model/Domain：将 `Record` 映射到业务对象（如 Beam、Wall、Floor）。
+3. Calc Engine：基于事实数据产生派生结果（计算列、汇总等）。
+4. UI/View：订阅变更并做局部刷新。
 
-- 与业务对象解耦，采用 `Database / Table / Record / Field`
-- 支持事务、`Undo/Redo`、变更通知
-- 支持�?DLL 安全访问和长期持有对�?
-- 支持用户扩展事实属性列
-- �?UI 局部刷新、增量重算、后续查询与缓存提供稳定基础
+## V1 范围（必需能力）
 
-## 1. 设计定位
+V1 应覆盖：
 
-本库定位为算量产品的**事实数据存储�?*，而不是完整业务层或计算层�?
+1. 事实数据持久化存储
+2. 稳定的 `recordId`
+3. 事务与撤销/重做（Undo/Redo）
+4. 关系列支持
+5. 受控的 Schema 管理
+6. 变更通知机制
+7. 全局版本管理
+8. 用户可扩展的事实列
+9. 删除语义与回滚支持
+10. 基础查询与索引支持
 
-推荐分层�?
+V1 不涵盖：ORM、UI 绑定实现、分布式写或通用 SQL 引擎。
 
-- `Storage`：保存事实数据、关系数据、事务日志、版本信�?
-- `Model/Domain`：把 `Record` 映射�?Beam、Wall、Floor 等领域对�?
-- `Calc Engine`：根据事实数据计算派生结�?
-- `UI/View`：订阅变更并执行局部刷�?
+## 对象职责（摘要）
 
-### 1.1 事实数据与派生数�?
+- `Database`：管理表、事务、版本与观察者。
+- `Table`：管理记录集合、Schema 与查询。
+- `Record`：持有具体事实值与 `recordId`。
+- `Column`：列定义与元信息（名称、显示名、类型、单位、默认值、是否可空、是否用户定义、是否为关系列、是否参与索引/计算等）。
+- `EditSession`：事务上下文。
+- `Journal`：事务内变更记录。
+- `ChangeSet`：提交后的变更集合，用于 UI 与增量重算。
 
-存储层只保存**事实数据**�?
+## 事务与撤销/重做
 
-- 构件基础属�?
-- 分类、标签、来源信�?
-- 用户录入参数
-- 对象关系
-- 用户新增的事实型属性列
+写操作必须在事务内进行，提交后生成 `ChangeSet` 并广播通知。撤销/重做以事务为单位。
 
-派生结果不作为事实层核心职责�?
-
-- 体积
-- 模板面积
-- 钢筋重量
-- 清单工程�?
-- 定额工程�?
-
-这类数据应放在上层计算结果层，或作为可失效缓存存在�?
-
-## 2. 核心设计原则
-
-### 2.1 通用数据模型
-
-```text
-Database
- ├── Table
- �?   ├── Record
- �?   �?   ├── Field
- �?   �?   └── RelationField
- �?   └── Schema
- ├── Journal
- ├── Version
- └── Observer
-```
-
-### 2.2 生命周期模型
-
-内部采用侵入式引用计数，对外统一通过 `RefPtr<T>` 管理对象生命周期�?
-
-约束�?
-
-- 禁止业务层手工调�?`Release()`
-- 禁止�?DLL `delete`
-- 必须通过 `RefPtr` 持有接口对象
-- 长期持有 `RecordPtr` 是允许的
-
-### 2.3 事务优先
-
-所有写操作都必须处于事务内�?
-
-```text
-BeginEdit
-   �?
-多次修改
-   �?
-Commit / Rollback
-```
-
-一个用户动作对应一个事务，一个事务对应一�?`ChangeSet`，`Undo/Redo` 也以事务为单位�?
-
-## 3. 面向算量产品�?V1 范围
-
-V1 必须覆盖以下能力�?
-
-1. 事实数据存储
-2. 稳定 `recordId`
-3. 事务�?`Undo/Redo`
-4. 关系字段
-5. 受控 `Schema`
-6. 变更通知
-7. 全局版本�?
-8. 用户扩展事实�?
-9. 删除语义
-10. 查询与索引预�?
-
-V1 不做�?
-
-- ORM
-- UI 绑定实现
-- 分布式同�?
-- 跨进程并发写
-- 通用 SQL 引擎
-- 自动依赖图推�?
-
-## 4. 核心对象职责
-
-| 对象 | 职责 |
-| --- | --- |
-| `Database` | 管理表、事务、版本、Undo/Redo、Observer |
-| `Table` | 管理 Record、Schema、基础查询 |
-| `Record` | 事实数据载体，持有稳�?`recordId` |
-| `Field` | 标量事实字段 |
-| `RelationField` | 引用其他 Record 的关系字�?|
-| `EditSession` | 事务上下�?|
-| `Journal` | 保存事务内变更，用于 Undo/Redo |
-| `ChangeSet` | 提交后的变更集合，用�?UI 和增量重�?|
-
-## 5. Record 身份与生命周�?
-
-### 5.1 稳定主键
-
-每个 `Record` 必须具有数据库内稳定�?`recordId`�?
-
-要求�?
-
-- 删除�?`recordId` 不复�?
-- `Undo` 恢复记录时保持原 `recordId`
-- UI 选中状态、缓存、关系引用、计算依赖均基于 `recordId`
-
-### 5.2 长期持有语义
-
-领域对象可以长期持有 `RecordPtr`�?
-
-```cpp
-class Beam
-{
-    RecordPtr m_record;
-};
-```
-
-### 5.3 删除后的句柄状�?
-
-记录删除后，旧的 `RecordPtr` 不应变成野指针，而应进入 `invalid/tombstone` 状态�?
-
-约束�?
-
-- 可查询其 `recordId`
-- 禁止继续写入
-- 读取行为由接口统一定义，可返回错误�?
-- `Undo` 恢复后重新回到有效状�?
-
-## 6. Schema 与用户定义属性列
-
-### 6.1 采用受控动�?Schema
-
-系统不采用完全自由的 Key-SCValue 模式，而采�?*受控动�?*�?
-
-- 表有正式 `Schema`
-- 字段必须注册
-- 用户可以新增字段
-- 新增后字段纳�?Schema 管理
-
-### 6.2 字段分类
-
-建议把列分为两类�?
-
-#### `SchemaColumn`
-
-事实字段，进入存储层�?
-
-示例�?
-
-- 楼层
-- 材质
-- 强度等级
-- 宽度
-- 高度
-- 用户新增的损耗系�?
-- 用户新增的计算分�?
-
-#### `ComputedColumn`
-
-派生展示字段，不作为事实层核心存储�?
-
-示例�?
-
-- 体积
-- 模板面积
-- 清单工程�?
-- 定额工程�?
-
-### 6.3 字段元信息建�?
-
-每个正式字段建议具备以下元信息：
-
-- 字段�?
-- 显示�?
-- 类型
-- 单位
-- 默认�?
-- 是否可空
-- 是否可编�?
-- 是否用户定义
-- 是否关系字段
-- 是否可索�?
-- 是否参与计算
-
-## 7. 值类型系�?
-
-V1 建议至少支持�?
-
-- `Int64`
-- `Double`
-- `Bool`
-- `String`
-- `Null`
-- `RecordId`
-- `Enum` 或受控字符串
-
-建议预留扩展�?
-
-- `RecordIdList`
-- `BinaryRef`
-- `DateTime`
-- `Json`
-
-原则�?
-
-- 不用字符串伪装布尔、枚举或引用
-- 关系值与普通字符串严格区分
-- 字段类型一经注册，不应随意漂移
-
-## 8. 关系模型
-
-算量产品必须支持对象之间的关系，而不只是标量字段�?
-
-V1 至少支持�?
-
-- 单引用：一个字段指向另一�?`recordId`
-- 多引用：可通过 `RecordIdList` 或关系表实现
-- 关系变更通知
-- 基础反查预留
-
-典型关系�?
-
-- 构件属于楼层
-- 洞口关联�?
-- 梁关联轴�?
-- 构件关联做法
-- 构件关联清单�?
-
-## 9. 事务、Journal �?Undo/Redo
-
-### 9.1 事务模型
-
-写入必须通过事务进行�?
+示例：
 
 ```cpp
 EditPtr edit;
-pDb->BeginEdit(L"修改梁宽�?, edit);
+pDb->BeginEdit(L"修改梁宽度", edit);
 
 TablePtr table;
 pDb->GetTable(L"Beam", table);
@@ -365,38 +157,45 @@ pDb->GetTable(L"Beam", table);
 RecordPtr record;
 table->GetRecord(beamId, record);
 
-record->SetInt(L"Width", 300);
+record->SetInt64(L"Width", 300);
 
 pDb->Commit(edit.Get());
 ```
 
-### 9.2 Journal 记录内容
+## Schema 与列分类
 
-建议覆盖以下操作�?
+建议将列分为两类：
 
-- 设置字段
-- 创建记录
-- 删除记录
-- 设置关系
-- 批量字段更新
+- SchemaColumn（事实列）：进入存储层并持久化。
+- ComputedColumn（计算列）：由上层计算或会话维护，通常为只读显示字段。
 
-同一事务内建议做变更聚合，减少无�?Journal 噪音�?
+字段元信息建议包含：名称、显示名、类型、单位、默认值、是否可空、是否用户定义、是否为关系列、是否参与索引/计算等。
 
-### 9.3 Undo/Redo 语义
+## 值类型（建议）
 
-- `Undo/Redo` 以事务为单位
-- `actionName` 应可直接显示�?UI �?
-- 一�?`Undo` 对应回滚一个完整用户动�?
+初始支持：`Int64`、`Double`、`Bool`、`String`、`Null`、`RecordId`、`Enum`（或受控字符串）；可扩展到 `RecordIdList`、`BinaryRef`、`DateTime`、`Json` 等。
 
-## 10. ChangeSet 与通知模型
+原则：不要用字符串伪装布尔、枚举或引用；关系值应与普通字符串严格区分；字段类型一经注册不随意变更。
 
-### 10.1 通知触发�?
+## 关系模型
 
-以下操作应广播变更：
+V1 至少支持：单引用、多引用（`RecordIdList` 或关系表）、关系变更通知与基础反查。
 
-- `Commit`
-- `Undo`
-- `Redo`
+## 诊断与健康检查
+
+提供基本的启动诊断、健康摘要与变更集描述，便于 UI 与工具定位问题。
+
+## 参考文件与目录
+
+- 头文件：`Include/StableCore/Storage`
+- 源码：`Src/`
+- 测试：`Tests/`
+- 示例：`Examples/`
+- 数据库编辑器：`Tools/DatabaseEditor`（见其 README）
+
+---
+
+如需我现在把 `Storage/Docs` 下的文档也按相同术语和风格再快速扫描并做小幅统一，请回复“继续”。
 
 ### 10.2 数据库级 Observer
 

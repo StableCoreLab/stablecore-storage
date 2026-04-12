@@ -8,7 +8,7 @@
 - 创建表
 - 添加事实列和关系列
 - 浏览、新增、删除、编辑记录
-- 通过关系选择器填写关系字段
+- 通过关系选择器填写关系列
 - 查看 Schema、选中记录和健康摘要
 - 为当前会话临时新增、编辑、删除计算列
 
@@ -98,16 +98,16 @@ Build\StorageDbEditor\Release\SCStorageDatabaseEditor.exe
 
 ### 5. 编辑关系字段
 
-关系字段不要求用户手输 `recordId`。
+关系列不要求用户手输 `recordId`。
 
 操作方式：
 
-1. 选中一个关系字段单元格
+1. 选中一个关系列单元格
 2. 点击 `Pick Relation`
 3. 在弹窗里选择目标记录
 4. 确认后写入选中记录的 `recordId`
 
-关系选择器会优先尝试使用这些字段作为候选标签：
+关系选择器会优先尝试使用这些列作为候选标签：
 
 - `Name`
 - `Title`
@@ -148,9 +148,9 @@ Build\StorageDbEditor\Release\SCStorageDatabaseEditor.exe
 - `displayName`
 - `valueKind`
 - `cacheable`
-- 事实依赖字段
-- 关系依赖字段
-- 聚合关系和聚合字段
+- 事实依赖列
+- 关系依赖列
+- 聚合关系和聚合列
 
 注意：
 
@@ -169,7 +169,7 @@ Build\StorageDbEditor\Release\SCStorageDatabaseEditor.exe
 
 ## 当前限制
 
-- 关系字段仅支持单值引用
+- 关系列仅支持单值引用
 - 过滤是全文本匹配，不支持高级条件构造
 - 计算列当前支持新增、编辑、删除，但不支持导入、导出
 - 诊断面板当前是摘要文本，不是完整诊断工作台
