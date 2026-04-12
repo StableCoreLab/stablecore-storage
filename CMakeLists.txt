@@ -83,7 +83,7 @@ target_include_directories(${STABLECORE_STORAGE_TARGET}
 target_compile_features(${STABLECORE_STORAGE_TARGET} PUBLIC cxx_std_20)
 
 if (MSVC)
-    target_compile_options(${STABLECORE_STORAGE_TARGET} PRIVATE /utf-8)
+    target_compile_options(${STABLECORE_STORAGE_TARGET} PRIVATE /utf-8 /MP)
 endif()
 
 set_target_properties(${STABLECORE_STORAGE_TARGET} PROPERTIES
@@ -96,7 +96,7 @@ add_executable(${STABLECORE_STORAGE_MEMORY_EXAMPLE_TARGET}
 stablecore_configure_output_dirs(${STABLECORE_STORAGE_MEMORY_EXAMPLE_TARGET})
 
 if (MSVC)
-    target_compile_options(${STABLECORE_STORAGE_MEMORY_EXAMPLE_TARGET} PRIVATE /utf-8)
+    target_compile_options(${STABLECORE_STORAGE_MEMORY_EXAMPLE_TARGET} PRIVATE /utf-8 /MP)
 endif()
 
 target_link_libraries(${STABLECORE_STORAGE_MEMORY_EXAMPLE_TARGET}
@@ -110,7 +110,7 @@ add_executable(${STABLECORE_STORAGE_PRODUCT_EXAMPLE_TARGET}
 stablecore_configure_output_dirs(${STABLECORE_STORAGE_PRODUCT_EXAMPLE_TARGET})
 
 if (MSVC)
-    target_compile_options(${STABLECORE_STORAGE_PRODUCT_EXAMPLE_TARGET} PRIVATE /utf-8)
+    target_compile_options(${STABLECORE_STORAGE_PRODUCT_EXAMPLE_TARGET} PRIVATE /utf-8 /MP)
 endif()
 
 target_link_libraries(${STABLECORE_STORAGE_PRODUCT_EXAMPLE_TARGET}
@@ -173,7 +173,7 @@ if (STABLECORE_STORAGE_BUILD_TESTS)
     stablecore_configure_output_dirs(${STABLECORE_STORAGE_TESTS_TARGET})
 
     if (MSVC)
-        target_compile_options(${STABLECORE_STORAGE_TESTS_TARGET} PRIVATE /utf-8)
+        target_compile_options(${STABLECORE_STORAGE_TESTS_TARGET} PRIVATE /utf-8 /MP)
     endif()
 
     target_link_libraries(${STABLECORE_STORAGE_TESTS_TARGET}
@@ -195,7 +195,7 @@ if (STABLECORE_STORAGE_BUILD_TESTS)
         stablecore_configure_output_dirs(${STABLECORE_STORAGE_DB_EDITOR_TESTS_TARGET})
 
         if (MSVC)
-            target_compile_options(${STABLECORE_STORAGE_DB_EDITOR_TESTS_TARGET} PRIVATE /utf-8)
+            target_compile_options(${STABLECORE_STORAGE_DB_EDITOR_TESTS_TARGET} PRIVATE /utf-8 /MP)
         endif()
 
         target_include_directories(${STABLECORE_STORAGE_DB_EDITOR_TESTS_TARGET}
