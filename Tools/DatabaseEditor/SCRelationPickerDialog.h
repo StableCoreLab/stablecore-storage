@@ -5,19 +5,19 @@
 #include <QTableWidget>
 #include <QVector>
 
-#include "DatabaseSession.h"
+#include "SCDatabaseSession.h"
 
 namespace stablecore::storage::editor
 {
 
-class RelationPickerDialog final : public QDialog
+class SCRelationPickerDialog final : public QDialog
 {
     Q_OBJECT
 
 public:
-    RelationPickerDialog(
+    SCRelationPickerDialog(
         const QString& targetTableName,
-        const QVector<DatabaseSession::RelationCandidate>& candidates,
+        const QVector<SCDatabaseSession::RelationCandidate>& candidates,
         QWidget* parent = nullptr);
 
     stablecore::storage::RecordId SelectedRecordId() const noexcept;
@@ -30,7 +30,7 @@ private:
     void PopulateRows();
 
     QString targetTableName_;
-    QVector<DatabaseSession::RelationCandidate> candidates_;
+    QVector<SCDatabaseSession::RelationCandidate> candidates_;
     QLineEdit* filterEdit_{nullptr};
     QTableWidget* tableWidget_{nullptr};
 };

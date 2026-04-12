@@ -5,12 +5,12 @@
 namespace stablecore::storage::editor
 {
 
-class RecordFilterProxyModel final : public QSortFilterProxyModel
+class SCRecordFilterProxyModel final : public QSortFilterProxyModel
 {
     Q_OBJECT
 
 public:
-    explicit RecordFilterProxyModel(QObject* parent = nullptr);
+    explicit SCRecordFilterProxyModel(QObject* parent = nullptr);
 
 protected:
     bool filterAcceptsRow(int sourceRow, const QModelIndex& sourceParent) const override;

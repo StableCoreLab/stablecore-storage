@@ -12,12 +12,12 @@
 namespace stablecore::storage::editor
 {
 
-class AddColumnDialog final : public QDialog
+class SCAddColumnDialog final : public QDialog
 {
     Q_OBJECT
 
 public:
-    explicit AddColumnDialog(QWidget* parent = nullptr);
+    explicit SCAddColumnDialog(QWidget* parent = nullptr);
 
     stablecore::storage::SCColumnDef BuildColumnDef() const;
 

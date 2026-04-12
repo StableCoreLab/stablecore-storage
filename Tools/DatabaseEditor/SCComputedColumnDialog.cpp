@@ -1,4 +1,4 @@
-#include "ComputedColumnDialog.h"
+#include "SCComputedColumnDialog.h"
 
 #include <QDialogButtonBox>
 #include <QFormLayout>
@@ -60,7 +60,7 @@ QString JoinDependencies(
 
 }  // namespace
 
-ComputedColumnDialog::ComputedColumnDialog(const QString& currentTableName, QWidget* parent)
+SCComputedColumnDialog::SCComputedColumnDialog(const QString& currentTableName, QWidget* parent)
     : QDialog(parent)
     , currentTableName_(currentTableName)
 {
@@ -69,7 +69,7 @@ ComputedColumnDialog::ComputedColumnDialog(const QString& currentTableName, QWid
     BuildForm();
 }
 
-ComputedColumnDialog::ComputedColumnDialog(
+SCComputedColumnDialog::SCComputedColumnDialog(
     const QString& currentTableName,
     const sc::SCComputedColumnDef& initialValue,
     QWidget* parent)
@@ -82,7 +82,7 @@ ComputedColumnDialog::ComputedColumnDialog(
     ApplyInitialValue(initialValue);
 }
 
-void ComputedColumnDialog::BuildForm()
+void SCComputedColumnDialog::BuildForm()
 {
     auto* layout = new QVBoxLayout(this);
     layout->addWidget(new QLabel(
@@ -149,14 +149,14 @@ void ComputedColumnDialog::BuildForm()
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
     layout->addWidget(buttons);
 
-    connect(kindCombo_, qOverload<int>(&QComboBox::currentIndexChanged), this, &ComputedColumnDialog::UpdateModeVisibility);
+    connect(kindCombo_, qOverload<int>(&QComboBox::currentIndexChanged), this, &SCComputedColumnDialog::UpdateModeVisibility);
     connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
 
     UpdateModeVisibility();
 }
 
-void ComputedColumnDialog::ApplyInitialValue(const sc::SCComputedColumnDef& initialValue)
+void SCComputedColumnDialog::ApplyInitialValue(const sc::SCComputedColumnDef& initialValue)
 {
     nameEdit_->setText(QString::fromStdWString(initialValue.name));
     displayNameEdit_->setText(QString::fromStdWString(initialValue.displayName));
@@ -173,7 +173,7 @@ void ComputedColumnDialog::ApplyInitialValue(const sc::SCComputedColumnDef& init
     UpdateModeVisibility();
 }
 
-bool ComputedColumnDialog::BuildDefinition(sc::SCComputedColumnDef* outColumn, QString* outError) const
+bool SCComputedColumnDialog::BuildDefinition(sc::SCComputedColumnDef* outColumn, QString* outError) const
 {
     if (outColumn == nullptr)
     {
@@ -263,7 +263,7 @@ bool ComputedColumnDialog::BuildDefinition(sc::SCComputedColumnDef* outColumn, Q
     return true;
 }
 
-void ComputedColumnDialog::UpdateModeVisibility()
+void SCComputedColumnDialog::UpdateModeVisibility()
 {
     const sc::ComputedFieldKind kind = CurrentComputedKind();
     expressionEdit_->setVisible(kind == sc::ComputedFieldKind::Expression);
@@ -273,17 +273,17 @@ void ComputedColumnDialog::UpdateModeVisibility()
     aggregateFieldEdit_->setVisible(kind == sc::ComputedFieldKind::Aggregate);
 }
 
-sc::ValueKind ComputedColumnDialog::CurrentValueKind() const
+sc::ValueKind SCComputedColumnDialog::CurrentValueKind() const
 {
     return static_cast<sc::ValueKind>(valueKindCombo_->currentData().toInt());
 }
 
-sc::ComputedFieldKind ComputedColumnDialog::CurrentComputedKind() const
+sc::ComputedFieldKind SCComputedColumnDialog::CurrentComputedKind() const
 {
     return static_cast<sc::ComputedFieldKind>(kindCombo_->currentData().toInt());
 }
 
-sc::SCAggregateKind ComputedColumnDialog::CurrentAggregateKind() const
+sc::SCAggregateKind SCComputedColumnDialog::CurrentAggregateKind() const
 {
     return static_cast<sc::SCAggregateKind>(aggregateKindCombo_->currentData().toInt());
 }

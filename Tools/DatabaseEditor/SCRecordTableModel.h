@@ -3,17 +3,17 @@
 #include <QAbstractTableModel>
 #include <QVector>
 
-#include "DatabaseSession.h"
+#include "SCDatabaseSession.h"
 
 namespace stablecore::storage::editor
 {
 
-class RecordTableModel final : public QAbstractTableModel
+class SCRecordTableModel final : public QAbstractTableModel
 {
     Q_OBJECT
 
 public:
-    explicit RecordTableModel(DatabaseSession* session, QObject* parent = nullptr);
+    explicit SCRecordTableModel(SCDatabaseSession* session, QObject* parent = nullptr);
 
     int rowCount(const QModelIndex& parent = QModelIndex()) const override;
     int columnCount(const QModelIndex& parent = QModelIndex()) const override;
@@ -33,7 +33,7 @@ private:
         stablecore::storage::RecordId recordId{0};
     };
 
-    DatabaseSession* session_{nullptr};
+    SCDatabaseSession* session_{nullptr};
     QVector<stablecore::storage::SCTableViewColumnDef> columns_;
     QVector<RowData> rows_;
 };

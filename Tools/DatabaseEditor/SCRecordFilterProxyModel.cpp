@@ -1,18 +1,18 @@
-#include "RecordFilterProxyModel.h"
+#include "SCRecordFilterProxyModel.h"
 
 #include <QAbstractItemModel>
 
 namespace stablecore::storage::editor
 {
 
-RecordFilterProxyModel::RecordFilterProxyModel(QObject* parent)
+SCRecordFilterProxyModel::SCRecordFilterProxyModel(QObject* parent)
     : QSortFilterProxyModel(parent)
 {
     setFilterCaseSensitivity(Qt::CaseInsensitive);
     setSortCaseSensitivity(Qt::CaseInsensitive);
 }
 
-bool RecordFilterProxyModel::filterAcceptsRow(int sourceRow, const QModelIndex& sourceParent) const
+bool SCRecordFilterProxyModel::filterAcceptsRow(int sourceRow, const QModelIndex& sourceParent) const
 {
     if (filterRegularExpression().pattern().trimmed().isEmpty())
     {
@@ -38,7 +38,7 @@ bool RecordFilterProxyModel::filterAcceptsRow(int sourceRow, const QModelIndex& 
     return false;
 }
 
-bool RecordFilterProxyModel::lessThan(const QModelIndex& left, const QModelIndex& right) const
+bool SCRecordFilterProxyModel::lessThan(const QModelIndex& left, const QModelIndex& right) const
 {
     const QVariant leftValue = sourceModel()->data(left, Qt::EditRole);
     const QVariant rightValue = sourceModel()->data(right, Qt::EditRole);

@@ -11,22 +11,22 @@
 #include <QTreeWidgetItem>
 #include <QTreeWidget>
 
-#include "AddColumnDialog.h"
-#include "ComputedColumnDialog.h"
-#include "DatabaseSession.h"
-#include "RecordFilterProxyModel.h"
-#include "RecordTableModel.h"
-#include "RelationPickerDialog.h"
+#include "SCAddColumnDialog.h"
+#include "SCComputedColumnDialog.h"
+#include "SCDatabaseSession.h"
+#include "SCRecordFilterProxyModel.h"
+#include "SCRecordTableModel.h"
+#include "SCRelationPickerDialog.h"
 
 namespace stablecore::storage::editor
 {
 
-class DatabaseEditorMainWindow final : public QMainWindow
+class SCDatabaseEditorMainWindow final : public QMainWindow
 {
     Q_OBJECT
 
 public:
-    explicit DatabaseEditorMainWindow(QWidget* parent = nullptr);
+    explicit SCDatabaseEditorMainWindow(QWidget* parent = nullptr);
 
 private slots:
     void CreateDatabase();
@@ -60,9 +60,9 @@ private:
     void ShowError(const QString& title, const QString& message);
     void SetStatusMessage(const QString& text);
 
-    DatabaseSession* session_{nullptr};
-    RecordTableModel* recordModel_{nullptr};
-    RecordFilterProxyModel* filterModel_{nullptr};
+    SCDatabaseSession* session_{nullptr};
+    SCRecordTableModel* recordModel_{nullptr};
+    SCRecordFilterProxyModel* filterModel_{nullptr};
 
     QListWidget* tablesList_{nullptr};
     QTableView* dataTable_{nullptr};

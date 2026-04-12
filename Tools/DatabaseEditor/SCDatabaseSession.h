@@ -15,7 +15,7 @@
 namespace stablecore::storage::editor
 {
 
-class DatabaseSession final : public QObject
+class SCDatabaseSession final : public QObject
 {
     Q_OBJECT
 
@@ -27,7 +27,7 @@ public:
         QVector<QPair<QString, QString>> previewFields;
     };
 
-    explicit DatabaseSession(QObject* parent = nullptr);
+    explicit SCDatabaseSession(QObject* parent = nullptr);
 
     bool IsOpen() const noexcept;
     QString DatabasePath() const;

@@ -1,4 +1,4 @@
-#include "AddColumnDialog.h"
+#include "SCAddColumnDialog.h"
 
 namespace sc = stablecore::storage;
 
@@ -36,7 +36,7 @@ sc::SCValue ParseDefaultValue(sc::ValueKind kind, const QString& text)
 
 }  // namespace
 
-AddColumnDialog::AddColumnDialog(QWidget* parent)
+SCAddColumnDialog::SCAddColumnDialog(QWidget* parent)
     : QDialog(parent)
 {
     setWindowTitle(QStringLiteral("Add Column"));
@@ -85,7 +85,7 @@ AddColumnDialog::AddColumnDialog(QWidget* parent)
     layout->addRow(buttons);
 }
 
-sc::SCColumnDef AddColumnDialog::BuildColumnDef() const
+sc::SCColumnDef SCAddColumnDialog::BuildColumnDef() const
 {
     sc::SCColumnDef column;
     column.name = nameEdit_->text().toStdWString();

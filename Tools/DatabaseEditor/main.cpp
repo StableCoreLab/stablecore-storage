@@ -1,6 +1,6 @@
 #include <QApplication>
 
-#include "DatabaseEditorMainWindow.h"
+#include "SCDatabaseEditorMainWindow.h"
 
 int main(int argc, char* argv[])
 {
@@ -8,7 +8,7 @@ int main(int argc, char* argv[])
     QApplication::setApplicationName(QStringLiteral("StableCore Database Editor"));
     QApplication::setOrganizationName(QStringLiteral("StableCore"));
 
-    stablecore::storage::editor::DatabaseEditorMainWindow window;
+    stablecore::storage::editor::SCDatabaseEditorMainWindow window;
     window.show();
     return app.exec();
 }

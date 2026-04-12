@@ -180,5 +180,5 @@ Build\StorageDbEditor\Release\SCStorageDatabaseEditor.exe
 - `Docs/DatabaseEditorGuiDesign.md`
 - `Docs/DatabaseEditorGuiImplementationScope.md`
 - `Docs/DatabaseEditorComputedColumnLifecycle.md`
-- `Tools/DatabaseEditor/DatabaseEditorMainWindow.cpp`
-- `Tools/DatabaseEditor/DatabaseSession.cpp`
+- `Tools/DatabaseEditor/SCDatabaseEditorMainWindow.cpp`
+- `Tools/DatabaseEditor/SCDatabaseSession.cpp`

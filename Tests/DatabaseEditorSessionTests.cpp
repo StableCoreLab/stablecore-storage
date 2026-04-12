@@ -2,7 +2,7 @@
 
 #include <gtest/gtest.h>
 
-#include "DatabaseSession.h"
+#include "SCDatabaseSession.h"
 
 namespace sc = stablecore::storage;
 namespace editor = stablecore::storage::editor;
@@ -56,7 +56,7 @@ TEST(DatabaseEditorSession, TableSelectionAndSchemaRemainAlignedAcrossCreateAndR
     const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_DbEditor_SessionSchema.sqlite");
 
     {
-        editor::DatabaseSession session;
+        editor::SCDatabaseSession session;
         QString error;
 
         ASSERT_TRUE(session.CreateDatabase(QString::fromStdWString(dbPath.wstring()), &error)) << error.toStdString();
@@ -93,7 +93,7 @@ TEST(DatabaseEditorSession, TableSelectionAndSchemaRemainAlignedAcrossCreateAndR
     }
 
     {
-        editor::DatabaseSession session;
+        editor::SCDatabaseSession session;
         QString error;
 
         ASSERT_TRUE(session.OpenDatabase(QString::fromStdWString(dbPath.wstring()), &error)) << error.toStdString();

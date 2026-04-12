@@ -11,13 +11,13 @@
 namespace stablecore::storage::editor
 {
 
-class ComputedColumnDialog final : public QDialog
+class SCComputedColumnDialog final : public QDialog
 {
     Q_OBJECT
 
 public:
-    explicit ComputedColumnDialog(const QString& currentTableName, QWidget* parent = nullptr);
-    ComputedColumnDialog(
+    explicit SCComputedColumnDialog(const QString& currentTableName, QWidget* parent = nullptr);
+    SCComputedColumnDialog(
         const QString& currentTableName,
         const stablecore::storage::SCComputedColumnDef& initialValue,
         QWidget* parent = nullptr);

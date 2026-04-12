@@ -198,8 +198,8 @@ if (SCSTORAGE_BUILD_TESTS)
     if (SCSTORAGE_BUILD_DB_EDITOR)
         add_executable(${SCSTORAGE_DB_EDITOR_TESTS_TARGET}
             Tests/DatabaseEditorSessionTests.cpp
-            Tools/DatabaseEditor/DatabaseSession.cpp
-            Tools/DatabaseEditor/DatabaseSession.h
+            Tools/DatabaseEditor/SCDatabaseSession.cpp
+            Tools/DatabaseEditor/SCDatabaseSession.h
         )
         SCStorageConfigureOutputDirs(${SCSTORAGE_DB_EDITOR_TESTS_TARGET})
         if (MSVC)

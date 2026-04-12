@@ -1,4 +1,4 @@
-#include "RelationPickerDialog.h"
+#include "SCRelationPickerDialog.h"
 
 #include <QDialogButtonBox>
 #include <QHeaderView>
@@ -10,9 +10,9 @@ namespace sc = stablecore::storage;
 namespace stablecore::storage::editor
 {
 
-RelationPickerDialog::RelationPickerDialog(
+SCRelationPickerDialog::SCRelationPickerDialog(
     const QString& targetTableName,
-    const QVector<DatabaseSession::RelationCandidate>& candidates,
+    const QVector<SCDatabaseSession::RelationCandidate>& candidates,
     QWidget* parent)
     : QDialog(parent)
     , targetTableName_(targetTableName)
@@ -41,15 +41,15 @@ RelationPickerDialog::RelationPickerDialog(
     auto* buttonBox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
     layout->addWidget(buttonBox);
 
-    connect(filterEdit_, &QLineEdit::textChanged, this, &RelationPickerDialog::ApplyFilter);
+    connect(filterEdit_, &QLineEdit::textChanged, this, &SCRelationPickerDialog::ApplyFilter);
     connect(tableWidget_, &QTableWidget::cellDoubleClicked, this, [this](int, int) { AcceptCurrentSelection(); });
-    connect(buttonBox, &QDialogButtonBox::accepted, this, &RelationPickerDialog::AcceptCurrentSelection);
-    connect(buttonBox, &QDialogButtonBox::rejected, this, &RelationPickerDialog::reject);
+    connect(buttonBox, &QDialogButtonBox::accepted, this, &SCRelationPickerDialog::AcceptCurrentSelection);
+    connect(buttonBox, &QDialogButtonBox::rejected, this, &SCRelationPickerDialog::reject);
 
     PopulateRows();
 }
 
-sc::RecordId RelationPickerDialog::SelectedRecordId() const noexcept
+sc::RecordId SCRelationPickerDialog::SelectedRecordId() const noexcept
 {
     const int row = tableWidget_->currentRow();
     if (row < 0)
@@ -59,7 +59,7 @@ sc::RecordId RelationPickerDialog::SelectedRecordId() const noexcept
     return tableWidget_->item(row, 0)->data(Qt::UserRole).toLongLong();
 }
 
-void RelationPickerDialog::ApplyFilter(const QString& text)
+void SCRelationPickerDialog::ApplyFilter(const QString& text)
 {
     for (int row = 0; row < tableWidget_->rowCount(); ++row)
     {
@@ -80,7 +80,7 @@ void RelationPickerDialog::ApplyFilter(const QString& text)
     }
 }
 
-void RelationPickerDialog::AcceptCurrentSelection()
+void SCRelationPickerDialog::AcceptCurrentSelection()
 {
     if (SelectedRecordId() == 0)
     {
@@ -89,12 +89,12 @@ void RelationPickerDialog::AcceptCurrentSelection()
     accept();
 }
 
-void RelationPickerDialog::PopulateRows()
+void SCRelationPickerDialog::PopulateRows()
 {
     tableWidget_->setRowCount(candidates_.size());
     for (int row = 0; row < candidates_.size(); ++row)
     {
-        const DatabaseSession::RelationCandidate& candidate = candidates_[row];
+        const SCDatabaseSession::RelationCandidate& candidate = candidates_[row];
         QStringList preview;
         for (const auto& pair : candidate.previewFields)
         {

@@ -1,4 +1,4 @@
-#include "RecordTableModel.h"
+#include "SCRecordTableModel.h"
 
 namespace sc = stablecore::storage;
 
@@ -61,25 +61,25 @@ QVariant ValueToVariant(const sc::SCValue& SCValue)
 
 }  // namespace
 
-RecordTableModel::RecordTableModel(DatabaseSession* session, QObject* parent)
+SCRecordTableModel::SCRecordTableModel(SCDatabaseSession* session, QObject* parent)
     : QAbstractTableModel(parent)
     , session_(session)
 {
-    connect(session_, &DatabaseSession::CurrentTableChanged, this, &RecordTableModel::Refresh);
-    connect(session_, &DatabaseSession::RecordsChanged, this, &RecordTableModel::Refresh);
+    connect(session_, &SCDatabaseSession::CurrentTableChanged, this, &SCRecordTableModel::Refresh);
+    connect(session_, &SCDatabaseSession::RecordsChanged, this, &SCRecordTableModel::Refresh);
 }
 
-int RecordTableModel::rowCount(const QModelIndex& parent) const
+int SCRecordTableModel::rowCount(const QModelIndex& parent) const
 {
     return parent.isValid() ? 0 : rows_.size();
 }
 
-int RecordTableModel::columnCount(const QModelIndex& parent) const
+int SCRecordTableModel::columnCount(const QModelIndex& parent) const
 {
     return parent.isValid() ? 0 : columns_.size();
 }
 
-QVariant RecordTableModel::data(const QModelIndex& index, int role) const
+QVariant SCRecordTableModel::data(const QModelIndex& index, int role) const
 {
     if (!index.isValid() || index.row() < 0 || index.row() >= rows_.size() || index.column() < 0 || index.column() >= columns_.size())
     {
@@ -110,7 +110,7 @@ QVariant RecordTableModel::data(const QModelIndex& index, int role) const
     return ValueToVariant(SCValue);
 }
 
-QVariant RecordTableModel::headerData(int section, Qt::Orientation orientation, int role) const
+QVariant SCRecordTableModel::headerData(int section, Qt::Orientation orientation, int role) const
 {
     if (role != Qt::DisplayRole)
     {
@@ -130,7 +130,7 @@ QVariant RecordTableModel::headerData(int section, Qt::Orientation orientation, 
     return ToQString(columns_[section].displayName.empty() ? columns_[section].name : columns_[section].displayName);
 }
 
-Qt::ItemFlags RecordTableModel::flags(const QModelIndex& index) const
+Qt::ItemFlags SCRecordTableModel::flags(const QModelIndex& index) const
 {
     if (!index.isValid())
     {
@@ -145,7 +145,7 @@ Qt::ItemFlags RecordTableModel::flags(const QModelIndex& index) const
     return result;
 }
 
-bool RecordTableModel::setData(const QModelIndex& index, const QVariant& SCValue, int role)
+bool SCRecordTableModel::setData(const QModelIndex& index, const QVariant& SCValue, int role)
 {
     if (role != Qt::EditRole || !index.isValid())
     {
@@ -165,7 +165,7 @@ bool RecordTableModel::setData(const QModelIndex& index, const QVariant& SCValue
     return ok;
 }
 
-sc::RecordId RecordTableModel::RecordIdAt(int row) const
+sc::RecordId SCRecordTableModel::RecordIdAt(int row) const
 {
     if (row < 0 || row >= rows_.size())
     {
@@ -174,7 +174,7 @@ sc::RecordId RecordTableModel::RecordIdAt(int row) const
     return rows_[row].recordId;
 }
 
-sc::SCTableViewColumnDef RecordTableModel::ColumnAt(int column) const
+sc::SCTableViewColumnDef SCRecordTableModel::ColumnAt(int column) const
 {
     if (column < 0 || column >= columns_.size())
     {
@@ -183,12 +183,12 @@ sc::SCTableViewColumnDef RecordTableModel::ColumnAt(int column) const
     return columns_[column];
 }
 
-int RecordTableModel::RowCountValue() const noexcept
+int SCRecordTableModel::RowCountValue() const noexcept
 {
     return rows_.size();
 }
 
-void RecordTableModel::Refresh()
+void SCRecordTableModel::Refresh()
 {
     beginResetModel();
     columns_.clear();

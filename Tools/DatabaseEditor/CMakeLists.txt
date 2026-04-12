@@ -1,18 +1,18 @@
 add_executable(SCStorageDatabaseEditor
-    AddColumnDialog.cpp
-    AddColumnDialog.h
-    ComputedColumnDialog.cpp
-    ComputedColumnDialog.h
-    DatabaseEditorMainWindow.cpp
-    DatabaseEditorMainWindow.h
-    DatabaseSession.cpp
-    DatabaseSession.h
-    RecordFilterProxyModel.cpp
-    RecordFilterProxyModel.h
-    RecordTableModel.cpp
-    RecordTableModel.h
-    RelationPickerDialog.cpp
-    RelationPickerDialog.h
+    SCAddColumnDialog.cpp
+    SCAddColumnDialog.h
+    SCComputedColumnDialog.cpp
+    SCComputedColumnDialog.h
+    SCDatabaseEditorMainWindow.cpp
+    SCDatabaseEditorMainWindow.h
+    SCDatabaseSession.cpp
+    SCDatabaseSession.h
+    SCRecordFilterProxyModel.cpp
+    SCRecordFilterProxyModel.h
+    SCRecordTableModel.cpp
+    SCRecordTableModel.h
+    SCRelationPickerDialog.cpp
+    SCRelationPickerDialog.h
     main.cpp
 )
 SCStorageConfigureOutputDirs(SCStorageDatabaseEditor)
