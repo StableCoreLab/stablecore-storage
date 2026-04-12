@@ -26,7 +26,7 @@ Covered by:
 Covered by:
 
 - `Tests/M3Tests.cpp`
-- `Include/StableCore/Storage/Types.h`
+- `Include/StableCore/Storage/SCTypes.h`
 - `Docs/T1-T25Status.md`
 
 ### T26-T28

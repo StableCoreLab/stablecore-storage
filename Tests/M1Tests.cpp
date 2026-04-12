@@ -2,39 +2,39 @@
 
 #include <gtest/gtest.h>
 
-#include "StableCore/Storage/Storage.h"
+#include "StableCore/Storage/SCStorage.h"
 
 namespace sc = stablecore::storage;
 
 namespace
 {
 
-struct RecordingObserver final : sc::IDatabaseObserver
+struct RecordingObserver final : sc::ISCDatabaseObserver
 {
-    void OnDatabaseChanged(const sc::ChangeSet& changeSet) override
+    void OnDatabaseChanged(const sc::SCChangeSet& SCChangeSet) override
     {
-        seen.push_back(changeSet);
+        seen.push_back(SCChangeSet);
     }
 
-    std::vector<sc::ChangeSet> seen;
+    std::vector<sc::SCChangeSet> seen;
 };
 
-sc::TablePtr CreateBeamTable(sc::DbPtr& db)
+sc::SCTablePtr CreateBeamTable(sc::SCDbPtr& db)
 {
-    sc::TablePtr table;
+    sc::SCTablePtr table;
     EXPECT_EQ(db->CreateTable(L"Beam", table), sc::SC_OK);
 
-    sc::SchemaPtr schema;
+    sc::SCSchemaPtr schema;
     EXPECT_EQ(table->GetSchema(schema), sc::SC_OK);
 
-    sc::ColumnDef width;
+    sc::SCColumnDef width;
     width.name = L"Width";
     width.displayName = L"Width";
     width.valueKind = sc::ValueKind::Int64;
-    width.defaultValue = sc::Value::FromInt64(0);
+    width.defaultValue = sc::SCValue::FromInt64(0);
     EXPECT_EQ(schema->AddColumn(width), sc::SC_OK);
 
-    sc::ColumnDef name;
+    sc::SCColumnDef name;
     name.name = L"Name";
     name.displayName = L"Name";
     name.valueKind = sc::ValueKind::String;
@@ -44,19 +44,19 @@ sc::TablePtr CreateBeamTable(sc::DbPtr& db)
     return table;
 }
 
-sc::TablePtr CreateFloorTable(sc::DbPtr& db)
+sc::SCTablePtr CreateFloorTable(sc::SCDbPtr& db)
 {
-    sc::TablePtr table;
+    sc::SCTablePtr table;
     EXPECT_EQ(db->CreateTable(L"Floor", table), sc::SC_OK);
 
-    sc::SchemaPtr schema;
+    sc::SCSchemaPtr schema;
     EXPECT_EQ(table->GetSchema(schema), sc::SC_OK);
 
-    sc::ColumnDef title;
+    sc::SCColumnDef title;
     title.name = L"Title";
     title.displayName = L"Title";
     title.valueKind = sc::ValueKind::String;
-    title.defaultValue = sc::Value::FromString(L"");
+    title.defaultValue = sc::SCValue::FromString(L"");
     EXPECT_EQ(schema->AddColumn(title), sc::SC_OK);
 
     return table;
@@ -66,53 +66,53 @@ sc::TablePtr CreateFloorTable(sc::DbPtr& db)
 
 TEST(StorageM1, ValueTypedAccess)
 {
-    sc::Value value = sc::Value::FromRecordId(42);
+    sc::SCValue SCValue = sc::SCValue::FromRecordId(42);
     sc::RecordId id = 0;
-    EXPECT_EQ(value.AsRecordId(&id), sc::SC_OK);
+    EXPECT_EQ(SCValue.AsRecordId(&id), sc::SC_OK);
     EXPECT_EQ(id, 42);
 
     std::wstring text;
-    EXPECT_EQ(sc::Value::Null().AsStringCopy(&text), sc::SC_E_VALUE_IS_NULL);
+    EXPECT_EQ(sc::SCValue::Null().AsStringCopy(&text), sc::SC_E_VALUE_IS_NULL);
 }
 
 TEST(StorageM1, SchemaRejectsInvalidRelationDefault)
 {
-    sc::DbPtr db;
+    sc::SCDbPtr db;
     EXPECT_EQ(sc::CreateInMemoryDatabase(db), sc::SC_OK);
 
-    sc::TablePtr table;
+    sc::SCTablePtr table;
     EXPECT_EQ(db->CreateTable(L"RelationHolder", table), sc::SC_OK);
 
-    sc::SchemaPtr schema;
+    sc::SCSchemaPtr schema;
     EXPECT_EQ(table->GetSchema(schema), sc::SC_OK);
 
-    sc::ColumnDef relation;
+    sc::SCColumnDef relation;
     relation.name = L"FloorRef";
     relation.columnKind = sc::ColumnKind::Relation;
     relation.valueKind = sc::ValueKind::RecordId;
-    relation.defaultValue = sc::Value::FromString(L"bad");
+    relation.defaultValue = sc::SCValue::FromString(L"bad");
 
     EXPECT_EQ(schema->AddColumn(relation), sc::SC_E_SCHEMA_VIOLATION);
 }
 
 TEST(StorageM1, SchemaRejectsInvalidReferenceTableUsage)
 {
-    sc::DbPtr db;
+    sc::SCDbPtr db;
     EXPECT_EQ(sc::CreateInMemoryDatabase(db), sc::SC_OK);
 
-    sc::TablePtr table;
+    sc::SCTablePtr table;
     EXPECT_EQ(db->CreateTable(L"Beam", table), sc::SC_OK);
 
-    sc::SchemaPtr schema;
+    sc::SCSchemaPtr schema;
     EXPECT_EQ(table->GetSchema(schema), sc::SC_OK);
 
-    sc::ColumnDef factWithRef;
+    sc::SCColumnDef factWithRef;
     factWithRef.name = L"Width";
     factWithRef.valueKind = sc::ValueKind::Int64;
     factWithRef.referenceTable = L"Floor";
     EXPECT_EQ(schema->AddColumn(factWithRef), sc::SC_E_SCHEMA_VIOLATION);
 
-    sc::ColumnDef relationWithoutRef;
+    sc::SCColumnDef relationWithoutRef;
     relationWithoutRef.name = L"FloorRef";
     relationWithoutRef.valueKind = sc::ValueKind::RecordId;
     relationWithoutRef.columnKind = sc::ColumnKind::Relation;
@@ -121,29 +121,29 @@ TEST(StorageM1, SchemaRejectsInvalidReferenceTableUsage)
 
 TEST(StorageM1, TransactionCommitAndQuery)
 {
-    sc::DbPtr db;
+    sc::SCDbPtr db;
     EXPECT_EQ(sc::CreateInMemoryDatabase(db), sc::SC_OK);
 
-    sc::TablePtr beamTable = CreateBeamTable(db);
+    sc::SCTablePtr beamTable = CreateBeamTable(db);
 
-    sc::EditPtr edit;
+    sc::SCEditPtr edit;
     EXPECT_EQ(db->BeginEdit(L"create beam", edit), sc::SC_OK);
 
-    sc::RecordPtr beam;
+    sc::SCRecordPtr beam;
     EXPECT_EQ(beamTable->CreateRecord(beam), sc::SC_OK);
     EXPECT_EQ(beam->SetInt64(L"Width", 300), sc::SC_OK);
     EXPECT_EQ(beam->SetString(L"Name", L"B1"), sc::SC_OK);
     EXPECT_EQ(db->Commit(edit.Get()), sc::SC_OK);
 
-    sc::RecordCursorPtr cursor;
-    sc::QueryCondition condition{L"Width", sc::Value::FromInt64(300)};
+    sc::SCRecordCursorPtr cursor;
+    sc::SCQueryCondition condition{L"Width", sc::SCValue::FromInt64(300)};
     EXPECT_EQ(beamTable->FindRecords(condition, cursor), sc::SC_OK);
 
     bool hasRow = false;
     EXPECT_EQ(cursor->MoveNext(&hasRow), sc::SC_OK);
     EXPECT_TRUE(hasRow);
 
-    sc::RecordPtr current;
+    sc::SCRecordPtr current;
     EXPECT_EQ(cursor->GetCurrent(current), sc::SC_OK);
 
     std::int64_t width = 0;
@@ -153,26 +153,26 @@ TEST(StorageM1, TransactionCommitAndQuery)
 
 TEST(StorageM1, RollbackRestoresRecordValues)
 {
-    sc::DbPtr db;
+    sc::SCDbPtr db;
     EXPECT_EQ(sc::CreateInMemoryDatabase(db), sc::SC_OK);
 
-    sc::TablePtr beamTable = CreateBeamTable(db);
+    sc::SCTablePtr beamTable = CreateBeamTable(db);
 
-    sc::EditPtr createEdit;
+    sc::SCEditPtr createEdit;
     EXPECT_EQ(db->BeginEdit(L"seed", createEdit), sc::SC_OK);
 
-    sc::RecordPtr beam;
+    sc::SCRecordPtr beam;
     EXPECT_EQ(beamTable->CreateRecord(beam), sc::SC_OK);
     const sc::RecordId beamId = beam->GetId();
     EXPECT_EQ(beam->SetInt64(L"Width", 200), sc::SC_OK);
     EXPECT_EQ(db->Commit(createEdit.Get()), sc::SC_OK);
 
-    sc::EditPtr edit;
+    sc::SCEditPtr edit;
     EXPECT_EQ(db->BeginEdit(L"modify", edit), sc::SC_OK);
     EXPECT_EQ(beam->SetInt64(L"Width", 500), sc::SC_OK);
     EXPECT_EQ(db->Rollback(edit.Get()), sc::SC_OK);
 
-    sc::RecordPtr reloaded;
+    sc::SCRecordPtr reloaded;
     EXPECT_EQ(beamTable->GetRecord(beamId, reloaded), sc::SC_OK);
     std::int64_t width = 0;
     EXPECT_EQ(reloaded->GetInt64(L"Width", &width), sc::SC_OK);
@@ -181,20 +181,20 @@ TEST(StorageM1, RollbackRestoresRecordValues)
 
 TEST(StorageM1, DeleteAndUndoRedo)
 {
-    sc::DbPtr db;
+    sc::SCDbPtr db;
     EXPECT_EQ(sc::CreateInMemoryDatabase(db), sc::SC_OK);
 
-    sc::TablePtr beamTable = CreateBeamTable(db);
+    sc::SCTablePtr beamTable = CreateBeamTable(db);
 
-    sc::EditPtr createEdit;
+    sc::SCEditPtr createEdit;
     EXPECT_EQ(db->BeginEdit(L"seed", createEdit), sc::SC_OK);
-    sc::RecordPtr beam;
+    sc::SCRecordPtr beam;
     EXPECT_EQ(beamTable->CreateRecord(beam), sc::SC_OK);
     const sc::RecordId beamId = beam->GetId();
     EXPECT_EQ(beam->SetInt64(L"Width", 250), sc::SC_OK);
     EXPECT_EQ(db->Commit(createEdit.Get()), sc::SC_OK);
 
-    sc::EditPtr deleteEdit;
+    sc::SCEditPtr deleteEdit;
     EXPECT_EQ(db->BeginEdit(L"delete", deleteEdit), sc::SC_OK);
     EXPECT_EQ(beamTable->DeleteRecord(beamId), sc::SC_OK);
     EXPECT_EQ(db->Commit(deleteEdit.Get()), sc::SC_OK);
@@ -215,16 +215,16 @@ TEST(StorageM1, DeleteAndUndoRedo)
 
 TEST(StorageM1, RelationFieldValidationAndChangeSet)
 {
-    sc::DbPtr db;
+    sc::SCDbPtr db;
     EXPECT_EQ(sc::CreateInMemoryDatabase(db), sc::SC_OK);
 
-    sc::TablePtr floorTable = CreateFloorTable(db);
-    sc::TablePtr beamTable = CreateBeamTable(db);
+    sc::SCTablePtr floorTable = CreateFloorTable(db);
+    sc::SCTablePtr beamTable = CreateBeamTable(db);
 
-    sc::SchemaPtr beamSchema;
+    sc::SCSchemaPtr beamSchema;
     EXPECT_EQ(beamTable->GetSchema(beamSchema), sc::SC_OK);
 
-    sc::ColumnDef floorRef;
+    sc::SCColumnDef floorRef;
     floorRef.name = L"FloorRef";
     floorRef.displayName = L"FloorRef";
     floorRef.valueKind = sc::ValueKind::RecordId;
@@ -236,22 +236,22 @@ TEST(StorageM1, RelationFieldValidationAndChangeSet)
     RecordingObserver observer;
     EXPECT_EQ(db->AddObserver(&observer), sc::SC_OK);
 
-    sc::EditPtr createEdit;
+    sc::SCEditPtr createEdit;
     EXPECT_EQ(db->BeginEdit(L"seed", createEdit), sc::SC_OK);
-    sc::RecordPtr floor;
+    sc::SCRecordPtr floor;
     EXPECT_EQ(floorTable->CreateRecord(floor), sc::SC_OK);
     EXPECT_EQ(floor->SetString(L"Title", L"2F"), sc::SC_OK);
 
-    sc::RecordPtr beam;
+    sc::SCRecordPtr beam;
     EXPECT_EQ(beamTable->CreateRecord(beam), sc::SC_OK);
     EXPECT_EQ(beam->SetRef(L"FloorRef", floor->GetId()), sc::SC_OK);
     EXPECT_EQ(db->Commit(createEdit.Get()), sc::SC_OK);
 
     EXPECT_FALSE(observer.seen.empty());
-    const sc::ChangeSet& changeSet = observer.seen.back();
+    const sc::SCChangeSet& SCChangeSet = observer.seen.back();
 
     bool sawRelationUpdate = false;
-    for (const auto& change : changeSet.changes)
+    for (const auto& change : SCChangeSet.changes)
     {
         if (change.kind == sc::ChangeKind::RelationUpdated && change.fieldName == L"FloorRef")
         {
@@ -265,14 +265,14 @@ TEST(StorageM1, RelationFieldValidationAndChangeSet)
 
 TEST(StorageM1, GetStringCopyAndDefaultValue)
 {
-    sc::DbPtr db;
+    sc::SCDbPtr db;
     EXPECT_EQ(sc::CreateInMemoryDatabase(db), sc::SC_OK);
 
-    sc::TablePtr beamTable = CreateBeamTable(db);
+    sc::SCTablePtr beamTable = CreateBeamTable(db);
 
-    sc::EditPtr edit;
+    sc::SCEditPtr edit;
     EXPECT_EQ(db->BeginEdit(L"seed", edit), sc::SC_OK);
-    sc::RecordPtr beam;
+    sc::SCRecordPtr beam;
     EXPECT_EQ(beamTable->CreateRecord(beam), sc::SC_OK);
     EXPECT_EQ(db->Commit(edit.Get()), sc::SC_OK);
 
@@ -286,26 +286,26 @@ TEST(StorageM1, GetStringCopyAndDefaultValue)
 
 TEST(StorageM1, WriteRequiresActiveEditAndEmptyQueryIsNotError)
 {
-    sc::DbPtr db;
+    sc::SCDbPtr db;
     EXPECT_EQ(sc::CreateInMemoryDatabase(db), sc::SC_OK);
 
-    sc::TablePtr beamTable = CreateBeamTable(db);
+    sc::SCTablePtr beamTable = CreateBeamTable(db);
 
-    sc::EditPtr seedEdit;
+    sc::SCEditPtr seedEdit;
     EXPECT_EQ(db->BeginEdit(L"seed", seedEdit), sc::SC_OK);
 
-    sc::RecordPtr beam;
+    sc::SCRecordPtr beam;
     EXPECT_EQ(beamTable->CreateRecord(beam), sc::SC_OK);
     EXPECT_EQ(db->Commit(seedEdit.Get()), sc::SC_OK);
 
     EXPECT_EQ(beam->SetInt64(L"Width", 200), sc::SC_E_NO_ACTIVE_EDIT);
 
-    sc::RecordCursorPtr cursor;
-    EXPECT_EQ(beamTable->FindRecords({L"Width", sc::Value::FromInt64(999)}, cursor), sc::SC_OK);
+    sc::SCRecordCursorPtr cursor;
+    EXPECT_EQ(beamTable->FindRecords({L"Width", sc::SCValue::FromInt64(999)}, cursor), sc::SC_OK);
 
     bool hasRow = true;
     EXPECT_EQ(cursor->MoveNext(&hasRow), sc::SC_OK);
     EXPECT_FALSE(hasRow);
-    sc::RecordPtr current;
+    sc::SCRecordPtr current;
     EXPECT_EQ(cursor->GetCurrent(current), sc::SC_FALSE_RESULT);
 }

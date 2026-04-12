@@ -179,12 +179,12 @@ void DatabaseEditorMainWindow::BuildUi()
     auto* inspectorLayout = new QVBoxLayout(inspectorWidget);
 
     schemaTree_ = new QTreeWidget(inspectorWidget);
-    schemaTree_->setHeaderLabels({QStringLiteral("Schema Field"), QStringLiteral("Value")});
+    schemaTree_->setHeaderLabels({QStringLiteral("Schema Field"), QStringLiteral("SCValue")});
     inspectorLayout->addWidget(new QLabel(QStringLiteral("Schema"), inspectorWidget));
     inspectorLayout->addWidget(schemaTree_, 1);
 
     recordTree_ = new QTreeWidget(inspectorWidget);
-    recordTree_->setHeaderLabels({QStringLiteral("Record Field"), QStringLiteral("Value")});
+    recordTree_->setHeaderLabels({QStringLiteral("Record Field"), QStringLiteral("SCValue")});
     inspectorLayout->addWidget(new QLabel(QStringLiteral("Selected Record"), inspectorWidget));
     inspectorLayout->addWidget(recordTree_, 1);
 
@@ -333,7 +333,7 @@ void DatabaseEditorMainWindow::AddSessionComputedColumn()
         return;
     }
 
-    sc::ComputedColumnDef definition;
+    sc::SCComputedColumnDef definition;
     QString error;
     if (!dialog.BuildDefinition(&definition, &error))
     {
@@ -361,7 +361,7 @@ void DatabaseEditorMainWindow::EditSelectedComputedColumn()
         return;
     }
 
-    sc::ComputedColumnDef existing;
+    sc::SCComputedColumnDef existing;
     QString error;
     if (!session_->GetSessionComputedColumn(columnName, &existing, &error))
     {
@@ -375,7 +375,7 @@ void DatabaseEditorMainWindow::EditSelectedComputedColumn()
         return;
     }
 
-    sc::ComputedColumnDef updated;
+    sc::SCComputedColumnDef updated;
     if (!dialog.BuildDefinition(&updated, &error))
     {
         ShowError(QStringLiteral("Edit Computed Column Failed"), error);
@@ -412,7 +412,7 @@ void DatabaseEditorMainWindow::DeleteSelectedComputedColumn()
         return;
     }
 
-    const QVector<sc::ComputedColumnDef> columnsBeforeDelete = session_->CurrentSessionComputedColumns();
+    const QVector<sc::SCComputedColumnDef> columnsBeforeDelete = session_->CurrentSessionComputedColumns();
     QString fallbackSelection;
     for (int index = 0; index < columnsBeforeDelete.size(); ++index)
     {
@@ -492,14 +492,14 @@ void DatabaseEditorMainWindow::EditSelectedRelation()
         return;
     }
 
-    const sc::TableViewColumnDef tableColumn = recordModel_->ColumnAt(index.column());
+    const sc::SCTableViewColumnDef tableColumn = recordModel_->ColumnAt(index.column());
     if (tableColumn.layer != sc::TableColumnLayer::Fact)
     {
         ShowError(QStringLiteral("Pick Relation Failed"), QStringLiteral("Computed columns cannot store relation values."));
         return;
     }
 
-    sc::ColumnDef column;
+    sc::SCColumnDef column;
     QString error;
     if (!session_->GetColumnDef(ToQString(tableColumn.name), &column, &error))
     {
@@ -623,7 +623,7 @@ void DatabaseEditorMainWindow::UpdateSchemaInspector()
 {
     schemaTree_->clear();
 
-    QVector<sc::ColumnDef> columns;
+    QVector<sc::SCColumnDef> columns;
     QString error;
     if (!session_->BuildSchemaSnapshot(&columns, &error))
     {
@@ -631,11 +631,11 @@ void DatabaseEditorMainWindow::UpdateSchemaInspector()
         return;
     }
 
-    for (const sc::ColumnDef& column : columns)
+    for (const sc::SCColumnDef& column : columns)
     {
         auto* root = new QTreeWidgetItem(schemaTree_, {ToQString(column.name), ColumnKindToText(column.columnKind)});
         root->addChild(new QTreeWidgetItem({QStringLiteral("Display Name"), ToQString(column.displayName)}));
-        root->addChild(new QTreeWidgetItem({QStringLiteral("Value Kind"), ValueKindToText(column.valueKind)}));
+        root->addChild(new QTreeWidgetItem({QStringLiteral("SCValue Kind"), ValueKindToText(column.valueKind)}));
         root->addChild(new QTreeWidgetItem({QStringLiteral("Nullable"), column.nullable ? QStringLiteral("true") : QStringLiteral("false")}));
         root->addChild(new QTreeWidgetItem({QStringLiteral("Editable"), column.editable ? QStringLiteral("true") : QStringLiteral("false")}));
         root->addChild(new QTreeWidgetItem({QStringLiteral("Indexed"), column.indexed ? QStringLiteral("true") : QStringLiteral("false")}));
@@ -674,8 +674,8 @@ void DatabaseEditorMainWindow::UpdateComputedColumnsPanel()
     const QString selectedName = CurrentComputedColumnName();
     computedColumnsTree_->clear();
 
-    const QVector<sc::ComputedColumnDef> columns = session_->CurrentSessionComputedColumns();
-    for (const sc::ComputedColumnDef& column : columns)
+    const QVector<sc::SCComputedColumnDef> columns = session_->CurrentSessionComputedColumns();
+    for (const sc::SCComputedColumnDef& column : columns)
     {
         QString definition;
         switch (column.kind)
@@ -703,7 +703,7 @@ void DatabaseEditorMainWindow::UpdateComputedColumnsPanel()
             {ToQString(column.displayName.empty() ? column.name : column.displayName), definition});
         root->setData(0, Qt::UserRole, ToQString(column.name));
         root->addChild(new QTreeWidgetItem({QStringLiteral("Name"), ToQString(column.name)}));
-        root->addChild(new QTreeWidgetItem({QStringLiteral("Value Kind"), ValueKindToText(column.valueKind)}));
+        root->addChild(new QTreeWidgetItem({QStringLiteral("SCValue Kind"), ValueKindToText(column.valueKind)}));
         root->addChild(new QTreeWidgetItem({QStringLiteral("Cacheable"), column.cacheable ? QStringLiteral("true") : QStringLiteral("false")}));
     }
     computedColumnsTree_->expandAll();

@@ -69,5 +69,5 @@ Diagnostics persistence:
 Repository baseline now includes:
 
 - default physical lookup indexes
-- runtime creation of per-column field-value indexes for columns with `indexed=true`
+- runtime creation of per-column field-SCValue indexes for columns with `indexed=true`
 - add-column-time index creation for persisted SQLite schema changes

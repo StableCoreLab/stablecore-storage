@@ -3,7 +3,7 @@
 
 #include <gtest/gtest.h>
 
-#include "StableCore/Storage/Storage.h"
+#include "StableCore/Storage/SCStorage.h"
 
 namespace sc = stablecore::storage;
 namespace fs = std::filesystem;
@@ -11,23 +11,23 @@ namespace fs = std::filesystem;
 namespace
 {
 
-sc::TablePtr CreateIndexedBeamTable(sc::DbPtr& db)
+sc::SCTablePtr CreateIndexedBeamTable(sc::SCDbPtr& db)
 {
-    sc::TablePtr table;
+    sc::SCTablePtr table;
     EXPECT_EQ(db->CreateTable(L"Beam", table), sc::SC_OK);
 
-    sc::SchemaPtr schema;
+    sc::SCSchemaPtr schema;
     EXPECT_EQ(table->GetSchema(schema), sc::SC_OK);
 
-    sc::ColumnDef width;
+    sc::SCColumnDef width;
     width.name = L"Width";
     width.displayName = L"Width";
     width.valueKind = sc::ValueKind::Int64;
-    width.defaultValue = sc::Value::FromInt64(0);
+    width.defaultValue = sc::SCValue::FromInt64(0);
     width.indexed = true;
     EXPECT_EQ(schema->AddColumn(width), sc::SC_OK);
 
-    sc::ColumnDef floorRef;
+    sc::SCColumnDef floorRef;
     floorRef.name = L"FloorRef";
     floorRef.displayName = L"FloorRef";
     floorRef.valueKind = sc::ValueKind::RecordId;
@@ -39,19 +39,19 @@ sc::TablePtr CreateIndexedBeamTable(sc::DbPtr& db)
     return table;
 }
 
-sc::TablePtr CreateFloorTable(sc::DbPtr& db)
+sc::SCTablePtr CreateFloorTable(sc::SCDbPtr& db)
 {
-    sc::TablePtr table;
+    sc::SCTablePtr table;
     EXPECT_EQ(db->CreateTable(L"Floor", table), sc::SC_OK);
 
-    sc::SchemaPtr schema;
+    sc::SCSchemaPtr schema;
     EXPECT_EQ(table->GetSchema(schema), sc::SC_OK);
 
-    sc::ColumnDef name;
+    sc::SCColumnDef name;
     name.name = L"Name";
     name.displayName = L"Name";
     name.valueKind = sc::ValueKind::String;
-    name.defaultValue = sc::Value::FromString(L"");
+    name.defaultValue = sc::SCValue::FromString(L"");
     EXPECT_EQ(schema->AddColumn(name), sc::SC_OK);
     return table;
 }
@@ -70,39 +70,39 @@ TEST(StoragePerformance, SqliteBulkImportAndRelationQuerySmoke)
 {
     const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_PerfSmoke.sqlite");
 
-    sc::DbPtr db;
+    sc::SCDbPtr db;
     ASSERT_EQ(sc::CreateSqliteDatabase(dbPath.c_str(), db), sc::SC_OK);
 
-    sc::TablePtr floorTable = CreateFloorTable(db);
-    sc::TablePtr beamTable = CreateIndexedBeamTable(db);
+    sc::SCTablePtr floorTable = CreateFloorTable(db);
+    sc::SCTablePtr beamTable = CreateIndexedBeamTable(db);
 
-    sc::EditPtr seedEdit;
+    sc::SCEditPtr seedEdit;
     ASSERT_EQ(db->BeginEdit(L"seed floors", seedEdit), sc::SC_OK);
-    sc::RecordPtr floor;
+    sc::SCRecordPtr floor;
     ASSERT_EQ(floorTable->CreateRecord(floor), sc::SC_OK);
     ASSERT_EQ(floor->SetString(L"Name", L"2F"), sc::SC_OK);
     ASSERT_EQ(db->Commit(seedEdit.Get()), sc::SC_OK);
 
-    std::vector<sc::BatchTableRequest> requests;
-    sc::BatchTableRequest beamImport;
+    std::vector<sc::SCBatchTableRequest> requests;
+    sc::SCBatchTableRequest beamImport;
     beamImport.tableName = L"Beam";
     for (int i = 0; i < 500; ++i)
     {
-        beamImport.creates.push_back(sc::BatchCreateRecordRequest{{
-            {L"Width", sc::Value::FromInt64((i % 5) * 100)},
-            {L"FloorRef", sc::Value::FromRecordId(floor->GetId())},
+        beamImport.creates.push_back(sc::SCBatchCreateRecordRequest{{
+            {L"Width", sc::SCValue::FromInt64((i % 5) * 100)},
+            {L"FloorRef", sc::SCValue::FromRecordId(floor->GetId())},
         }});
     }
     requests.push_back(beamImport);
 
     const auto importStart = std::chrono::steady_clock::now();
-    sc::BatchExecutionResult importResult;
-    ASSERT_EQ(sc::ExecuteImport(db.Get(), requests, sc::ImportOptions{L"perf import"}, &importResult), sc::SC_OK);
+    sc::SCBatchExecutionResult ISCmportResult;
+    ASSERT_EQ(sc::ExecuteImport(db.Get(), requests, sc::ISCmportOptions{L"perf import"}, &ISCmportResult), sc::SC_OK);
     const auto importElapsed = std::chrono::steady_clock::now() - importStart;
 
-    sc::RecordCursorPtr floorCursor;
+    sc::SCRecordCursorPtr floorCursor;
     const auto queryStart = std::chrono::steady_clock::now();
-    ASSERT_EQ(beamTable->FindRecords({L"FloorRef", sc::Value::FromRecordId(floor->GetId())}, floorCursor), sc::SC_OK);
+    ASSERT_EQ(beamTable->FindRecords({L"FloorRef", sc::SCValue::FromRecordId(floor->GetId())}, floorCursor), sc::SC_OK);
     const auto queryElapsed = std::chrono::steady_clock::now() - queryStart;
 
     bool hasRow = false;
@@ -112,7 +112,7 @@ TEST(StoragePerformance, SqliteBulkImportAndRelationQuerySmoke)
         ++count;
     }
 
-    EXPECT_EQ(importResult.createdCount, 500u);
+    EXPECT_EQ(ISCmportResult.createdCount, 500u);
     EXPECT_EQ(count, 500);
     EXPECT_GE(importElapsed.count(), 0);
     EXPECT_GE(queryElapsed.count(), 0);

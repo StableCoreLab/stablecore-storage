@@ -2,12 +2,12 @@
 
 #include <atomic>
 
-#include "StableCore/Storage/RefPtr.h"
+#include "StableCore/Storage/ISCRefPtr.h"
 
 namespace stablecore::storage
 {
 
-class RefCountedObject : public virtual IRefObject
+class SCRefCountedObject : public virtual ISCRefObject
 {
 public:
     unsigned int AddRef() override
@@ -26,7 +26,7 @@ public:
     }
 
 protected:
-    ~RefCountedObject() override = default;
+    ~SCRefCountedObject() override = default;
 
 private:
     std::atomic<unsigned int> refCount_{1};

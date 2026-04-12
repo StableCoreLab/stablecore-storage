@@ -6,7 +6,7 @@
 #include <variant>
 #include <vector>
 
-#include "StableCore/Storage/Errors.h"
+#include "StableCore/Storage/SCErrors.h"
 
 namespace stablecore::storage
 {
@@ -14,11 +14,11 @@ namespace stablecore::storage
 using RecordId = std::int64_t;
 using VersionId = std::uint64_t;
 
-struct EnumValue
+struct SCEnumValue
 {
     std::wstring value;
 
-    bool operator==(const EnumValue& other) const noexcept
+    bool operator==(const SCEnumValue& other) const noexcept
     {
         return value == other.value;
     }
@@ -95,20 +95,20 @@ enum class EditState
     RolledBack,
 };
 
-class Value
+class SCValue
 {
 public:
-    using Storage = std::variant<std::monostate, std::int64_t, double, bool, std::wstring, RecordIdValue, EnumValue>;
+    using Storage = std::variant<std::monostate, std::int64_t, double, bool, std::wstring, RecordIdValue, SCEnumValue>;
 
-    Value() = default;
+    SCValue() = default;
 
-    static Value Null() { return Value(); }
-    static Value FromInt64(std::int64_t value) { return Value(value); }
-    static Value FromDouble(double value) { return Value(value); }
-    static Value FromBool(bool value) { return Value(value); }
-    static Value FromString(std::wstring value) { return Value(std::move(value)); }
-    static Value FromRecordId(RecordId value) { return Value(RecordIdValue{value}); }
-    static Value FromEnum(std::wstring value) { return Value(EnumValue{std::move(value)}); }
+    static SCValue Null() { return SCValue(); }
+    static SCValue FromInt64(std::int64_t value) { return SCValue(value); }
+    static SCValue FromDouble(double value) { return SCValue(value); }
+    static SCValue FromBool(bool value) { return SCValue(value); }
+    static SCValue FromString(std::wstring value) { return SCValue(std::move(value)); }
+    static SCValue FromRecordId(RecordId value) { return SCValue(RecordIdValue{value}); }
+    static SCValue FromEnum(std::wstring value) { return SCValue(SCEnumValue{std::move(value)}); }
 
     ValueKind GetKind() const noexcept
     {
@@ -220,7 +220,7 @@ public:
         {
             return SC_E_POINTER;
         }
-        if (const auto* typed = TryGet<EnumValue>())
+        if (const auto* typed = TryGet<SCEnumValue>())
         {
             *outValue = typed->value.c_str();
             return SC_OK;
@@ -234,7 +234,7 @@ public:
         {
             return SC_E_POINTER;
         }
-        if (const auto* typed = TryGet<EnumValue>())
+        if (const auto* typed = TryGet<SCEnumValue>())
         {
             *outValue = typed->value;
             return SC_OK;
@@ -242,12 +242,12 @@ public:
         return IsNull() ? SC_E_VALUE_IS_NULL : SC_E_TYPE_MISMATCH;
     }
 
-    bool operator==(const Value& other) const noexcept
+    bool operator==(const SCValue& other) const noexcept
     {
         return value_ == other.value_;
     }
 
-    bool operator!=(const Value& other) const noexcept
+    bool operator!=(const SCValue& other) const noexcept
     {
         return !(*this == other);
     }
@@ -259,32 +259,32 @@ public:
     }
 
 private:
-    explicit Value(std::int64_t value)
+    explicit SCValue(std::int64_t value)
         : value_(value)
     {
     }
 
-    explicit Value(double value)
+    explicit SCValue(double value)
         : value_(value)
     {
     }
 
-    explicit Value(bool value)
+    explicit SCValue(bool value)
         : value_(value)
     {
     }
 
-    explicit Value(std::wstring value)
+    explicit SCValue(std::wstring value)
         : value_(std::move(value))
     {
     }
 
-    explicit Value(RecordIdValue value)
+    explicit SCValue(RecordIdValue value)
         : value_(std::move(value))
     {
     }
 
-    explicit Value(EnumValue value)
+    explicit SCValue(SCEnumValue value)
         : value_(std::move(value))
     {
     }
@@ -292,7 +292,7 @@ private:
     Storage value_{};
 };
 
-struct ColumnDef
+struct SCColumnDef
 {
     std::wstring name;
     std::wstring displayName;
@@ -305,7 +305,7 @@ struct ColumnDef
     bool participatesInCalc{false};
     std::wstring unit;
     std::wstring referenceTable;
-    Value defaultValue;
+    SCValue defaultValue;
 };
 
 enum class ComputedFieldKind
@@ -315,7 +315,7 @@ enum class ComputedFieldKind
     Aggregate,
 };
 
-enum class AggregateKind
+enum class SCAggregateKind
 {
     Count,
     Sum,
@@ -323,19 +323,19 @@ enum class AggregateKind
     Max,
 };
 
-struct FieldDependency
+struct SCFieldDependency
 {
     std::wstring tableName;
     std::wstring fieldName;
 };
 
-struct ComputedDependencySet
+struct SCComputedDependencySet
 {
-    std::vector<FieldDependency> factFields;
-    std::vector<FieldDependency> relationFields;
+    std::vector<SCFieldDependency> factFields;
+    std::vector<SCFieldDependency> relationFields;
 };
 
-struct ComputedColumnDef
+struct SCComputedColumnDef
 {
     std::wstring name;
     std::wstring displayName;
@@ -345,8 +345,8 @@ struct ComputedColumnDef
     ComputedFieldKind kind{ComputedFieldKind::Expression};
     std::wstring expression;
     std::wstring ruleId;
-    ComputedDependencySet dependencies;
-    AggregateKind aggregateKind{AggregateKind::Count};
+    SCComputedDependencySet dependencies;
+    SCAggregateKind aggregateKind{SCAggregateKind::Count};
     std::wstring aggregateRelation;
     std::wstring aggregateField;
 
@@ -354,10 +354,10 @@ struct ComputedColumnDef
     bool editable{false};
 };
 
-struct QueryCondition
+struct SCQueryCondition
 {
     std::wstring fieldName;
-    Value expectedValue;
+    SCValue expectedValue;
 };
 
 struct JournalEntry
@@ -366,8 +366,8 @@ struct JournalEntry
     std::wstring tableName;
     RecordId recordId{0};
     std::wstring fieldName;
-    Value oldValue;
-    Value newValue;
+    SCValue oldValue;
+    SCValue newValue;
     bool oldDeleted{false};
     bool newDeleted{false};
 };
@@ -378,24 +378,24 @@ struct JournalTransaction
     std::vector<JournalEntry> entries;
 };
 
-struct DataChange
+struct SCDataChange
 {
     ChangeKind kind{};
     std::wstring tableName;
     RecordId recordId{0};
     std::wstring fieldName;
-    Value oldValue;
-    Value newValue;
+    SCValue oldValue;
+    SCValue newValue;
     bool structuralChange{false};
     bool relationChange{false};
 };
 
-struct ChangeSet
+struct SCChangeSet
 {
     std::wstring actionName;
     ChangeSource source{ChangeSource::UserEdit};
     VersionId version{0};
-    std::vector<DataChange> changes;
+    std::vector<SCDataChange> changes;
 };
 
 }  // namespace stablecore::storage

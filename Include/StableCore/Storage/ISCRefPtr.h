@@ -5,24 +5,24 @@
 namespace stablecore::storage
 {
 
-class IRefObject
+class ISCRefObject
 {
 public:
     virtual unsigned int AddRef() = 0;
     virtual unsigned int Release() = 0;
 
 protected:
-    virtual ~IRefObject() = default;
+    virtual ~ISCRefObject() = default;
 };
 
 template <class T>
-class RefPtr
+class SCRefPtr
 {
 public:
-    RefPtr() noexcept = default;
-    RefPtr(std::nullptr_t) noexcept {}
+    SCRefPtr() noexcept = default;
+    SCRefPtr(std::nullptr_t) noexcept {}
 
-    explicit RefPtr(T* ptr, bool addRef = true) noexcept
+    explicit SCRefPtr(T* ptr, bool addRef = true) noexcept
         : ptr_(ptr)
     {
         if (ptr_ != nullptr && addRef)
@@ -31,35 +31,35 @@ public:
         }
     }
 
-    RefPtr(const RefPtr& other) noexcept
-        : RefPtr(other.ptr_)
+    SCRefPtr(const SCRefPtr& other) noexcept
+        : SCRefPtr(other.ptr_)
     {
     }
 
     template <class U>
-    RefPtr(const RefPtr<U>& other) noexcept
-        : RefPtr(other.Get())
+    SCRefPtr(const SCRefPtr<U>& other) noexcept
+        : SCRefPtr(other.Get())
     {
     }
 
-    RefPtr(RefPtr&& other) noexcept
+    SCRefPtr(SCRefPtr&& other) noexcept
         : ptr_(other.ptr_)
     {
         other.ptr_ = nullptr;
     }
 
     template <class U>
-    RefPtr(RefPtr<U>&& other) noexcept
+    SCRefPtr(SCRefPtr<U>&& other) noexcept
         : ptr_(other.Detach())
     {
     }
 
-    ~RefPtr()
+    ~SCRefPtr()
     {
         Reset();
     }
 
-    RefPtr& operator=(const RefPtr& other) noexcept
+    SCRefPtr& operator=(const SCRefPtr& other) noexcept
     {
         if (this != &other)
         {
@@ -68,7 +68,7 @@ public:
         return *this;
     }
 
-    RefPtr& operator=(RefPtr&& other) noexcept
+    SCRefPtr& operator=(SCRefPtr&& other) noexcept
     {
         if (this != &other)
         {
@@ -127,15 +127,15 @@ public:
 
 private:
     template <class U>
-    friend class RefPtr;
+    friend class SCRefPtr;
 
     T* ptr_{nullptr};
 };
 
 template <class T, class... Args>
-RefPtr<T> MakeRef(Args&&... args)
+SCRefPtr<T> SCMakeRef(Args&&... args)
 {
-    return RefPtr<T>(new T(std::forward<Args>(args)...), false);
+    return SCRefPtr<T>(new T(std::forward<Args>(args)...), false);
 }
 
 }  // namespace stablecore::storage

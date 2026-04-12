@@ -16,46 +16,46 @@ QString ToQString(const std::wstring& text)
     return QString::fromStdWString(text);
 }
 
-QString ValueToDisplayString(const sc::Value& value)
+QString ValueToDisplayString(const sc::SCValue& SCValue)
 {
-    switch (value.GetKind())
+    switch (SCValue.GetKind())
     {
     case sc::ValueKind::Null:
         return QString();
     case sc::ValueKind::Int64:
     {
         std::int64_t v = 0;
-        value.AsInt64(&v);
+        SCValue.AsInt64(&v);
         return QString::number(v);
     }
     case sc::ValueKind::Double:
     {
         double v = 0.0;
-        value.AsDouble(&v);
+        SCValue.AsDouble(&v);
         return QString::number(v, 'g', 12);
     }
     case sc::ValueKind::Bool:
     {
         bool v = false;
-        value.AsBool(&v);
+        SCValue.AsBool(&v);
         return v ? QStringLiteral("true") : QStringLiteral("false");
     }
     case sc::ValueKind::String:
     {
         std::wstring v;
-        value.AsStringCopy(&v);
+        SCValue.AsStringCopy(&v);
         return ToQString(v);
     }
     case sc::ValueKind::RecordId:
     {
         sc::RecordId v = 0;
-        value.AsRecordId(&v);
+        SCValue.AsRecordId(&v);
         return QString::number(v);
     }
     case sc::ValueKind::Enum:
     {
         std::wstring v;
-        value.AsEnumCopy(&v);
+        SCValue.AsEnumCopy(&v);
         return ToQString(v);
     }
     default:
@@ -122,17 +122,17 @@ QStringList DatabaseSession::TableNames() const
     return tableNames_;
 }
 
-sc::IDatabase* DatabaseSession::Database() const noexcept
+sc::ISCDatabase* DatabaseSession::Database() const noexcept
 {
     return db_.Get();
 }
 
-sc::ITable* DatabaseSession::CurrentTable() const noexcept
+sc::ISCTable* DatabaseSession::CurrentTable() const noexcept
 {
     return currentTable_.Get();
 }
 
-sc::IComputedTableView* DatabaseSession::CurrentTableView() const noexcept
+sc::ISCComputedTableView* DatabaseSession::CurrentTableView() const noexcept
 {
     return currentTableView_.Get();
 }
@@ -204,7 +204,7 @@ bool DatabaseSession::CreateTable(const QString& tableName, QString* outError)
         return false;
     }
 
-    sc::TablePtr table;
+    sc::SCTablePtr table;
     const sc::ErrorCode rc = db_->CreateTable(tableName.toStdWString().c_str(), table);
     if (sc::Failed(rc))
     {
@@ -240,7 +240,7 @@ bool DatabaseSession::SelectTable(const QString& tableName, QString* outError)
         return false;
     }
 
-    sc::TablePtr table;
+    sc::SCTablePtr table;
     sc::ErrorCode rc = db_->GetTable(tableName.toStdWString().c_str(), table);
     if (sc::Failed(rc))
     {
@@ -252,8 +252,8 @@ bool DatabaseSession::SelectTable(const QString& tableName, QString* outError)
     }
 
     const QString previousTableName = currentTableName_;
-    sc::TablePtr previousTable = currentTable_;
-    sc::ComputedTableViewPtr previousTableView = currentTableView_;
+    sc::SCTablePtr previousTable = currentTable_;
+    sc::SCComputedTableViewPtr previousTableView = currentTableView_;
 
     currentTable_ = table;
     currentTableName_ = tableName;
@@ -270,7 +270,7 @@ bool DatabaseSession::SelectTable(const QString& tableName, QString* outError)
     return true;
 }
 
-bool DatabaseSession::AddColumn(const sc::ColumnDef& column, QString* outError)
+bool DatabaseSession::AddColumn(const sc::SCColumnDef& column, QString* outError)
 {
     if (!currentTable_)
     {
@@ -281,7 +281,7 @@ bool DatabaseSession::AddColumn(const sc::ColumnDef& column, QString* outError)
         return false;
     }
 
-    sc::SchemaPtr schema;
+    sc::SCSchemaPtr schema;
     sc::ErrorCode rc = currentTable_->GetSchema(schema);
     if (sc::Failed(rc))
     {
@@ -322,7 +322,7 @@ bool DatabaseSession::AddRecord(QString* outError)
         L"Add Record",
         [&]()
         {
-            sc::RecordPtr record;
+            sc::SCRecordPtr record;
             return currentTable_->CreateRecord(record);
         },
         outError);
@@ -413,7 +413,7 @@ bool DatabaseSession::Redo(QString* outError)
 bool DatabaseSession::SetCellValue(
     sc::RecordId recordId,
     const QString& columnName,
-    const QVariant& value,
+    const QVariant& SCValue,
     QString* outError)
 {
     if (!currentTable_)
@@ -425,7 +425,7 @@ bool DatabaseSession::SetCellValue(
         return false;
     }
 
-    sc::SchemaPtr schema;
+    sc::SCSchemaPtr schema;
     sc::ErrorCode rc = currentTable_->GetSchema(schema);
     if (sc::Failed(rc))
     {
@@ -436,7 +436,7 @@ bool DatabaseSession::SetCellValue(
         return false;
     }
 
-    sc::ColumnDef column;
+    sc::SCColumnDef column;
     rc = schema->FindColumn(columnName.toStdWString().c_str(), &column);
     if (sc::Failed(rc))
     {
@@ -447,8 +447,8 @@ bool DatabaseSession::SetCellValue(
         return false;
     }
 
-    sc::Value storageValue;
-    rc = ConvertVariantToValue(column, value, &storageValue);
+    sc::SCValue storageValue;
+    rc = ConvertVariantToValue(column, SCValue, &storageValue);
     if (sc::Failed(rc))
     {
         if (outError != nullptr)
@@ -462,7 +462,7 @@ bool DatabaseSession::SetCellValue(
         L"Edit Cell",
         [&]()
         {
-            sc::RecordPtr record;
+            sc::SCRecordPtr record;
             sc::ErrorCode getRc = currentTable_->GetRecord(recordId, record);
             if (sc::Failed(getRc))
             {
@@ -479,7 +479,7 @@ bool DatabaseSession::SetCellValue(
     return ok;
 }
 
-bool DatabaseSession::GetColumnDef(const QString& columnName, sc::ColumnDef* outColumn, QString* outError) const
+bool DatabaseSession::GetColumnDef(const QString& columnName, sc::SCColumnDef* outColumn, QString* outError) const
 {
     if (outColumn == nullptr)
     {
@@ -498,7 +498,7 @@ bool DatabaseSession::GetColumnDef(const QString& columnName, sc::ColumnDef* out
         return false;
     }
 
-    sc::SchemaPtr schema;
+    sc::SCSchemaPtr schema;
     sc::ErrorCode rc = currentTable_->GetSchema(schema);
     if (sc::Failed(rc))
     {
@@ -546,7 +546,7 @@ bool DatabaseSession::BuildRelationCandidates(
         return false;
     }
 
-    sc::TablePtr targetTable;
+    sc::SCTablePtr targetTable;
     sc::ErrorCode rc = db_->GetTable(targetTableName.toStdWString().c_str(), targetTable);
     if (sc::Failed(rc))
     {
@@ -557,7 +557,7 @@ bool DatabaseSession::BuildRelationCandidates(
         return false;
     }
 
-    sc::SchemaPtr schema;
+    sc::SCSchemaPtr schema;
     rc = targetTable->GetSchema(schema);
     if (sc::Failed(rc))
     {
@@ -568,7 +568,7 @@ bool DatabaseSession::BuildRelationCandidates(
         return false;
     }
 
-    QVector<sc::ColumnDef> columns;
+    QVector<sc::SCColumnDef> columns;
     std::int32_t columnCount = 0;
     rc = schema->GetColumnCount(&columnCount);
     if (sc::Failed(rc))
@@ -582,7 +582,7 @@ bool DatabaseSession::BuildRelationCandidates(
 
     for (std::int32_t index = 0; index < columnCount; ++index)
     {
-        sc::ColumnDef column;
+        sc::SCColumnDef column;
         rc = schema->GetColumn(index, &column);
         if (sc::Failed(rc))
         {
@@ -595,7 +595,7 @@ bool DatabaseSession::BuildRelationCandidates(
         columns.push_back(column);
     }
 
-    sc::RecordCursorPtr cursor;
+    sc::SCRecordCursorPtr cursor;
     rc = targetTable->EnumerateRecords(cursor);
     if (sc::Failed(rc))
     {
@@ -609,7 +609,7 @@ bool DatabaseSession::BuildRelationCandidates(
     bool hasRow = false;
     while (cursor->MoveNext(&hasRow) == sc::SC_OK && hasRow)
     {
-        sc::RecordPtr record;
+        sc::SCRecordPtr record;
         rc = cursor->GetCurrent(record);
         if (sc::Failed(rc))
         {
@@ -624,15 +624,15 @@ bool DatabaseSession::BuildRelationCandidates(
         candidate.recordId = record->GetId();
         candidate.previewFields.push_back(qMakePair(QStringLiteral("RecordId"), QString::number(candidate.recordId)));
 
-        for (const sc::ColumnDef& column : columns)
+        for (const sc::SCColumnDef& column : columns)
         {
             if (column.valueKind == sc::ValueKind::Null)
             {
                 continue;
             }
 
-            sc::Value value;
-            const sc::ErrorCode valueRc = record->GetValue(column.name.c_str(), &value);
+            sc::SCValue SCValue;
+            const sc::ErrorCode valueRc = record->GetValue(column.name.c_str(), &SCValue);
             if (valueRc == sc::SC_E_VALUE_IS_NULL)
             {
                 continue;
@@ -644,7 +644,7 @@ bool DatabaseSession::BuildRelationCandidates(
 
             candidate.previewFields.push_back(qMakePair(
                 ToQString(column.displayName.empty() ? column.name : column.displayName),
-                ValueToDisplayString(value)));
+                ValueToDisplayString(SCValue)));
         }
 
         candidate.label = PickRecordLabel(candidate.previewFields, candidate.recordId);
@@ -661,7 +661,7 @@ bool DatabaseSession::BuildRelationCandidates(
     return true;
 }
 
-bool DatabaseSession::AddSessionComputedColumn(const sc::ComputedColumnDef& column, QString* outError)
+bool DatabaseSession::AddSessionComputedColumn(const sc::SCComputedColumnDef& column, QString* outError)
 {
     if (!currentTableView_)
     {
@@ -672,7 +672,7 @@ bool DatabaseSession::AddSessionComputedColumn(const sc::ComputedColumnDef& colu
         return false;
     }
 
-    QVector<sc::ComputedColumnDef>* columns = CurrentSessionComputedColumnsStorage();
+    QVector<sc::SCComputedColumnDef>* columns = CurrentSessionComputedColumnsStorage();
     if (columns == nullptr)
     {
         if (outError != nullptr)
@@ -692,7 +692,7 @@ bool DatabaseSession::AddSessionComputedColumn(const sc::ComputedColumnDef& colu
         return false;
     }
 
-    for (const sc::ComputedColumnDef& existing : *columns)
+    for (const sc::SCComputedColumnDef& existing : *columns)
     {
         if (ToQString(existing.name).compare(requestedName, Qt::CaseInsensitive) == 0)
         {
@@ -718,10 +718,10 @@ bool DatabaseSession::AddSessionComputedColumn(const sc::ComputedColumnDef& colu
 
 bool DatabaseSession::UpdateSessionComputedColumn(
     const QString& originalName,
-    const sc::ComputedColumnDef& column,
+    const sc::SCComputedColumnDef& column,
     QString* outError)
 {
-    QVector<sc::ComputedColumnDef>* columns = CurrentSessionComputedColumnsStorage();
+    QVector<sc::SCComputedColumnDef>* columns = CurrentSessionComputedColumnsStorage();
     if (columns == nullptr)
     {
         if (outError != nullptr)
@@ -769,7 +769,7 @@ bool DatabaseSession::UpdateSessionComputedColumn(
         return false;
     }
 
-    const sc::ComputedColumnDef previous = columns->at(targetIndex);
+    const sc::SCComputedColumnDef previous = columns->at(targetIndex);
     (*columns)[targetIndex] = column;
     if (!RebuildCurrentTableView(outError))
     {
@@ -784,7 +784,7 @@ bool DatabaseSession::UpdateSessionComputedColumn(
 
 bool DatabaseSession::RemoveSessionComputedColumn(const QString& name, QString* outError)
 {
-    QVector<sc::ComputedColumnDef>* columns = CurrentSessionComputedColumnsStorage();
+    QVector<sc::SCComputedColumnDef>* columns = CurrentSessionComputedColumnsStorage();
     if (columns == nullptr)
     {
         if (outError != nullptr)
@@ -802,7 +802,7 @@ bool DatabaseSession::RemoveSessionComputedColumn(const QString& name, QString* 
             continue;
         }
 
-        const sc::ComputedColumnDef removed = columns->at(index);
+        const sc::SCComputedColumnDef removed = columns->at(index);
         columns->removeAt(index);
         if (!RebuildCurrentTableView(outError))
         {
@@ -824,7 +824,7 @@ bool DatabaseSession::RemoveSessionComputedColumn(const QString& name, QString* 
 
 bool DatabaseSession::GetSessionComputedColumn(
     const QString& name,
-    sc::ComputedColumnDef* outColumn,
+    sc::SCComputedColumnDef* outColumn,
     QString* outError) const
 {
     if (outColumn == nullptr)
@@ -836,7 +836,7 @@ bool DatabaseSession::GetSessionComputedColumn(
         return false;
     }
 
-    const QVector<sc::ComputedColumnDef>* columns = CurrentSessionComputedColumnsStorage();
+    const QVector<sc::SCComputedColumnDef>* columns = CurrentSessionComputedColumnsStorage();
     if (columns == nullptr)
     {
         if (outError != nullptr)
@@ -847,7 +847,7 @@ bool DatabaseSession::GetSessionComputedColumn(
     }
 
     const QString key = name.trimmed();
-    for (const sc::ComputedColumnDef& column : *columns)
+    for (const sc::SCComputedColumnDef& column : *columns)
     {
         if (ToQString(column.name).compare(key, Qt::CaseInsensitive) == 0)
         {
@@ -863,7 +863,7 @@ bool DatabaseSession::GetSessionComputedColumn(
     return false;
 }
 
-QVector<sc::ComputedColumnDef> DatabaseSession::CurrentSessionComputedColumns() const
+QVector<sc::SCComputedColumnDef> DatabaseSession::CurrentSessionComputedColumns() const
 {
     return sessionComputedColumnsByTable_.value(currentTableName_);
 }
@@ -875,21 +875,21 @@ QString DatabaseSession::BuildHealthSummary() const
         return QStringLiteral("No database is open.");
     }
 
-    sc::StorageHealthReport report;
+    sc::SCStorageHealthReport report;
     sc::BuildStorageHealthReport(db_.Get(), L"SQLite", &report);
 
     QString summary;
     summary += QStringLiteral("Backend: ") + ToQString(report.backendName) + QLatin1Char('\n');
     summary += QStringLiteral("Version: ") + QString::number(static_cast<qulonglong>(report.currentVersion)) + QLatin1Char('\n');
     summary += QStringLiteral("Diagnostics:\n");
-    for (const sc::DiagnosticEntry& entry : report.diagnostics)
+    for (const sc::SCDiagnosticEntry& entry : report.diagnostics)
     {
         summary += QStringLiteral("- [") + ToQString(entry.category) + QStringLiteral("] ") + ToQString(entry.message) + QLatin1Char('\n');
     }
     return summary;
 }
 
-bool DatabaseSession::BuildSchemaSnapshot(QVector<sc::ColumnDef>* outColumns, QString* outError) const
+bool DatabaseSession::BuildSchemaSnapshot(QVector<sc::SCColumnDef>* outColumns, QString* outError) const
 {
     if (outColumns == nullptr)
     {
@@ -906,7 +906,7 @@ bool DatabaseSession::BuildSchemaSnapshot(QVector<sc::ColumnDef>* outColumns, QS
         return true;
     }
 
-    sc::SchemaPtr schema;
+    sc::SCSchemaPtr schema;
     sc::ErrorCode rc = currentTable_->GetSchema(schema);
     if (sc::Failed(rc))
     {
@@ -930,7 +930,7 @@ bool DatabaseSession::BuildSchemaSnapshot(QVector<sc::ColumnDef>* outColumns, QS
 
     for (std::int32_t index = 0; index < count; ++index)
     {
-        sc::ColumnDef column;
+        sc::SCColumnDef column;
         rc = schema->GetColumn(index, &column);
         if (sc::Failed(rc))
         {
@@ -966,7 +966,7 @@ bool DatabaseSession::BuildRecordSnapshot(
         return true;
     }
 
-    sc::RecordPtr record;
+    sc::SCRecordPtr record;
     sc::ErrorCode rc = currentTable_->GetRecord(recordId, record);
     if (sc::Failed(rc))
     {
@@ -977,7 +977,7 @@ bool DatabaseSession::BuildRecordSnapshot(
         return false;
     }
 
-    QVector<sc::ColumnDef> columns;
+    QVector<sc::SCColumnDef> columns;
     if (!BuildSchemaSnapshot(&columns, outError))
     {
         return false;
@@ -987,10 +987,10 @@ bool DatabaseSession::BuildRecordSnapshot(
     outFields->push_back(qMakePair(QStringLiteral("Deleted"), record->IsDeleted() ? QStringLiteral("true") : QStringLiteral("false")));
     outFields->push_back(qMakePair(QStringLiteral("LastModifiedVersion"), QString::number(static_cast<qulonglong>(record->GetLastModifiedVersion()))));
 
-    for (const sc::ColumnDef& column : columns)
+    for (const sc::SCColumnDef& column : columns)
     {
-        sc::Value value;
-        rc = record->GetValue(column.name.c_str(), &value);
+        sc::SCValue SCValue;
+        rc = record->GetValue(column.name.c_str(), &SCValue);
         if (rc == sc::SC_E_VALUE_IS_NULL)
         {
             outFields->push_back(qMakePair(ToQString(column.name), QString()));
@@ -1001,18 +1001,18 @@ bool DatabaseSession::BuildRecordSnapshot(
             outFields->push_back(qMakePair(ToQString(column.name), QStringLiteral("<error>")));
             continue;
         }
-        outFields->push_back(qMakePair(ToQString(column.name), ValueToDisplayString(value)));
+        outFields->push_back(qMakePair(ToQString(column.name), ValueToDisplayString(SCValue)));
     }
 
     return true;
 }
 
-QVector<sc::ComputedColumnDef>* DatabaseSession::CurrentSessionComputedColumnsStorage()
+QVector<sc::SCComputedColumnDef>* DatabaseSession::CurrentSessionComputedColumnsStorage()
 {
     return currentTableName_.isEmpty() ? nullptr : &sessionComputedColumnsByTable_[currentTableName_];
 }
 
-const QVector<sc::ComputedColumnDef>* DatabaseSession::CurrentSessionComputedColumnsStorage() const
+const QVector<sc::SCComputedColumnDef>* DatabaseSession::CurrentSessionComputedColumnsStorage() const
 {
     if (currentTableName_.isEmpty())
     {
@@ -1059,7 +1059,7 @@ bool DatabaseSession::RebuildCurrentTableView(QString* outError)
 {
     currentTableView_.Reset();
 
-    sc::ComputedTableViewPtr view;
+    sc::SCComputedTableViewPtr view;
     sc::ErrorCode rc = sc::CreateComputedTableView(db_.Get(), currentTableName_.toStdWString().c_str(), nullptr, view);
     if (sc::Failed(rc))
     {
@@ -1070,8 +1070,8 @@ bool DatabaseSession::RebuildCurrentTableView(QString* outError)
         return false;
     }
 
-    const QVector<sc::ComputedColumnDef> computedColumns = sessionComputedColumnsByTable_.value(currentTableName_);
-    for (const sc::ComputedColumnDef& column : computedColumns)
+    const QVector<sc::SCComputedColumnDef> computedColumns = sessionComputedColumnsByTable_.value(currentTableName_);
+    for (const sc::SCComputedColumnDef& column : computedColumns)
     {
         rc = view->AddComputedColumn(column);
         if (sc::Failed(rc))
@@ -1093,7 +1093,7 @@ bool DatabaseSession::BeginAndCommitSingleAction(
     const std::function<sc::ErrorCode()>& action,
     QString* outError)
 {
-    sc::EditPtr edit;
+    sc::SCEditPtr edit;
     sc::ErrorCode rc = db_->BeginEdit(actionName, edit);
     if (sc::Failed(rc))
     {
@@ -1129,9 +1129,9 @@ bool DatabaseSession::BeginAndCommitSingleAction(
 }
 
 sc::ErrorCode DatabaseSession::ConvertVariantToValue(
-    const sc::ColumnDef& column,
+    const sc::SCColumnDef& column,
     const QVariant& input,
-    sc::Value* outValue) const
+    sc::SCValue* outValue) const
 {
     if (outValue == nullptr)
     {
@@ -1140,31 +1140,31 @@ sc::ErrorCode DatabaseSession::ConvertVariantToValue(
 
     if (!input.isValid() || input.isNull())
     {
-        *outValue = sc::Value::Null();
+        *outValue = sc::SCValue::Null();
         return sc::SC_OK;
     }
 
     switch (column.valueKind)
     {
     case sc::ValueKind::Int64:
-        *outValue = sc::Value::FromInt64(input.toLongLong());
+        *outValue = sc::SCValue::FromInt64(input.toLongLong());
         return sc::SC_OK;
     case sc::ValueKind::Double:
-        *outValue = sc::Value::FromDouble(input.toDouble());
+        *outValue = sc::SCValue::FromDouble(input.toDouble());
         return sc::SC_OK;
     case sc::ValueKind::Bool:
-        *outValue = sc::Value::FromBool(input.toBool());
+        *outValue = sc::SCValue::FromBool(input.toBool());
         return sc::SC_OK;
     case sc::ValueKind::String:
-        *outValue = sc::Value::FromString(input.toString().toStdWString());
+        *outValue = sc::SCValue::FromString(input.toString().toStdWString());
         return sc::SC_OK;
     case sc::ValueKind::RecordId:
         *outValue = input.toString().trimmed().isEmpty()
-            ? sc::Value::Null()
-            : sc::Value::FromRecordId(input.toLongLong());
+            ? sc::SCValue::Null()
+            : sc::SCValue::FromRecordId(input.toLongLong());
         return sc::SC_OK;
     case sc::ValueKind::Enum:
-        *outValue = sc::Value::FromEnum(input.toString().toStdWString());
+        *outValue = sc::SCValue::FromEnum(input.toString().toStdWString());
         return sc::SC_OK;
     case sc::ValueKind::Null:
     default:

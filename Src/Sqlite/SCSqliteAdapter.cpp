@@ -1,4 +1,4 @@
-#include "StableCore/Storage/Factory.h"
+#include "StableCore/Storage/SCFactory.h"
 
 #include <algorithm>
 #include <map>
@@ -13,9 +13,9 @@
 
 #include <sqlite3.h>
 
-#include "StableCore/Storage/Diagnostics.h"
-#include "StableCore/Storage/Migration.h"
-#include "StableCore/Storage/RefCounted.h"
+#include "StableCore/Storage/ISCDiagnostics.h"
+#include "StableCore/Storage/SCMigration.h"
+#include "StableCore/Storage/SCRefCounted.h"
 
 #if defined(_WIN32)
 #include <windows.h>
@@ -138,14 +138,14 @@ public:
         return *this;
     }
 
-    ErrorCode BindInt(int index, int value) { return MapSqliteError(sqlite3_bind_int(stmt_, index, value)); }
-    ErrorCode BindInt64(int index, std::int64_t value) { return MapSqliteError(sqlite3_bind_int64(stmt_, index, value)); }
-    ErrorCode BindDouble(int index, double value) { return MapSqliteError(sqlite3_bind_double(stmt_, index, value)); }
+    ErrorCode BindInt(int index, int SCValue) { return MapSqliteError(sqlite3_bind_int(stmt_, index, SCValue)); }
+    ErrorCode BindInt64(int index, std::int64_t SCValue) { return MapSqliteError(sqlite3_bind_int64(stmt_, index, SCValue)); }
+    ErrorCode BindDouble(int index, double SCValue) { return MapSqliteError(sqlite3_bind_double(stmt_, index, SCValue)); }
     ErrorCode BindNull(int index) { return MapSqliteError(sqlite3_bind_null(stmt_, index)); }
 
-    ErrorCode BindText(int index, const std::wstring& value)
+    ErrorCode BindText(int index, const std::wstring& SCValue)
     {
-        const std::string utf8 = ToUtf8(value);
+        const std::string utf8 = ToUtf8(SCValue);
         return MapSqliteError(sqlite3_bind_text(stmt_, index, utf8.c_str(), static_cast<int>(utf8.size()), SQLITE_TRANSIENT));
     }
 
@@ -282,7 +282,7 @@ struct SqliteRecordData
     RecordId id{0};
     RecordState state{RecordState::Alive};
     VersionId lastModifiedVersion{0};
-    std::unordered_map<std::wstring, Value> values;
+    std::unordered_map<std::wstring, SCValue> values;
 };
 
 struct SqlitePersistedJournalTransaction
@@ -294,7 +294,7 @@ struct SqlitePersistedJournalTransaction
 class SqliteDatabase;
 class SqliteTable;
 
-ErrorCode ValidateValueKind(ValueKind expected, const Value& value, bool nullable)
+ErrorCode ValidateValueKind(ValueKind expected, const SCValue& value, bool nullable)
 {
     if (value.IsNull())
     {
@@ -303,7 +303,7 @@ ErrorCode ValidateValueKind(ValueKind expected, const Value& value, bool nullabl
     return value.GetKind() == expected ? SC_OK : SC_E_TYPE_MISMATCH;
 }
 
-ErrorCode ValidateColumnDef(const ColumnDef& def)
+ErrorCode ValidateColumnDef(const SCColumnDef& def)
 {
     if (def.name.empty())
     {
@@ -369,7 +369,7 @@ std::wstring SanitizeIdentifier(const std::wstring& input)
     return result;
 }
 
-void BindValueForStorage(SqliteStmt& stmt, int kindIndex, int intIndex, int doubleIndex, int boolIndex, int textIndex, const Value& value)
+void BindValueForStorage(SqliteStmt& stmt, int kindIndex, int intIndex, int doubleIndex, int boolIndex, int textIndex, const SCValue& value)
 {
     stmt.BindInt(kindIndex, ToSqliteValueKind(value.GetKind()));
 
@@ -444,22 +444,22 @@ void BindValueForStorage(SqliteStmt& stmt, int kindIndex, int intIndex, int doub
     }
 }
 
-Value ReadValueFromStorage(const SqliteStmt& stmt, int kindIndex, int intIndex, int doubleIndex, int boolIndex, int textIndex)
+SCValue ReadValueFromStorage(const SqliteStmt& stmt, int kindIndex, int intIndex, int doubleIndex, int boolIndex, int textIndex)
 {
     switch (FromSqliteValueKind(stmt.ColumnInt(kindIndex)))
     {
-    case ValueKind::Null: return Value::Null();
-    case ValueKind::Int64: return Value::FromInt64(stmt.ColumnInt64(intIndex));
-    case ValueKind::Double: return Value::FromDouble(stmt.ColumnDouble(doubleIndex));
-    case ValueKind::Bool: return Value::FromBool(stmt.ColumnBool(boolIndex));
-    case ValueKind::String: return Value::FromString(stmt.ColumnText(textIndex));
-    case ValueKind::RecordId: return Value::FromRecordId(stmt.ColumnInt64(intIndex));
-    case ValueKind::Enum: return Value::FromEnum(stmt.ColumnText(textIndex));
-    default: return Value::Null();
+    case ValueKind::Null: return SCValue::Null();
+    case ValueKind::Int64: return SCValue::FromInt64(stmt.ColumnInt64(intIndex));
+    case ValueKind::Double: return SCValue::FromDouble(stmt.ColumnDouble(doubleIndex));
+    case ValueKind::Bool: return SCValue::FromBool(stmt.ColumnBool(boolIndex));
+    case ValueKind::String: return SCValue::FromString(stmt.ColumnText(textIndex));
+    case ValueKind::RecordId: return SCValue::FromRecordId(stmt.ColumnInt64(intIndex));
+    case ValueKind::Enum: return SCValue::FromEnum(stmt.ColumnText(textIndex));
+    default: return SCValue::Null();
     }
 }
 
-class SqliteSchema final : public ISchema, public RefCountedObject
+class SqliteSchema final : public ISCSchema, public SCRefCountedObject
 {
 public:
     SqliteSchema(SqliteDatabase* db, std::wstring tableName, std::int64_t tableRowId)
@@ -470,17 +470,17 @@ public:
     }
 
     ErrorCode GetColumnCount(std::int32_t* outCount) override;
-    ErrorCode GetColumn(std::int32_t index, ColumnDef* outDef) override;
-    ErrorCode FindColumn(const wchar_t* name, ColumnDef* outDef) override;
-    ErrorCode AddColumn(const ColumnDef& def) override;
+    ErrorCode GetColumn(std::int32_t index, SCColumnDef* outDef) override;
+    ErrorCode FindColumn(const wchar_t* name, SCColumnDef* outDef) override;
+    ErrorCode AddColumn(const SCColumnDef& def) override;
 
-    const ColumnDef* FindColumnDef(const std::wstring& name) const noexcept
+    const SCColumnDef* FindColumnDef(const std::wstring& name) const noexcept
     {
         const auto it = columnsByName_.find(name);
         return it == columnsByName_.end() ? nullptr : &it->second;
     }
 
-    void LoadColumn(const ColumnDef& def)
+    void LoadColumn(const SCColumnDef& def)
     {
         columns_.push_back(def);
         columnsByName_[def.name] = def;
@@ -495,11 +495,11 @@ private:
     SqliteDatabase* db_{nullptr};
     std::wstring tableName_;
     std::int64_t tableRowId_{0};
-    std::vector<ColumnDef> columns_;
-    std::unordered_map<std::wstring, ColumnDef> columnsByName_;
+    std::vector<SCColumnDef> columns_;
+    std::unordered_map<std::wstring, SCColumnDef> columnsByName_;
 };
 
-class SqliteEditSession final : public IEditSession, public RefCountedObject
+class SqliteEditSession final : public ISCEditSession, public SCRefCountedObject
 {
 public:
     SqliteEditSession(std::wstring name, VersionId openedVersion)
@@ -523,7 +523,7 @@ private:
     EditState state_{EditState::Active};
 };
 
-class SqliteRecord final : public IRecord, public RefCountedObject
+class SqliteRecord final : public ISCRecord, public SCRefCountedObject
 {
 public:
     SqliteRecord(SqliteDatabase* db, SqliteTable* table, std::shared_ptr<SqliteRecordData> data)
@@ -537,8 +537,8 @@ public:
     bool IsDeleted() const noexcept override;
     VersionId GetLastModifiedVersion() const noexcept override;
 
-    ErrorCode GetValue(const wchar_t* name, Value* outValue) override;
-    ErrorCode SetValue(const wchar_t* name, const Value& value) override;
+    ErrorCode GetValue(const wchar_t* name, SCValue* outValue) override;
+    ErrorCode SetValue(const wchar_t* name, const SCValue& value) override;
 
     ErrorCode GetInt64(const wchar_t* name, std::int64_t* outValue) override;
     ErrorCode SetInt64(const wchar_t* name, std::int64_t value) override;
@@ -557,17 +557,17 @@ public:
     ErrorCode SetRef(const wchar_t* name, RecordId value) override;
 
 private:
-    ErrorCode ReadTypedValue(const wchar_t* name, Value* outValue);
+    ErrorCode ReadTypedValue(const wchar_t* name, SCValue* outValue);
 
     SqliteDatabase* db_{nullptr};
     SqliteTable* table_{nullptr};
     std::shared_ptr<SqliteRecordData> data_;
 };
 
-class SqliteRecordCursor final : public IRecordCursor, public RefCountedObject
+class SqliteRecordCursor final : public ISCRecordCursor, public SCRefCountedObject
 {
 public:
-    explicit SqliteRecordCursor(std::vector<RecordPtr> records)
+    explicit SqliteRecordCursor(std::vector<SCRecordPtr> records)
         : records_(std::move(records))
     {
     }
@@ -591,7 +591,7 @@ public:
         return SC_OK;
     }
 
-    ErrorCode GetCurrent(RecordPtr& outRecord) override
+    ErrorCode GetCurrent(SCRecordPtr& outRecord) override
     {
         if (!current_)
         {
@@ -602,31 +602,31 @@ public:
     }
 
 private:
-    std::vector<RecordPtr> records_;
+    std::vector<SCRecordPtr> records_;
     std::size_t index_{0};
-    RecordPtr current_;
+    SCRecordPtr current_;
 };
 
-class SqliteTable final : public ITable, public RefCountedObject
+class SqliteTable final : public ISCTable, public SCRefCountedObject
 {
 public:
     SqliteTable(SqliteDatabase* db, std::wstring name, std::int64_t tableRowId)
         : db_(db)
         , name_(std::move(name))
-        , schema_(MakeRef<SqliteSchema>(db, name_, tableRowId))
+        , schema_(SCMakeRef<SqliteSchema>(db, name_, tableRowId))
     {
     }
 
-    ErrorCode GetRecord(RecordId id, RecordPtr& outRecord) override;
-    ErrorCode CreateRecord(RecordPtr& outRecord) override;
+    ErrorCode GetRecord(RecordId id, SCRecordPtr& outRecord) override;
+    ErrorCode CreateRecord(SCRecordPtr& outRecord) override;
     ErrorCode DeleteRecord(RecordId id) override;
-    ErrorCode GetSchema(SchemaPtr& outSchema) override
+    ErrorCode GetSchema(SCSchemaPtr& outSchema) override
     {
         outSchema = schema_;
         return SC_OK;
     }
-    ErrorCode EnumerateRecords(RecordCursorPtr& outCursor) override;
-    ErrorCode FindRecords(const QueryCondition& condition, RecordCursorPtr& outCursor) override;
+    ErrorCode EnumerateRecords(SCRecordCursorPtr& outCursor) override;
+    ErrorCode FindRecords(const SCQueryCondition& condition, SCRecordCursorPtr& outCursor) override;
 
     const std::wstring& Name() const noexcept { return name_; }
     SqliteSchema* Schema() const noexcept { return schema_.Get(); }
@@ -644,44 +644,44 @@ public:
     }
 
 private:
-    RecordPtr MakeRecord(const std::shared_ptr<SqliteRecordData>& data)
+    SCRecordPtr MakeRecord(const std::shared_ptr<SqliteRecordData>& data)
     {
-        return MakeRef<SqliteRecord>(db_, this, data);
+        return SCMakeRef<SqliteRecord>(db_, this, data);
     }
 
     SqliteDatabase* db_{nullptr};
     std::wstring name_;
-    RefPtr<SqliteSchema> schema_;
+    SCRefPtr<SqliteSchema> schema_;
     std::unordered_map<RecordId, std::shared_ptr<SqliteRecordData>> records_;
 };
 
-class SqliteDatabase final : public IDatabase, public IDatabaseDiagnosticsProvider, public RefCountedObject
+class SqliteDatabase final : public ISCDatabase, public ISCDatabaseDiagnosticsProvider, public SCRefCountedObject
 {
 public:
     explicit SqliteDatabase(const std::wstring& path);
     ~SqliteDatabase() override;
 
-    ErrorCode BeginEdit(const wchar_t* name, EditPtr& outEdit) override;
-    ErrorCode Commit(IEditSession* edit) override;
-    ErrorCode Rollback(IEditSession* edit) override;
+    ErrorCode BeginEdit(const wchar_t* name, SCEditPtr& outEdit) override;
+    ErrorCode Commit(ISCEditSession* edit) override;
+    ErrorCode Rollback(ISCEditSession* edit) override;
     ErrorCode Undo() override;
     ErrorCode Redo() override;
     ErrorCode GetTableCount(std::int32_t* outCount) override;
     ErrorCode GetTableName(std::int32_t index, std::wstring* outName) override;
-    ErrorCode GetTable(const wchar_t* name, TablePtr& outTable) override;
-    ErrorCode CreateTable(const wchar_t* name, TablePtr& outTable) override;
-    ErrorCode AddObserver(IDatabaseObserver* observer) override;
-    ErrorCode RemoveObserver(IDatabaseObserver* observer) override;
+    ErrorCode GetTable(const wchar_t* name, SCTablePtr& outTable) override;
+    ErrorCode CreateTable(const wchar_t* name, SCTablePtr& outTable) override;
+    ErrorCode AddObserver(ISCDatabaseObserver* observer) override;
+    ErrorCode RemoveObserver(ISCDatabaseObserver* observer) override;
     VersionId GetCurrentVersion() const noexcept override { return version_; }
-    ErrorCode CollectDiagnostics(StorageHealthReport* outReport) const override;
+    ErrorCode CollectDiagnostics(SCStorageHealthReport* outReport) const override;
 
     bool HasActiveEdit() const noexcept { return static_cast<bool>(activeEdit_); }
     RecordId AllocateRecordId() noexcept { return nextRecordId_++; }
 
-    ErrorCode WriteValue(SqliteTable* table, const std::shared_ptr<SqliteRecordData>& data, const std::wstring& fieldName, const Value& value);
+    ErrorCode WriteValue(SqliteTable* table, const std::shared_ptr<SqliteRecordData>& data, const std::wstring& fieldName, const SCValue& value);
     ErrorCode DeleteRecord(SqliteTable* table, const std::shared_ptr<SqliteRecordData>& data);
     void RecordCreate(SqliteTable* table, const std::shared_ptr<SqliteRecordData>& data);
-    ErrorCode PersistAddedColumn(SqliteSchema* schema, const ColumnDef& def);
+    ErrorCode PersistAddedColumn(SqliteSchema* schema, const SCColumnDef& def);
 
 private:
     struct JournalLookup
@@ -701,21 +701,21 @@ private:
     void MaterializeIndexes();
     void EnsureColumnIndex(std::int64_t tableRowId, const std::wstring& columnName);
     void RunStartupIntegrityCheck();
-    void LogStartupDiagnostic(DiagnosticSeverity severity, const std::wstring& category, const std::wstring& message);
+    void LogStartupDiagnostic(SCDiagnosticSeverity severity, const std::wstring& category, const std::wstring& message);
     void SetCleanShutdownFlag(bool cleanShutdown);
-    ErrorCode ValidateActiveEdit(IEditSession* edit) const;
-    ErrorCode ValidateWrite(SqliteTable* table, const std::shared_ptr<SqliteRecordData>& data, const std::wstring& fieldName, const Value& value);
+    ErrorCode ValidateActiveEdit(ISCEditSession* edit) const;
+    ErrorCode ValidateWrite(SqliteTable* table, const std::shared_ptr<SqliteRecordData>& data, const std::wstring& fieldName, const SCValue& value);
     bool IsRecordReferenced(const std::wstring& tableName, RecordId recordId) const;
     JournalLookup LookupRecordJournalState(const std::wstring& tableName, RecordId recordId) const;
     void RemoveFieldJournalEntries(const std::wstring& tableName, RecordId recordId);
     void RemoveAllJournalEntriesForRecord(const std::wstring& tableName, RecordId recordId);
-    void RecordJournal(const std::wstring& tableName, RecordId recordId, const std::wstring& fieldName, const Value& oldValue, const Value& newValue, bool oldDeleted, bool newDeleted, JournalOp op);
+    void RecordJournal(const std::wstring& tableName, RecordId recordId, const std::wstring& fieldName, const SCValue& oldValue, const SCValue& newValue, bool oldDeleted, bool newDeleted, JournalOp op);
     void ApplyJournalReverse(const JournalTransaction& tx);
     void ApplyJournalForward(const JournalTransaction& tx);
     void ApplyEntry(const JournalEntry& entry, bool reverse);
     void UpdateTouchedVersions(const JournalTransaction& tx, VersionId version);
-    ChangeSet BuildChangeSet(const JournalTransaction& tx, ChangeSource source, VersionId version) const;
-    void NotifyObservers(const ChangeSet& changeSet);
+    SCChangeSet BuildChangeSet(const JournalTransaction& tx, ChangeSource source, VersionId version) const;
+    void NotifyObservers(const SCChangeSet& SCChangeSet);
     std::vector<std::pair<std::wstring, RecordId>> GetTouchedRecordKeys(const JournalTransaction& tx) const;
     void PersistTouchedRecords(const JournalTransaction& tx);
     std::int64_t InsertJournalTransaction(const JournalTransaction& tx, int stackKind, int stackOrder);
@@ -732,10 +732,10 @@ private:
     bool cleanShutdown_{true};
     bool dirtyStartupDetected_{false};
     bool corruptionDetected_{false};
-    std::vector<DiagnosticEntry> startupDiagnostics_;
-    std::map<std::wstring, TablePtr> tables_;
-    std::vector<IDatabaseObserver*> observers_;
-    RefPtr<SqliteEditSession> activeEdit_;
+    std::vector<SCDiagnosticEntry> startupDiagnostics_;
+    std::map<std::wstring, SCTablePtr> tables_;
+    std::vector<ISCDatabaseObserver*> observers_;
+    SCRefPtr<SqliteEditSession> activeEdit_;
     JournalTransaction activeJournal_;
     std::vector<SqlitePersistedJournalTransaction> undoStack_;
     std::vector<SqlitePersistedJournalTransaction> redoStack_;
@@ -751,7 +751,7 @@ ErrorCode SqliteSchema::GetColumnCount(std::int32_t* outCount)
     return SC_OK;
 }
 
-ErrorCode SqliteSchema::GetColumn(std::int32_t index, ColumnDef* outDef)
+ErrorCode SqliteSchema::GetColumn(std::int32_t index, SCColumnDef* outDef)
 {
     if (outDef == nullptr)
     {
@@ -765,7 +765,7 @@ ErrorCode SqliteSchema::GetColumn(std::int32_t index, ColumnDef* outDef)
     return SC_OK;
 }
 
-ErrorCode SqliteSchema::FindColumn(const wchar_t* name, ColumnDef* outDef)
+ErrorCode SqliteSchema::FindColumn(const wchar_t* name, SCColumnDef* outDef)
 {
     if (name == nullptr)
     {
@@ -784,7 +784,7 @@ ErrorCode SqliteSchema::FindColumn(const wchar_t* name, ColumnDef* outDef)
     return SC_OK;
 }
 
-ErrorCode SqliteSchema::AddColumn(const ColumnDef& def)
+ErrorCode SqliteSchema::AddColumn(const SCColumnDef& def)
 {
     const ErrorCode validate = ValidateColumnDef(def);
     if (Failed(validate))
@@ -814,12 +814,12 @@ VersionId SqliteRecord::GetLastModifiedVersion() const noexcept
     return data_->lastModifiedVersion;
 }
 
-ErrorCode SqliteRecord::ReadTypedValue(const wchar_t* name, Value* outValue)
+ErrorCode SqliteRecord::ReadTypedValue(const wchar_t* name, SCValue* outValue)
 {
     return GetValue(name, outValue);
 }
 
-ErrorCode SqliteRecord::GetValue(const wchar_t* name, Value* outValue)
+ErrorCode SqliteRecord::GetValue(const wchar_t* name, SCValue* outValue)
 {
     if (name == nullptr)
     {
@@ -834,7 +834,7 @@ ErrorCode SqliteRecord::GetValue(const wchar_t* name, Value* outValue)
         return SC_E_RECORD_DELETED;
     }
 
-    const ColumnDef* column = table_->Schema()->FindColumnDef(name);
+    const SCColumnDef* column = table_->Schema()->FindColumnDef(name);
     if (column == nullptr)
     {
         return SC_E_COLUMN_NOT_FOUND;
@@ -845,7 +845,7 @@ ErrorCode SqliteRecord::GetValue(const wchar_t* name, Value* outValue)
     return outValue->IsNull() ? SC_E_VALUE_IS_NULL : SC_OK;
 }
 
-ErrorCode SqliteRecord::SetValue(const wchar_t* name, const Value& value)
+ErrorCode SqliteRecord::SetValue(const wchar_t* name, const SCValue& value)
 {
     if (name == nullptr)
     {
@@ -856,7 +856,7 @@ ErrorCode SqliteRecord::SetValue(const wchar_t* name, const Value& value)
 
 ErrorCode SqliteRecord::GetInt64(const wchar_t* name, std::int64_t* outValue)
 {
-    Value value;
+    SCValue value;
     const ErrorCode rc = ReadTypedValue(name, &value);
     if (Failed(rc))
     {
@@ -867,12 +867,12 @@ ErrorCode SqliteRecord::GetInt64(const wchar_t* name, std::int64_t* outValue)
 
 ErrorCode SqliteRecord::SetInt64(const wchar_t* name, std::int64_t value)
 {
-    return SetValue(name, Value::FromInt64(value));
+    return SetValue(name, SCValue::FromInt64(value));
 }
 
 ErrorCode SqliteRecord::GetDouble(const wchar_t* name, double* outValue)
 {
-    Value value;
+    SCValue value;
     const ErrorCode rc = ReadTypedValue(name, &value);
     if (Failed(rc))
     {
@@ -883,12 +883,12 @@ ErrorCode SqliteRecord::GetDouble(const wchar_t* name, double* outValue)
 
 ErrorCode SqliteRecord::SetDouble(const wchar_t* name, double value)
 {
-    return SetValue(name, Value::FromDouble(value));
+    return SetValue(name, SCValue::FromDouble(value));
 }
 
 ErrorCode SqliteRecord::GetBool(const wchar_t* name, bool* outValue)
 {
-    Value value;
+    SCValue value;
     const ErrorCode rc = ReadTypedValue(name, &value);
     if (Failed(rc))
     {
@@ -899,12 +899,12 @@ ErrorCode SqliteRecord::GetBool(const wchar_t* name, bool* outValue)
 
 ErrorCode SqliteRecord::SetBool(const wchar_t* name, bool value)
 {
-    return SetValue(name, Value::FromBool(value));
+    return SetValue(name, SCValue::FromBool(value));
 }
 
 ErrorCode SqliteRecord::GetString(const wchar_t* name, const wchar_t** outValue)
 {
-    Value value;
+    SCValue value;
     const ErrorCode rc = ReadTypedValue(name, &value);
     if (Failed(rc))
     {
@@ -915,7 +915,7 @@ ErrorCode SqliteRecord::GetString(const wchar_t* name, const wchar_t** outValue)
 
 ErrorCode SqliteRecord::GetStringCopy(const wchar_t* name, std::wstring* outValue)
 {
-    Value value;
+    SCValue value;
     const ErrorCode rc = ReadTypedValue(name, &value);
     if (Failed(rc))
     {
@@ -926,12 +926,12 @@ ErrorCode SqliteRecord::GetStringCopy(const wchar_t* name, std::wstring* outValu
 
 ErrorCode SqliteRecord::SetString(const wchar_t* name, const wchar_t* value)
 {
-    return SetValue(name, value == nullptr ? Value::Null() : Value::FromString(value));
+    return SetValue(name, value == nullptr ? SCValue::Null() : SCValue::FromString(value));
 }
 
 ErrorCode SqliteRecord::GetRef(const wchar_t* name, RecordId* outValue)
 {
-    Value value;
+    SCValue value;
     const ErrorCode rc = ReadTypedValue(name, &value);
     if (Failed(rc))
     {
@@ -942,10 +942,10 @@ ErrorCode SqliteRecord::GetRef(const wchar_t* name, RecordId* outValue)
 
 ErrorCode SqliteRecord::SetRef(const wchar_t* name, RecordId value)
 {
-    return SetValue(name, Value::FromRecordId(value));
+    return SetValue(name, SCValue::FromRecordId(value));
 }
 
-ErrorCode SqliteTable::GetRecord(RecordId id, RecordPtr& outRecord)
+ErrorCode SqliteTable::GetRecord(RecordId id, SCRecordPtr& outRecord)
 {
     auto data = FindRecordData(id);
     if (!data)
@@ -956,7 +956,7 @@ ErrorCode SqliteTable::GetRecord(RecordId id, RecordPtr& outRecord)
     return SC_OK;
 }
 
-ErrorCode SqliteTable::CreateRecord(RecordPtr& outRecord)
+ErrorCode SqliteTable::CreateRecord(SCRecordPtr& outRecord)
 {
     if (!db_->HasActiveEdit())
     {
@@ -980,9 +980,9 @@ ErrorCode SqliteTable::DeleteRecord(RecordId id)
     return db_->DeleteRecord(this, data);
 }
 
-ErrorCode SqliteTable::EnumerateRecords(RecordCursorPtr& outCursor)
+ErrorCode SqliteTable::EnumerateRecords(SCRecordCursorPtr& outCursor)
 {
-    std::vector<RecordPtr> records;
+    std::vector<SCRecordPtr> records;
     for (const auto& [_, data] : records_)
     {
         if (data->state == RecordState::Alive)
@@ -990,19 +990,19 @@ ErrorCode SqliteTable::EnumerateRecords(RecordCursorPtr& outCursor)
             records.push_back(MakeRecord(data));
         }
     }
-    outCursor = MakeRef<SqliteRecordCursor>(std::move(records));
+    outCursor = SCMakeRef<SqliteRecordCursor>(std::move(records));
     return SC_OK;
 }
 
-ErrorCode SqliteTable::FindRecords(const QueryCondition& condition, RecordCursorPtr& outCursor)
+ErrorCode SqliteTable::FindRecords(const SCQueryCondition& condition, SCRecordCursorPtr& outCursor)
 {
-    const ColumnDef* column = Schema()->FindColumnDef(condition.fieldName);
+    const SCColumnDef* column = Schema()->FindColumnDef(condition.fieldName);
     if (column == nullptr)
     {
         return SC_E_COLUMN_NOT_FOUND;
     }
 
-    std::vector<RecordPtr> matched;
+    std::vector<SCRecordPtr> matched;
     for (const auto& [_, data] : records_)
     {
         if (data->state == RecordState::Deleted)
@@ -1010,7 +1010,7 @@ ErrorCode SqliteTable::FindRecords(const QueryCondition& condition, RecordCursor
             continue;
         }
 
-        Value actual = column->defaultValue;
+        SCValue actual = column->defaultValue;
         const auto it = data->values.find(condition.fieldName);
         if (it != data->values.end())
         {
@@ -1022,7 +1022,7 @@ ErrorCode SqliteTable::FindRecords(const QueryCondition& condition, RecordCursor
         }
     }
 
-    outCursor = MakeRef<SqliteRecordCursor>(std::move(matched));
+    outCursor = SCMakeRef<SqliteRecordCursor>(std::move(matched));
     return SC_OK;
 }
 
@@ -1100,22 +1100,22 @@ void SqliteDatabase::LoadMetadata()
     while (stmt.Step(&hasRow) == SC_OK && hasRow)
     {
         const std::wstring key = stmt.ColumnText(0);
-        const std::wstring value = stmt.ColumnText(1);
+        const std::wstring SCValue = stmt.ColumnText(1);
         if (key == L"version")
         {
-            version_ = static_cast<VersionId>(std::stoull(value));
+            version_ = static_cast<VersionId>(std::stoull(SCValue));
         }
         else if (key == L"schema_version")
         {
-            schemaVersion_ = static_cast<std::int32_t>(std::stoi(value));
+            schemaVersion_ = static_cast<std::int32_t>(std::stoi(SCValue));
         }
         else if (key == L"clean_shutdown")
         {
-            cleanShutdown_ = (value == L"1");
+            cleanShutdown_ = (SCValue == L"1");
         }
         else if (key == L"next_record_id")
         {
-            nextRecordId_ = static_cast<RecordId>(std::stoll(value));
+            nextRecordId_ = static_cast<RecordId>(std::stoll(SCValue));
         }
     }
 }
@@ -1146,7 +1146,7 @@ void SqliteDatabase::LoadTables()
     {
         const std::int64_t tableRowId = tablesStmt.ColumnInt64(0);
         const std::wstring tableName = tablesStmt.ColumnText(1);
-        TablePtr table = MakeRef<SqliteTable>(this, tableName, tableRowId);
+        SCTablePtr table = SCMakeRef<SqliteTable>(this, tableName, tableRowId);
         tables_.emplace(tableName, table);
         auto* sqliteTable = static_cast<SqliteTable*>(table.Get());
 
@@ -1158,7 +1158,7 @@ void SqliteDatabase::LoadTables()
         bool hasColumn = false;
         while (columnsStmt.Step(&hasColumn) == SC_OK && hasColumn)
         {
-            ColumnDef def;
+            SCColumnDef def;
             def.name = columnsStmt.ColumnText(0);
             def.displayName = columnsStmt.ColumnText(1);
             def.valueKind = FromSqliteValueKind(columnsStmt.ColumnInt(2));
@@ -1258,7 +1258,7 @@ void SqliteDatabase::EnsureMigrationAndRecovery()
     dirtyStartupDetected_ = !cleanShutdown_;
     if (dirtyStartupDetected_)
     {
-        LogStartupDiagnostic(DiagnosticSeverity::Warning, L"startup", L"Detected previous unclean shutdown. Running integrity check.");
+        LogStartupDiagnostic(SCDiagnosticSeverity::Warning, L"startup", L"Detected previous unclean shutdown. Running integrity check.");
         RunStartupIntegrityCheck();
     }
 
@@ -1272,22 +1272,22 @@ void SqliteDatabase::EnsureMigrationAndRecovery()
 
 void SqliteDatabase::ApplyMigrationPlan()
 {
-    std::vector<MigrationStep> steps;
-    steps.push_back(MigrationStep{
+    std::vector<SCMigrationStep> steps;
+    steps.push_back(SCMigrationStep{
         1,
         2,
         L"sqlite-schema-v2",
-        L"Add startup diagnostics table and field-value record lookup index.",
+        L"Add startup diagnostics table and field-SCValue record lookup index.",
     });
 
-    MigrationPlan plan;
+    SCMigrationPlan plan;
     const ErrorCode planRc = BuildMigrationPlan(schemaVersion_, kSqliteSchemaVersion, steps, &plan);
     if (Failed(planRc))
     {
         throw std::runtime_error("failed to build sqlite migration plan");
     }
 
-    for (const MigrationStep& step : plan.orderedSteps)
+    for (const SCMigrationStep& step : plan.orderedSteps)
     {
         if (step.fromVersion == 1 && step.toVersion == 2)
         {
@@ -1299,7 +1299,7 @@ void SqliteDatabase::ApplyMigrationPlan()
         schemaVersion_ = step.toVersion;
         std::wstringstream message;
         message << L"Applied migration " << step.name << L" to schema version " << schemaVersion_ << L".";
-        LogStartupDiagnostic(DiagnosticSeverity::Info, L"migration", message.str());
+        LogStartupDiagnostic(SCDiagnosticSeverity::Info, L"migration", message.str());
     }
 }
 
@@ -1313,7 +1313,7 @@ void SqliteDatabase::MaterializeIndexes()
             continue;
         }
 
-        SchemaPtr schema;
+        SCSchemaPtr schema;
         if (Failed(tableRef->GetSchema(schema)) || !schema)
         {
             continue;
@@ -1327,7 +1327,7 @@ void SqliteDatabase::MaterializeIndexes()
 
         for (std::int32_t index = 0; index < count; ++index)
         {
-            ColumnDef column;
+            SCColumnDef column;
             if (Failed(schema->GetColumn(index, &column)))
             {
                 continue;
@@ -1359,17 +1359,17 @@ void SqliteDatabase::RunStartupIntegrityCheck()
         if (result != L"ok")
         {
             corruptionDetected_ = true;
-            LogStartupDiagnostic(DiagnosticSeverity::Error, L"integrity", std::wstring(L"SQLite integrity check failed: ") + result);
+            LogStartupDiagnostic(SCDiagnosticSeverity::Error, L"integrity", std::wstring(L"SQLite integrity check failed: ") + result);
             throw std::runtime_error("sqlite integrity check failed");
         }
     }
 
-    LogStartupDiagnostic(DiagnosticSeverity::Info, L"integrity", L"SQLite integrity check passed.");
+    LogStartupDiagnostic(SCDiagnosticSeverity::Info, L"integrity", L"SQLite integrity check passed.");
 }
 
-void SqliteDatabase::LogStartupDiagnostic(DiagnosticSeverity severity, const std::wstring& category, const std::wstring& message)
+void SqliteDatabase::LogStartupDiagnostic(SCDiagnosticSeverity severity, const std::wstring& category, const std::wstring& message)
 {
-    startupDiagnostics_.push_back(DiagnosticEntry{severity, category, message});
+    startupDiagnostics_.push_back(SCDiagnosticEntry{severity, category, message});
     SqliteStmt stmt = db_.Prepare("INSERT INTO startup_diagnostics(severity, category, message) VALUES(?, ?, ?);");
     stmt.BindInt(1, static_cast<int>(severity));
     stmt.BindText(2, category);
@@ -1383,7 +1383,7 @@ void SqliteDatabase::SetCleanShutdownFlag(bool cleanShutdown)
     SaveMetadataKey(L"clean_shutdown", cleanShutdown_ ? L"1" : L"0");
 }
 
-ErrorCode SqliteDatabase::CollectDiagnostics(StorageHealthReport* outReport) const
+ErrorCode SqliteDatabase::CollectDiagnostics(SCStorageHealthReport* outReport) const
 {
     if (outReport == nullptr)
     {
@@ -1393,16 +1393,16 @@ ErrorCode SqliteDatabase::CollectDiagnostics(StorageHealthReport* outReport) con
     outReport->diagnostics.insert(outReport->diagnostics.end(), startupDiagnostics_.begin(), startupDiagnostics_.end());
     if (dirtyStartupDetected_)
     {
-        outReport->diagnostics.push_back(DiagnosticEntry{
-            DiagnosticSeverity::Warning,
+        outReport->diagnostics.push_back(SCDiagnosticEntry{
+            SCDiagnosticSeverity::Warning,
             L"startup",
             L"Current session followed an unclean shutdown.",
         });
     }
     if (corruptionDetected_)
     {
-        outReport->diagnostics.push_back(DiagnosticEntry{
-            DiagnosticSeverity::Error,
+        outReport->diagnostics.push_back(SCDiagnosticEntry{
+            SCDiagnosticSeverity::Error,
             L"integrity",
             L"Corruption was detected during startup integrity checks.",
         });
@@ -1410,7 +1410,7 @@ ErrorCode SqliteDatabase::CollectDiagnostics(StorageHealthReport* outReport) con
     return SC_OK;
 }
 
-ErrorCode SqliteDatabase::BeginEdit(const wchar_t* name, EditPtr& outEdit)
+ErrorCode SqliteDatabase::BeginEdit(const wchar_t* name, SCEditPtr& outEdit)
 {
     if (activeEdit_)
     {
@@ -1418,12 +1418,12 @@ ErrorCode SqliteDatabase::BeginEdit(const wchar_t* name, EditPtr& outEdit)
     }
     activeJournal_ = JournalTransaction{};
     activeJournal_.actionName = (name != nullptr && *name != L'\0') ? name : L"Edit";
-    activeEdit_ = MakeRef<SqliteEditSession>(activeJournal_.actionName, version_);
+    activeEdit_ = SCMakeRef<SqliteEditSession>(activeJournal_.actionName, version_);
     outEdit = activeEdit_;
     return SC_OK;
 }
 
-ErrorCode SqliteDatabase::Commit(IEditSession* edit)
+ErrorCode SqliteDatabase::Commit(ISCEditSession* edit)
 {
     const ErrorCode validate = ValidateActiveEdit(edit);
     if (Failed(validate))
@@ -1462,14 +1462,14 @@ ErrorCode SqliteDatabase::Commit(IEditSession* edit)
         return SC_E_FAIL;
     }
 
-    const ChangeSet changeSet = BuildChangeSet(activeJournal_, ChangeSource::UserEdit, version_);
+    const SCChangeSet SCChangeSet = BuildChangeSet(activeJournal_, ChangeSource::UserEdit, version_);
     activeEdit_.Reset();
     activeJournal_ = JournalTransaction{};
-    NotifyObservers(changeSet);
+    NotifyObservers(SCChangeSet);
     return SC_OK;
 }
 
-ErrorCode SqliteDatabase::Rollback(IEditSession* edit)
+ErrorCode SqliteDatabase::Rollback(ISCEditSession* edit)
 {
     const ErrorCode validate = ValidateActiveEdit(edit);
     if (Failed(validate))
@@ -1565,7 +1565,7 @@ ErrorCode SqliteDatabase::Redo()
     return SC_OK;
 }
 
-ErrorCode SqliteDatabase::GetTable(const wchar_t* name, TablePtr& outTable)
+ErrorCode SqliteDatabase::GetTable(const wchar_t* name, SCTablePtr& outTable)
 {
     if (name == nullptr)
     {
@@ -1608,7 +1608,7 @@ ErrorCode SqliteDatabase::GetTableName(std::int32_t index, std::wstring* outName
     return SC_OK;
 }
 
-ErrorCode SqliteDatabase::CreateTable(const wchar_t* name, TablePtr& outTable)
+ErrorCode SqliteDatabase::CreateTable(const wchar_t* name, SCTablePtr& outTable)
 {
     if (name == nullptr || *name == L'\0')
     {
@@ -1633,7 +1633,7 @@ ErrorCode SqliteDatabase::CreateTable(const wchar_t* name, TablePtr& outTable)
             return rc;
         }
 
-        TablePtr table = MakeRef<SqliteTable>(this, std::wstring{name}, db_.LastInsertRowId());
+        SCTablePtr table = SCMakeRef<SqliteTable>(this, std::wstring{name}, db_.LastInsertRowId());
         tables_.emplace(name, table);
         SaveMetadata();
         const ErrorCode commitRc = txn.Commit();
@@ -1651,7 +1651,7 @@ ErrorCode SqliteDatabase::CreateTable(const wchar_t* name, TablePtr& outTable)
     }
 }
 
-ErrorCode SqliteDatabase::AddObserver(IDatabaseObserver* observer)
+ErrorCode SqliteDatabase::AddObserver(ISCDatabaseObserver* observer)
 {
     if (observer == nullptr)
     {
@@ -1661,13 +1661,13 @@ ErrorCode SqliteDatabase::AddObserver(IDatabaseObserver* observer)
     return SC_OK;
 }
 
-ErrorCode SqliteDatabase::RemoveObserver(IDatabaseObserver* observer)
+ErrorCode SqliteDatabase::RemoveObserver(ISCDatabaseObserver* observer)
 {
     observers_.erase(std::remove(observers_.begin(), observers_.end(), observer), observers_.end());
     return SC_OK;
 }
 
-ErrorCode SqliteDatabase::ValidateActiveEdit(IEditSession* edit) const
+ErrorCode SqliteDatabase::ValidateActiveEdit(ISCEditSession* edit) const
 {
     if (!activeEdit_)
     {
@@ -1688,7 +1688,7 @@ ErrorCode SqliteDatabase::ValidateActiveEdit(IEditSession* edit) const
     return SC_OK;
 }
 
-ErrorCode SqliteDatabase::ValidateWrite(SqliteTable* table, const std::shared_ptr<SqliteRecordData>& data, const std::wstring& fieldName, const Value& value)
+ErrorCode SqliteDatabase::ValidateWrite(SqliteTable* table, const std::shared_ptr<SqliteRecordData>& data, const std::wstring& fieldName, const SCValue& value)
 {
     if (!activeEdit_)
     {
@@ -1699,7 +1699,7 @@ ErrorCode SqliteDatabase::ValidateWrite(SqliteTable* table, const std::shared_pt
         return SC_E_RECORD_DELETED;
     }
 
-    const ColumnDef* column = table->Schema()->FindColumnDef(fieldName);
+    const SCColumnDef* column = table->Schema()->FindColumnDef(fieldName);
     if (column == nullptr)
     {
         return SC_E_COLUMN_NOT_FOUND;
@@ -1790,7 +1790,7 @@ void SqliteDatabase::RemoveAllJournalEntriesForRecord(const std::wstring& tableN
         activeJournal_.entries.end());
 }
 
-ErrorCode SqliteDatabase::WriteValue(SqliteTable* table, const std::shared_ptr<SqliteRecordData>& data, const std::wstring& fieldName, const Value& value)
+ErrorCode SqliteDatabase::WriteValue(SqliteTable* table, const std::shared_ptr<SqliteRecordData>& data, const std::wstring& fieldName, const SCValue& value)
 {
     const ErrorCode validate = ValidateWrite(table, data, fieldName, value);
     if (Failed(validate))
@@ -1804,8 +1804,8 @@ ErrorCode SqliteDatabase::WriteValue(SqliteTable* table, const std::shared_ptr<S
         return SC_E_RECORD_DELETED;
     }
 
-    const ColumnDef* column = table->Schema()->FindColumnDef(fieldName);
-    Value oldValue = column->defaultValue;
+    const SCColumnDef* column = table->Schema()->FindColumnDef(fieldName);
+    SCValue oldValue = column->defaultValue;
     const auto existing = data->values.find(fieldName);
     if (existing != data->values.end())
     {
@@ -1855,7 +1855,7 @@ ErrorCode SqliteDatabase::DeleteRecord(SqliteTable* table, const std::shared_ptr
     }
 
     RemoveFieldJournalEntries(table->Name(), data->id);
-    RecordJournal(table->Name(), data->id, L"", Value::Null(), Value::Null(), false, true, JournalOp::DeleteRecord);
+    RecordJournal(table->Name(), data->id, L"", SCValue::Null(), SCValue::Null(), false, true, JournalOp::DeleteRecord);
     return SC_OK;
 }
 
@@ -1869,7 +1869,7 @@ bool SqliteDatabase::IsRecordReferenced(const std::wstring& tableName, RecordId 
             continue;
         }
 
-        SchemaPtr schema;
+        SCSchemaPtr schema;
         if (Failed(table->GetSchema(schema)) || !schema)
         {
             continue;
@@ -1883,7 +1883,7 @@ bool SqliteDatabase::IsRecordReferenced(const std::wstring& tableName, RecordId 
 
         for (std::int32_t columnIndex = 0; columnIndex < columnCount; ++columnIndex)
         {
-            ColumnDef column;
+            SCColumnDef column;
             if (Failed(schema->GetColumn(columnIndex, &column)))
             {
                 continue;
@@ -1920,10 +1920,10 @@ bool SqliteDatabase::IsRecordReferenced(const std::wstring& tableName, RecordId 
 
 void SqliteDatabase::RecordCreate(SqliteTable* table, const std::shared_ptr<SqliteRecordData>& data)
 {
-    RecordJournal(table->Name(), data->id, L"", Value::Null(), Value::Null(), true, false, JournalOp::CreateRecord);
+    RecordJournal(table->Name(), data->id, L"", SCValue::Null(), SCValue::Null(), true, false, JournalOp::CreateRecord);
 }
 
-ErrorCode SqliteDatabase::PersistAddedColumn(SqliteSchema* schema, const ColumnDef& def)
+ErrorCode SqliteDatabase::PersistAddedColumn(SqliteSchema* schema, const SCColumnDef& def)
 {
     if (schema == nullptr)
     {
@@ -1980,8 +1980,8 @@ void SqliteDatabase::RecordJournal(
     const std::wstring& tableName,
     RecordId recordId,
     const std::wstring& fieldName,
-    const Value& oldValue,
-    const Value& newValue,
+    const SCValue& oldValue,
+    const SCValue& newValue,
     bool oldDeleted,
     bool newDeleted,
     JournalOp op)
@@ -2094,16 +2094,16 @@ void SqliteDatabase::UpdateTouchedVersions(const JournalTransaction& tx, Version
     }
 }
 
-ChangeSet SqliteDatabase::BuildChangeSet(const JournalTransaction& tx, ChangeSource source, VersionId version) const
+SCChangeSet SqliteDatabase::BuildChangeSet(const JournalTransaction& tx, ChangeSource source, VersionId version) const
 {
-    ChangeSet changeSet;
-    changeSet.actionName = tx.actionName;
-    changeSet.source = source;
-    changeSet.version = version;
+    SCChangeSet SCChangeSet;
+    SCChangeSet.actionName = tx.actionName;
+    SCChangeSet.source = source;
+    SCChangeSet.version = version;
 
     for (const auto& entry : tx.entries)
     {
-        DataChange change;
+        SCDataChange change;
         change.tableName = entry.tableName;
         change.recordId = entry.recordId;
         change.fieldName = entry.fieldName;
@@ -2129,19 +2129,19 @@ ChangeSet SqliteDatabase::BuildChangeSet(const JournalTransaction& tx, ChangeSou
             break;
         }
 
-        changeSet.changes.push_back(std::move(change));
+        SCChangeSet.changes.push_back(std::move(change));
     }
-    return changeSet;
+    return SCChangeSet;
 }
 
-void SqliteDatabase::NotifyObservers(const ChangeSet& changeSet)
+void SqliteDatabase::NotifyObservers(const SCChangeSet& SCChangeSet)
 {
-    std::vector<IDatabaseObserver*> snapshot = observers_;
+    std::vector<ISCDatabaseObserver*> snapshot = observers_;
     for (auto* observer : snapshot)
     {
         if (observer != nullptr)
         {
-            observer->OnDatabaseChanged(changeSet);
+            observer->OnDatabaseChanged(SCChangeSet);
         }
     }
 }
@@ -2198,12 +2198,12 @@ void SqliteDatabase::PersistTouchedRecords(const JournalTransaction& tx)
             continue;
         }
 
-        for (const auto& [fieldName, value] : data->values)
+        for (const auto& [fieldName, SCValue] : data->values)
         {
             insertValue.BindInt64(1, table->TableRowId());
             insertValue.BindInt64(2, data->id);
             insertValue.BindText(3, fieldName);
-            BindValueForStorage(insertValue, 4, 5, 6, 7, 8, value);
+            BindValueForStorage(insertValue, 4, 5, 6, 7, 8, SCValue);
             insertValue.Step();
             insertValue.Reset();
         }
@@ -2273,7 +2273,7 @@ void SqliteDatabase::DeleteJournalTransaction(std::int64_t txId)
 
 }  // namespace
 
-ErrorCode CreateSqliteDatabase(const wchar_t* path, DbPtr& outDatabase)
+ErrorCode CreateSqliteDatabase(const wchar_t* path, SCDbPtr& outDatabase)
 {
     if (path == nullptr)
     {
@@ -2282,7 +2282,7 @@ ErrorCode CreateSqliteDatabase(const wchar_t* path, DbPtr& outDatabase)
 
     try
     {
-        outDatabase = MakeRef<SqliteDatabase>(std::wstring{path});
+        outDatabase = SCMakeRef<SqliteDatabase>(std::wstring{path});
         return SC_OK;
     }
     catch (...)

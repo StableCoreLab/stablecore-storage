@@ -7,30 +7,30 @@ namespace stablecore::storage::editor
 namespace
 {
 
-sc::Value ParseDefaultValue(sc::ValueKind kind, const QString& text)
+sc::SCValue ParseDefaultValue(sc::ValueKind kind, const QString& text)
 {
     if (text.trimmed().isEmpty())
     {
-        return sc::Value::Null();
+        return sc::SCValue::Null();
     }
 
     switch (kind)
     {
     case sc::ValueKind::Int64:
-        return sc::Value::FromInt64(text.toLongLong());
+        return sc::SCValue::FromInt64(text.toLongLong());
     case sc::ValueKind::Double:
-        return sc::Value::FromDouble(text.toDouble());
+        return sc::SCValue::FromDouble(text.toDouble());
     case sc::ValueKind::Bool:
-        return sc::Value::FromBool(text.compare(QStringLiteral("true"), Qt::CaseInsensitive) == 0 || text == QStringLiteral("1"));
+        return sc::SCValue::FromBool(text.compare(QStringLiteral("true"), Qt::CaseInsensitive) == 0 || text == QStringLiteral("1"));
     case sc::ValueKind::String:
-        return sc::Value::FromString(text.toStdWString());
+        return sc::SCValue::FromString(text.toStdWString());
     case sc::ValueKind::RecordId:
-        return sc::Value::FromRecordId(text.toLongLong());
+        return sc::SCValue::FromRecordId(text.toLongLong());
     case sc::ValueKind::Enum:
-        return sc::Value::FromEnum(text.toStdWString());
+        return sc::SCValue::FromEnum(text.toStdWString());
     case sc::ValueKind::Null:
     default:
-        return sc::Value::Null();
+        return sc::SCValue::Null();
     }
 }
 
@@ -68,7 +68,7 @@ AddColumnDialog::AddColumnDialog(QWidget* parent)
 
     layout->addRow(QStringLiteral("Name"), nameEdit_);
     layout->addRow(QStringLiteral("Display Name"), displayNameEdit_);
-    layout->addRow(QStringLiteral("Value Kind"), valueKindCombo_);
+    layout->addRow(QStringLiteral("SCValue Kind"), valueKindCombo_);
     layout->addRow(QStringLiteral("Column Kind"), relationCheck_);
     layout->addRow(QStringLiteral("Nullable"), nullableCheck_);
     layout->addRow(QStringLiteral("Editable"), editableCheck_);
@@ -77,7 +77,7 @@ AddColumnDialog::AddColumnDialog(QWidget* parent)
     layout->addRow(QStringLiteral("Participates In Calc"), participatesInCalcCheck_);
     layout->addRow(QStringLiteral("Unit"), unitEdit_);
     layout->addRow(QStringLiteral("Reference Table"), referenceTableEdit_);
-    layout->addRow(QStringLiteral("Default Value"), defaultValueEdit_);
+    layout->addRow(QStringLiteral("Default SCValue"), defaultValueEdit_);
 
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
     connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
@@ -85,9 +85,9 @@ AddColumnDialog::AddColumnDialog(QWidget* parent)
     layout->addRow(buttons);
 }
 
-sc::ColumnDef AddColumnDialog::BuildColumnDef() const
+sc::SCColumnDef AddColumnDialog::BuildColumnDef() const
 {
-    sc::ColumnDef column;
+    sc::SCColumnDef column;
     column.name = nameEdit_->text().toStdWString();
     column.displayName = displayNameEdit_->text().isEmpty() ? column.name : displayNameEdit_->text().toStdWString();
     column.valueKind = static_cast<sc::ValueKind>(valueKindCombo_->currentData().toInt());

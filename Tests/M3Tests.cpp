@@ -6,7 +6,7 @@
 
 #include <gtest/gtest.h>
 
-#include "StableCore/Storage/Storage.h"
+#include "StableCore/Storage/SCStorage.h"
 
 namespace sc = stablecore::storage;
 namespace fs = std::filesystem;
@@ -14,17 +14,17 @@ namespace fs = std::filesystem;
 namespace
 {
 
-struct RecordingObserver final : sc::IDatabaseObserver
+struct RecordingObserver final : sc::ISCDatabaseObserver
 {
-    void OnDatabaseChanged(const sc::ChangeSet& changeSet) override
+    void OnDatabaseChanged(const sc::SCChangeSet& SCChangeSet) override
     {
-        seen.push_back(changeSet);
+        seen.push_back(SCChangeSet);
     }
 
-    std::vector<sc::ChangeSet> seen;
+    std::vector<sc::SCChangeSet> seen;
 };
 
-using CreateDbFn = std::function<sc::DbPtr()>;
+using CreateDbFn = std::function<sc::SCDbPtr()>;
 
 fs::path MakeTempDbPath(const wchar_t* fileName)
 {
@@ -34,40 +34,40 @@ fs::path MakeTempDbPath(const wchar_t* fileName)
     return path;
 }
 
-sc::TablePtr CreateFloorTable(sc::DbPtr& db)
+sc::SCTablePtr CreateFloorTable(sc::SCDbPtr& db)
 {
-    sc::TablePtr table;
+    sc::SCTablePtr table;
     EXPECT_EQ(db->CreateTable(L"Floor", table), sc::SC_OK);
 
-    sc::SchemaPtr schema;
+    sc::SCSchemaPtr schema;
     EXPECT_EQ(table->GetSchema(schema), sc::SC_OK);
 
-    sc::ColumnDef title;
+    sc::SCColumnDef title;
     title.name = L"Title";
     title.displayName = L"Title";
     title.valueKind = sc::ValueKind::String;
-    title.defaultValue = sc::Value::FromString(L"");
+    title.defaultValue = sc::SCValue::FromString(L"");
     EXPECT_EQ(schema->AddColumn(title), sc::SC_OK);
 
     return table;
 }
 
-sc::TablePtr CreateBeamTable(sc::DbPtr& db)
+sc::SCTablePtr CreateBeamTable(sc::SCDbPtr& db)
 {
-    sc::TablePtr table;
+    sc::SCTablePtr table;
     EXPECT_EQ(db->CreateTable(L"Beam", table), sc::SC_OK);
 
-    sc::SchemaPtr schema;
+    sc::SCSchemaPtr schema;
     EXPECT_EQ(table->GetSchema(schema), sc::SC_OK);
 
-    sc::ColumnDef name;
+    sc::SCColumnDef name;
     name.name = L"Name";
     name.displayName = L"Name";
     name.valueKind = sc::ValueKind::String;
-    name.defaultValue = sc::Value::FromString(L"");
+    name.defaultValue = sc::SCValue::FromString(L"");
     EXPECT_EQ(schema->AddColumn(name), sc::SC_OK);
 
-    sc::ColumnDef floorRef;
+    sc::SCColumnDef floorRef;
     floorRef.name = L"FloorRef";
     floorRef.displayName = L"FloorRef";
     floorRef.valueKind = sc::ValueKind::RecordId;
@@ -79,16 +79,16 @@ sc::TablePtr CreateBeamTable(sc::DbPtr& db)
     return table;
 }
 
-std::vector<std::wstring> CollectBeamNames(sc::TablePtr& beamTable, sc::RecordId floorId)
+std::vector<std::wstring> CollectBeamNames(sc::SCTablePtr& beamTable, sc::RecordId floorId)
 {
-    sc::RecordCursorPtr cursor;
-    EXPECT_EQ(beamTable->FindRecords({L"FloorRef", sc::Value::FromRecordId(floorId)}, cursor), sc::SC_OK);
+    sc::SCRecordCursorPtr cursor;
+    EXPECT_EQ(beamTable->FindRecords({L"FloorRef", sc::SCValue::FromRecordId(floorId)}, cursor), sc::SC_OK);
 
     std::vector<std::wstring> names;
     bool hasRow = false;
     while (cursor->MoveNext(&hasRow) == sc::SC_OK && hasRow)
     {
-        sc::RecordPtr beam;
+        sc::SCRecordPtr beam;
         EXPECT_EQ(cursor->GetCurrent(beam), sc::SC_OK);
 
         std::wstring name;
@@ -101,37 +101,37 @@ std::vector<std::wstring> CollectBeamNames(sc::TablePtr& beamTable, sc::RecordId
 
 void RunM3RelationBaseline(const CreateDbFn& createDb)
 {
-    sc::DbPtr db = createDb();
+    sc::SCDbPtr db = createDb();
     ASSERT_TRUE(static_cast<bool>(db));
 
-    sc::TablePtr floorTable = CreateFloorTable(db);
-    sc::TablePtr beamTable = CreateBeamTable(db);
+    sc::SCTablePtr floorTable = CreateFloorTable(db);
+    sc::SCTablePtr beamTable = CreateBeamTable(db);
 
     RecordingObserver observer;
     EXPECT_EQ(db->AddObserver(&observer), sc::SC_OK);
 
-    sc::EditPtr seedEdit;
+    sc::SCEditPtr seedEdit;
     ASSERT_EQ(db->BeginEdit(L"seed relation baseline", seedEdit), sc::SC_OK);
 
-    sc::RecordPtr floor2;
+    sc::SCRecordPtr floor2;
     ASSERT_EQ(floorTable->CreateRecord(floor2), sc::SC_OK);
     ASSERT_EQ(floor2->SetString(L"Title", L"2F"), sc::SC_OK);
 
-    sc::RecordPtr floor3;
+    sc::SCRecordPtr floor3;
     ASSERT_EQ(floorTable->CreateRecord(floor3), sc::SC_OK);
     ASSERT_EQ(floor3->SetString(L"Title", L"3F"), sc::SC_OK);
 
-    sc::RecordPtr beamA;
+    sc::SCRecordPtr beamA;
     ASSERT_EQ(beamTable->CreateRecord(beamA), sc::SC_OK);
     ASSERT_EQ(beamA->SetString(L"Name", L"B-A"), sc::SC_OK);
     ASSERT_EQ(beamA->SetRef(L"FloorRef", floor2->GetId()), sc::SC_OK);
 
-    sc::RecordPtr beamB;
+    sc::SCRecordPtr beamB;
     ASSERT_EQ(beamTable->CreateRecord(beamB), sc::SC_OK);
     ASSERT_EQ(beamB->SetString(L"Name", L"B-B"), sc::SC_OK);
     ASSERT_EQ(beamB->SetRef(L"FloorRef", floor2->GetId()), sc::SC_OK);
 
-    sc::RecordPtr beamC;
+    sc::SCRecordPtr beamC;
     ASSERT_EQ(beamTable->CreateRecord(beamC), sc::SC_OK);
     ASSERT_EQ(beamC->SetString(L"Name", L"B-C"), sc::SC_OK);
     ASSERT_EQ(beamC->SetRef(L"FloorRef", floor3->GetId()), sc::SC_OK);
@@ -144,9 +144,9 @@ void RunM3RelationBaseline(const CreateDbFn& createDb)
     EXPECT_NE(std::find(floor2Beams.begin(), floor2Beams.end(), L"B-B"), floor2Beams.end());
 
     bool sawRelationUpdated = false;
-    for (const auto& changeSet : observer.seen)
+    for (const auto& SCChangeSet : observer.seen)
     {
-        for (const auto& change : changeSet.changes)
+        for (const auto& change : SCChangeSet.changes)
         {
             if (change.kind == sc::ChangeKind::RelationUpdated
                 && change.tableName == L"Beam"
@@ -158,18 +158,18 @@ void RunM3RelationBaseline(const CreateDbFn& createDb)
     }
     EXPECT_TRUE(sawRelationUpdated);
 
-    sc::EditPtr deleteReferencedFloor;
+    sc::SCEditPtr deleteReferencedFloor;
     ASSERT_EQ(db->BeginEdit(L"delete referenced floor", deleteReferencedFloor), sc::SC_OK);
     EXPECT_EQ(floorTable->DeleteRecord(floor2->GetId()), sc::SC_E_CONSTRAINT_VIOLATION);
     EXPECT_EQ(db->Rollback(deleteReferencedFloor.Get()), sc::SC_OK);
 
-    sc::EditPtr moveBeam;
+    sc::SCEditPtr moveBeam;
     ASSERT_EQ(db->BeginEdit(L"move beam to another floor", moveBeam), sc::SC_OK);
     ASSERT_EQ(beamA->SetRef(L"FloorRef", floor3->GetId()), sc::SC_OK);
     ASSERT_EQ(beamB->SetRef(L"FloorRef", floor3->GetId()), sc::SC_OK);
     ASSERT_EQ(db->Commit(moveBeam.Get()), sc::SC_OK);
 
-    sc::EditPtr deleteNowFreeFloor;
+    sc::SCEditPtr deleteNowFreeFloor;
     ASSERT_EQ(db->BeginEdit(L"delete unreferenced floor", deleteNowFreeFloor), sc::SC_OK);
     EXPECT_EQ(floorTable->DeleteRecord(floor2->GetId()), sc::SC_OK);
     EXPECT_EQ(db->Commit(deleteNowFreeFloor.Get()), sc::SC_OK);
@@ -183,7 +183,7 @@ TEST(StorageM3, MemoryRelationBaseline)
 {
     RunM3RelationBaseline([]()
     {
-        sc::DbPtr db;
+        sc::SCDbPtr db;
         EXPECT_EQ(sc::CreateInMemoryDatabase(db), sc::SC_OK);
         return db;
     });
@@ -195,28 +195,28 @@ TEST(StorageM3, SqliteRelationBaseline)
 
     RunM3RelationBaseline([&dbPath]()
     {
-        sc::DbPtr db;
+        sc::SCDbPtr db;
         EXPECT_EQ(sc::CreateSqliteDatabase(dbPath.c_str(), db), sc::SC_OK);
         return db;
     });
 
-    sc::DbPtr reopened;
+    sc::SCDbPtr reopened;
     ASSERT_EQ(sc::CreateSqliteDatabase(dbPath.c_str(), reopened), sc::SC_OK);
 
-    sc::TablePtr floorTable;
+    sc::SCTablePtr floorTable;
     ASSERT_EQ(reopened->GetTable(L"Floor", floorTable), sc::SC_OK);
 
-    sc::TablePtr beamTable;
+    sc::SCTablePtr beamTable;
     ASSERT_EQ(reopened->GetTable(L"Beam", beamTable), sc::SC_OK);
 
-    sc::RecordCursorPtr floorCursor;
+    sc::SCRecordCursorPtr floorCursor;
     ASSERT_EQ(floorTable->EnumerateRecords(floorCursor), sc::SC_OK);
 
     bool hasRow = false;
     std::vector<sc::RecordId> aliveFloorIds;
     while (floorCursor->MoveNext(&hasRow) == sc::SC_OK && hasRow)
     {
-        sc::RecordPtr floor;
+        sc::SCRecordPtr floor;
         ASSERT_EQ(floorCursor->GetCurrent(floor), sc::SC_OK);
         aliveFloorIds.push_back(floor->GetId());
     }

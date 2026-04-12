@@ -74,14 +74,14 @@ if (NOT DEFINED Qt6_DIR AND DEFINED ENV{QT6_8_x64} AND NOT "$ENV{QT6_8_x64}" STR
 endif()
 
 add_library(${SCSTORAGE_TARGET} SHARED
-    Src/Factory.cpp
-    Src/Batch/BatchOperations.cpp
-    Src/Computed/ComputedRuntime.cpp
-    Src/Computed/TableView.cpp
-    Src/Diagnostics/Diagnostics.cpp
-    Src/Migration/Migration.cpp
-    Src/Memory/MemoryDatabase.cpp
-    Src/Sqlite/SqliteAdapter.cpp
+    Src/SCFactory.cpp
+    Src/Batch/SCBatchOperations.cpp
+    Src/Computed/SCComputedRuntime.cpp
+    Src/Computed/SCTableView.cpp
+    Src/Diagnostics/SCDiagnostics.cpp
+    Src/Migration/SCMigration.cpp
+    Src/Memory/SCMemoryDatabase.cpp
+    Src/Sqlite/SCSqliteAdapter.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../ThirdParty/Sqlite/sqlite3.c
 )
 SCStorageConfigureOutputDirs(${SCSTORAGE_TARGET})
@@ -138,18 +138,18 @@ if (SCSTORAGE_BUILD_DB_EDITOR)
 endif()
 
 set(SCSTORAGE_PUBLIC_HEADERS
-    Include/StableCore/Storage/Batch.h
-    Include/StableCore/Storage/Computed.h
-    Include/StableCore/Storage/Diagnostics.h
-    Include/StableCore/Storage/Errors.h
-    Include/StableCore/Storage/Factory.h
-    Include/StableCore/Storage/Interfaces.h
-    Include/StableCore/Storage/Migration.h
-    Include/StableCore/Storage/RefCounted.h
-    Include/StableCore/Storage/RefPtr.h
-    Include/StableCore/Storage/Storage.h
-    Include/StableCore/Storage/TableView.h
-    Include/StableCore/Storage/Types.h
+    Include/StableCore/Storage/SCBatch.h
+    Include/StableCore/Storage/ISCComputed.h
+    Include/StableCore/Storage/ISCDiagnostics.h
+    Include/StableCore/Storage/SCErrors.h
+    Include/StableCore/Storage/SCFactory.h
+    Include/StableCore/Storage/ISCInterfaces.h
+    Include/StableCore/Storage/SCMigration.h
+    Include/StableCore/Storage/SCRefCounted.h
+    Include/StableCore/Storage/ISCRefPtr.h
+    Include/StableCore/Storage/SCStorage.h
+    Include/StableCore/Storage/ISCTableView.h
+    Include/StableCore/Storage/SCTypes.h
 )
 
 option(SCSTORAGE_BUILD_TESTS "Build tests" ON)

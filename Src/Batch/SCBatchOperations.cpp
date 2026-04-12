@@ -1,11 +1,11 @@
-#include "StableCore/Storage/Batch.h"
+#include "StableCore/Storage/SCBatch.h"
 
 namespace stablecore::storage
 {
 namespace
 {
 
-ErrorCode ApplyAssignments(IRecord* record, const std::vector<FieldValueAssignment>& values, std::size_t* outUpdatedFieldCount)
+ErrorCode ApplyAssignments(ISCRecord* record, const std::vector<SCFieldValueAssignment>& values, std::size_t* outUpdatedFieldCount)
 {
     if (record == nullptr)
     {
@@ -14,7 +14,7 @@ ErrorCode ApplyAssignments(IRecord* record, const std::vector<FieldValueAssignme
 
     for (const auto& assignment : values)
     {
-        const ErrorCode rc = record->SetValue(assignment.fieldName.c_str(), assignment.value);
+        const ErrorCode rc = record->SetValue(assignment.fieldName.c_str(), assignment.SCValue);
         if (Failed(rc))
         {
             return rc;
@@ -28,7 +28,7 @@ ErrorCode ApplyAssignments(IRecord* record, const std::vector<FieldValueAssignme
     return SC_OK;
 }
 
-ErrorCode ResolveTable(IDatabase* database, const std::wstring& tableName, TablePtr& outTable)
+ErrorCode ResolveTable(ISCDatabase* database, const std::wstring& tableName, SCTablePtr& outTable)
 {
     if (database == nullptr || tableName.empty())
     {
@@ -46,17 +46,17 @@ ErrorCode ResolveTable(IDatabase* database, const std::wstring& tableName, Table
 }  // namespace
 
 ErrorCode ExecuteBatchEdit(
-    IDatabase* database,
-    const std::vector<BatchTableRequest>& requests,
-    const BatchExecutionOptions& options,
-    BatchExecutionResult* outResult)
+    ISCDatabase* database,
+    const std::vector<SCBatchTableRequest>& requests,
+    const SCBatchExecutionOptions& options,
+    SCBatchExecutionResult* outResult)
 {
     if (database == nullptr)
     {
         return SC_E_POINTER;
     }
 
-    EditPtr edit;
+    SCEditPtr edit;
     const std::wstring editName = options.editName.empty() ? L"BatchEdit" : options.editName;
     ErrorCode rc = database->BeginEdit(editName.c_str(), edit);
     if (Failed(rc))
@@ -64,11 +64,11 @@ ErrorCode ExecuteBatchEdit(
         return rc;
     }
 
-    BatchExecutionResult result;
+    SCBatchExecutionResult result;
 
     for (const auto& request : requests)
     {
-        TablePtr table;
+        SCTablePtr table;
         rc = ResolveTable(database, request.tableName, table);
         if (Failed(rc))
         {
@@ -77,7 +77,7 @@ ErrorCode ExecuteBatchEdit(
 
         for (const auto& create : request.creates)
         {
-            RecordPtr record;
+            SCRecordPtr record;
             rc = table->CreateRecord(record);
             if (Failed(rc))
             {
@@ -97,7 +97,7 @@ ErrorCode ExecuteBatchEdit(
 
         for (const auto& update : request.updates)
         {
-            RecordPtr record;
+            SCRecordPtr record;
             rc = table->GetRecord(update.recordId, record);
             if (Failed(rc))
             {
@@ -157,12 +157,12 @@ ErrorCode ExecuteBatchEdit(
 }
 
 ErrorCode ExecuteImport(
-    IDatabase* database,
-    const std::vector<BatchTableRequest>& requests,
-    const ImportOptions& options,
-    ImportResult* outResult)
+    ISCDatabase* database,
+    const std::vector<SCBatchTableRequest>& requests,
+    const ISCmportOptions& options,
+    ISCmportResult* outResult)
 {
-    BatchExecutionOptions effective = options;
+    SCBatchExecutionOptions effective = options;
     if (effective.editName.empty())
     {
         effective.editName = L"Import";

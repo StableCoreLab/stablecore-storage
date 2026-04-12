@@ -3,19 +3,19 @@
 
 #include <gtest/gtest.h>
 
-#include "StableCore/Storage/Storage.h"
+#include "StableCore/Storage/SCStorage.h"
 
 namespace sc = stablecore::storage;
 
 namespace
 {
 
-class TestComputedContext final : public sc::IComputedContext, public sc::RefCountedObject
+class TestComputedContext final : public sc::ISCComputedContext, public sc::SCRefCountedObject
 {
 public:
-    std::unordered_map<std::wstring, sc::Value> values;
+    std::unordered_map<std::wstring, sc::SCValue> values;
 
-    sc::ErrorCode GetValue(const wchar_t* fieldName, sc::Value* outValue) override
+    sc::ErrorCode GetValue(const wchar_t* fieldName, sc::SCValue* outValue) override
     {
         if (fieldName == nullptr || outValue == nullptr)
         {
@@ -35,27 +35,27 @@ public:
         return sc::SC_E_NOTIMPL;
     }
 
-    sc::ErrorCode GetRelated(const wchar_t*, sc::RecordCursorPtr&) override
+    sc::ErrorCode GetRelated(const wchar_t*, sc::SCRecordCursorPtr&) override
     {
         return sc::SC_E_NOTIMPL;
     }
 };
 
-class ConstantRuleEvaluator final : public sc::IComputedEvaluator, public sc::RefCountedObject
+class ConstantRuleEvaluator final : public sc::ISCComputedEvaluator, public sc::SCRefCountedObject
 {
 public:
-    explicit ConstantRuleEvaluator(double value)
-        : value_(value)
+    explicit ConstantRuleEvaluator(double SCValue)
+        : value_(SCValue)
     {
     }
 
-    sc::ErrorCode Evaluate(const sc::ComputedColumnDef&, sc::IComputedContext*, sc::Value* outValue) override
+    sc::ErrorCode Evaluate(const sc::SCComputedColumnDef&, sc::ISCComputedContext*, sc::SCValue* outValue) override
     {
         if (outValue == nullptr)
         {
             return sc::SC_E_POINTER;
         }
-        *outValue = sc::Value::FromDouble(value_);
+        *outValue = sc::SCValue::FromDouble(value_);
         return sc::SC_OK;
     }
 
@@ -67,80 +67,80 @@ private:
 
 TEST(StorageComputed, ExpressionEvaluatorSupportsArithmeticAndFunctions)
 {
-    sc::ComputedColumnDef column;
+    sc::SCComputedColumnDef column;
     column.name = L"Volume";
     column.valueKind = sc::ValueKind::Double;
     column.kind = sc::ComputedFieldKind::Expression;
     column.expression = L"max(Length * Width * Height, 0)";
 
-    sc::RefPtr<TestComputedContext> context = sc::MakeRef<TestComputedContext>();
-    context->values[L"Length"] = sc::Value::FromDouble(6.0);
-    context->values[L"Width"] = sc::Value::FromDouble(0.3);
-    context->values[L"Height"] = sc::Value::FromDouble(0.5);
+    sc::SCRefPtr<TestComputedContext> context = sc::SCMakeRef<TestComputedContext>();
+    context->values[L"Length"] = sc::SCValue::FromDouble(6.0);
+    context->values[L"Width"] = sc::SCValue::FromDouble(0.3);
+    context->values[L"Height"] = sc::SCValue::FromDouble(0.5);
 
-    sc::Value value;
-    EXPECT_EQ(sc::EvaluateComputedColumn(column, context.Get(), nullptr, &value), sc::SC_OK);
+    sc::SCValue SCValue;
+    EXPECT_EQ(sc::EvaluateComputedColumn(column, context.Get(), nullptr, &SCValue), sc::SC_OK);
 
     double result = 0.0;
-    EXPECT_EQ(value.AsDouble(&result), sc::SC_OK);
+    EXPECT_EQ(SCValue.AsDouble(&result), sc::SC_OK);
     EXPECT_DOUBLE_EQ(result, 0.9);
 }
 
 TEST(StorageComputed, RuleRegistryResolvesRuleEvaluator)
 {
-    sc::RuleRegistryPtr registry;
+    sc::SCRuleRegistryPtr registry;
     EXPECT_EQ(sc::CreateDefaultRuleRegistry(registry), sc::SC_OK);
 
-    sc::ComputedEvaluatorPtr evaluator = sc::MakeRef<ConstantRuleEvaluator>(42.5);
+    sc::SCComputedEvaluatorPtr evaluator = sc::SCMakeRef<ConstantRuleEvaluator>(42.5);
     EXPECT_EQ(registry->Register(L"beam.volume.v1", evaluator.Get()), sc::SC_OK);
 
-    sc::ComputedColumnDef column;
+    sc::SCComputedColumnDef column;
     column.name = L"Volume";
     column.valueKind = sc::ValueKind::Double;
     column.kind = sc::ComputedFieldKind::Rule;
     column.ruleId = L"beam.volume.v1";
 
-    sc::RefPtr<TestComputedContext> context = sc::MakeRef<TestComputedContext>();
-    sc::Value value;
-    EXPECT_EQ(sc::EvaluateComputedColumn(column, context.Get(), registry.Get(), &value), sc::SC_OK);
+    sc::SCRefPtr<TestComputedContext> context = sc::SCMakeRef<TestComputedContext>();
+    sc::SCValue SCValue;
+    EXPECT_EQ(sc::EvaluateComputedColumn(column, context.Get(), registry.Get(), &SCValue), sc::SC_OK);
 
     double result = 0.0;
-    EXPECT_EQ(value.AsDouble(&result), sc::SC_OK);
+    EXPECT_EQ(SCValue.AsDouble(&result), sc::SC_OK);
     EXPECT_DOUBLE_EQ(result, 42.5);
 }
 
 TEST(StorageComputed, CacheInvalidatesOnDependencyChanges)
 {
-    sc::ComputedCachePtr cache;
+    sc::SCComputedCachePtr cache;
     EXPECT_EQ(sc::CreateComputedCache(cache), sc::SC_OK);
 
-    sc::ComputedCacheEntry entry;
+    sc::SCComputedCacheEntry entry;
     entry.key.recordId = 1001;
     entry.key.columnName = L"Volume";
     entry.key.version = 8;
     entry.dependencies.factFields = {{L"Beam", L"Length"}};
-    entry.value = sc::Value::FromDouble(9.0);
+    entry.SCValue = sc::SCValue::FromDouble(9.0);
     EXPECT_EQ(cache->Put(entry), sc::SC_OK);
 
-    sc::ComputedColumnDef column;
+    sc::SCComputedColumnDef column;
     column.name = L"Volume";
     column.dependencies.factFields = {{L"Beam", L"Length"}};
 
-    sc::ChangeSet changeSet;
-    changeSet.version = 9;
-    changeSet.changes.push_back(sc::DataChange{
+    sc::SCChangeSet SCChangeSet;
+    SCChangeSet.version = 9;
+    SCChangeSet.changes.push_back(sc::SCDataChange{
         sc::ChangeKind::FieldUpdated,
         L"Beam",
         1001,
         L"Length",
-        sc::Value::FromDouble(3.0),
-        sc::Value::FromDouble(6.0),
+        sc::SCValue::FromDouble(3.0),
+        sc::SCValue::FromDouble(6.0),
         false,
         false,
     });
 
-    EXPECT_EQ(cache->Invalidate(changeSet, {column}), sc::SC_OK);
+    EXPECT_EQ(cache->Invalidate(SCChangeSet, {column}), sc::SC_OK);
 
-    sc::Value cached;
+    sc::SCValue cached;
     EXPECT_EQ(cache->TryGet(entry.key, &cached), sc::SC_FALSE_RESULT);
 }

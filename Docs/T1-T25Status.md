@@ -7,7 +7,7 @@ This file audits `Docs/TaskBreakdown.md` tasks `T1` through `T25` against the re
 Completed tasks:
 
 - `T1` public API baseline
-- `T2` `Value` typed access baseline
+- `T2` `SCValue` typed access baseline
 - `T3` string lifetime and `GetStringCopy`
 - `T4` consistent core error behavior baseline
 - `T5` in-memory transaction lifecycle baseline

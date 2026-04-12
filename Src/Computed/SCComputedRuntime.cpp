@@ -1,4 +1,4 @@
-#include "StableCore/Storage/Computed.h"
+#include "StableCore/Storage/ISCComputed.h"
 
 #include <algorithm>
 #include <cmath>
@@ -9,7 +9,7 @@
 #include <unordered_map>
 #include <utility>
 
-#include "StableCore/Storage/RefCounted.h"
+#include "StableCore/Storage/SCRefCounted.h"
 
 namespace stablecore::storage
 {
@@ -135,40 +135,40 @@ struct Scalar
     bool boolValue{false};
 };
 
-ErrorCode ReadScalarFromContext(IComputedContext* context, const std::wstring& fieldName, Scalar* outScalar)
+ErrorCode ReadScalarFromContext(ISCComputedContext* context, const std::wstring& fieldName, Scalar* outScalar)
 {
     if (context == nullptr || outScalar == nullptr)
     {
         return SC_E_POINTER;
     }
 
-    Value value;
-    const ErrorCode rc = context->GetValue(fieldName.c_str(), &value);
+    SCValue SCValue;
+    const ErrorCode rc = context->GetValue(fieldName.c_str(), &SCValue);
     if (Failed(rc))
     {
         return rc;
     }
 
-    switch (value.GetKind())
+    switch (SCValue.GetKind())
     {
     case ValueKind::Int64:
     {
         std::int64_t number = 0;
-        value.AsInt64(&number);
+        SCValue.AsInt64(&number);
         *outScalar = Scalar{ValueKind::Int64, static_cast<double>(number), number != 0};
         return SC_OK;
     }
     case ValueKind::Double:
     {
         double number = 0.0;
-        value.AsDouble(&number);
+        SCValue.AsDouble(&number);
         *outScalar = Scalar{ValueKind::Double, number, number != 0.0};
         return SC_OK;
     }
     case ValueKind::Bool:
     {
         bool flag = false;
-        value.AsBool(&flag);
+        SCValue.AsBool(&flag);
         *outScalar = Scalar{ValueKind::Bool, flag ? 1.0 : 0.0, flag};
         return SC_OK;
     }
@@ -186,15 +186,15 @@ bool IsTruthy(const Scalar& scalar) noexcept
     return scalar.numberValue != 0.0;
 }
 
-Scalar MakeNumeric(double value, ValueKind kindHint = ValueKind::Double) noexcept
+Scalar MakeNumeric(double SCValue, ValueKind kindHint = ValueKind::Double) noexcept
 {
-    return Scalar{kindHint, value, value != 0.0};
+    return Scalar{kindHint, SCValue, SCValue != 0.0};
 }
 
 class ExpressionParser
 {
 public:
-    ExpressionParser(const ComputedColumnDef& column, IComputedContext* context)
+    ExpressionParser(const SCComputedColumnDef& column, ISCComputedContext* context)
         : column_(column)
         , context_(context)
         , lexer_(column.expression)
@@ -202,7 +202,7 @@ public:
     {
     }
 
-    ErrorCode Evaluate(Value* outValue)
+    ErrorCode Evaluate(SCValue* outValue)
     {
         if (outValue == nullptr)
         {
@@ -350,13 +350,13 @@ private:
         {
             while (true)
             {
-                Scalar value;
-                const ErrorCode rc = ParseExpression(&value);
+                Scalar SCValue;
+                const ErrorCode rc = ParseExpression(&SCValue);
                 if (Failed(rc))
                 {
                     return rc;
                 }
-                args.push_back(value);
+                args.push_back(SCValue);
 
                 if (current_.kind == Token::Kind::Comma)
                 {
@@ -397,18 +397,18 @@ private:
         return SC_E_INVALIDARG;
     }
 
-    ErrorCode ConvertToValue(const Scalar& scalar, Value* outValue) const
+    ErrorCode ConvertToValue(const Scalar& scalar, SCValue* outValue) const
     {
         switch (column_.valueKind)
         {
         case ValueKind::Int64:
-            *outValue = Value::FromInt64(static_cast<std::int64_t>(std::llround(scalar.numberValue)));
+            *outValue = SCValue::FromInt64(static_cast<std::int64_t>(std::llround(scalar.numberValue)));
             return SC_OK;
         case ValueKind::Double:
-            *outValue = Value::FromDouble(scalar.numberValue);
+            *outValue = SCValue::FromDouble(scalar.numberValue);
             return SC_OK;
         case ValueKind::Bool:
-            *outValue = Value::FromBool(IsTruthy(scalar));
+            *outValue = SCValue::FromBool(IsTruthy(scalar));
             return SC_OK;
         default:
             return SC_E_TYPE_MISMATCH;
@@ -420,26 +420,26 @@ private:
         current_ = lexer_.Next();
     }
 
-    const ComputedColumnDef& column_;
-    IComputedContext* context_{nullptr};
+    const SCComputedColumnDef& column_;
+    ISCComputedContext* context_{nullptr};
     Lexer lexer_;
     Token current_;
 };
 
-class ExpressionEvaluator final : public IComputedEvaluator, public RefCountedObject
+class ExpressionEvaluator final : public ISCComputedEvaluator, public SCRefCountedObject
 {
 public:
-    ErrorCode Evaluate(const ComputedColumnDef& column, IComputedContext* context, Value* outValue) override
+    ErrorCode Evaluate(const SCComputedColumnDef& column, ISCComputedContext* context, SCValue* outValue) override
     {
         ExpressionParser parser(column, context);
         return parser.Evaluate(outValue);
     }
 };
 
-class DefaultRuleRegistry final : public IRuleRegistry, public RefCountedObject
+class DefaultRuleRegistry final : public ISCRuleRegistry, public SCRefCountedObject
 {
 public:
-    ErrorCode Register(const wchar_t* ruleId, IComputedEvaluator* evaluator) override
+    ErrorCode Register(const wchar_t* ruleId, ISCComputedEvaluator* evaluator) override
     {
         if (ruleId == nullptr || *ruleId == L'\0')
         {
@@ -450,11 +450,11 @@ public:
             return SC_E_POINTER;
         }
 
-        evaluators_[ruleId] = ComputedEvaluatorPtr(evaluator);
+        evaluators_[ruleId] = SCComputedEvaluatorPtr(evaluator);
         return SC_OK;
     }
 
-    ErrorCode Find(const wchar_t* ruleId, ComputedEvaluatorPtr& outEvaluator) override
+    ErrorCode Find(const wchar_t* ruleId, SCComputedEvaluatorPtr& outEvaluator) override
     {
         if (ruleId == nullptr || *ruleId == L'\0')
         {
@@ -472,12 +472,12 @@ public:
     }
 
 private:
-    std::unordered_map<std::wstring, ComputedEvaluatorPtr> evaluators_;
+    std::unordered_map<std::wstring, SCComputedEvaluatorPtr> evaluators_;
 };
 
 struct CacheKeyHash
 {
-    std::size_t operator()(const ComputedCacheKey& key) const noexcept
+    std::size_t operator()(const SCComputedCacheKey& key) const noexcept
     {
         return static_cast<std::size_t>(key.recordId)
             ^ (std::hash<std::wstring>{}(key.columnName) << 1)
@@ -485,16 +485,16 @@ struct CacheKeyHash
     }
 };
 
-bool DependencyMatchesChange(const FieldDependency& dependency, const DataChange& change) noexcept
+bool DependencyMatchesChange(const SCFieldDependency& dependency, const SCDataChange& change) noexcept
 {
     return (dependency.tableName.empty() || dependency.tableName == change.tableName)
         && dependency.fieldName == change.fieldName;
 }
 
-class ComputedCache final : public IComputedCache, public RefCountedObject
+class ComputedCache final : public ISCComputedCache, public SCRefCountedObject
 {
 public:
-    ErrorCode TryGet(const ComputedCacheKey& key, Value* outValue) override
+    ErrorCode TryGet(const SCComputedCacheKey& key, SCValue* outValue) override
     {
         if (outValue == nullptr)
         {
@@ -507,19 +507,19 @@ public:
             return SC_FALSE_RESULT;
         }
 
-        *outValue = it->second.value;
+        *outValue = it->second.SCValue;
         return SC_OK;
     }
 
-    ErrorCode Put(const ComputedCacheEntry& entry) override
+    ErrorCode Put(const SCComputedCacheEntry& entry) override
     {
         entries_[entry.key] = entry;
         return SC_OK;
     }
 
-    ErrorCode Invalidate(const ChangeSet& changeSet, const std::vector<ComputedColumnDef>& computedColumns) override
+    ErrorCode Invalidate(const SCChangeSet& SCChangeSet, const std::vector<SCComputedColumnDef>& computedColumns) override
     {
-        std::vector<ComputedCacheKey> removeKeys;
+        std::vector<SCComputedCacheKey> removeKeys;
         for (const auto& [key, entry] : entries_)
         {
             for (const auto& column : computedColumns)
@@ -528,7 +528,7 @@ public:
                 {
                     continue;
                 }
-                if (DoesDependencySetIntersect(entry.dependencies, changeSet))
+                if (DoesDependencySetIntersect(entry.dependencies, SCChangeSet))
                 {
                     removeKeys.push_back(key);
                     break;
@@ -550,34 +550,34 @@ public:
     }
 
 private:
-    std::unordered_map<ComputedCacheKey, ComputedCacheEntry, CacheKeyHash> entries_;
+    std::unordered_map<SCComputedCacheKey, SCComputedCacheEntry, CacheKeyHash> entries_;
 };
 
 }  // namespace
 
-ErrorCode CreateDefaultExpressionEvaluator(ComputedEvaluatorPtr& outEvaluator)
+ErrorCode CreateDefaultExpressionEvaluator(SCComputedEvaluatorPtr& outEvaluator)
 {
-    outEvaluator = MakeRef<ExpressionEvaluator>();
+    outEvaluator = SCMakeRef<ExpressionEvaluator>();
     return SC_OK;
 }
 
-ErrorCode CreateDefaultRuleRegistry(RuleRegistryPtr& outRegistry)
+ErrorCode CreateDefaultRuleRegistry(SCRuleRegistryPtr& outRegistry)
 {
-    outRegistry = MakeRef<DefaultRuleRegistry>();
+    outRegistry = SCMakeRef<DefaultRuleRegistry>();
     return SC_OK;
 }
 
-ErrorCode CreateComputedCache(ComputedCachePtr& outCache)
+ErrorCode CreateComputedCache(SCComputedCachePtr& outCache)
 {
-    outCache = MakeRef<ComputedCache>();
+    outCache = SCMakeRef<ComputedCache>();
     return SC_OK;
 }
 
 ErrorCode EvaluateComputedColumn(
-    const ComputedColumnDef& column,
-    IComputedContext* context,
-    IRuleRegistry* ruleRegistry,
-    Value* outValue)
+    const SCComputedColumnDef& column,
+    ISCComputedContext* context,
+    ISCRuleRegistry* ruleRegistry,
+    SCValue* outValue)
 {
     if (context == nullptr || outValue == nullptr)
     {
@@ -588,7 +588,7 @@ ErrorCode EvaluateComputedColumn(
     {
     case ComputedFieldKind::Expression:
     {
-        ComputedEvaluatorPtr evaluator;
+        SCComputedEvaluatorPtr evaluator;
         CreateDefaultExpressionEvaluator(evaluator);
         return evaluator->Evaluate(column, context, outValue);
     }
@@ -599,7 +599,7 @@ ErrorCode EvaluateComputedColumn(
         {
             return SC_E_POINTER;
         }
-        ComputedEvaluatorPtr evaluator;
+        SCComputedEvaluatorPtr evaluator;
         const ErrorCode findRc = ruleRegistry->Find(column.ruleId.c_str(), evaluator);
         if (Failed(findRc))
         {
@@ -612,14 +612,14 @@ ErrorCode EvaluateComputedColumn(
     }
 }
 
-bool DoesDependencySetIntersect(const ComputedDependencySet& dependencies, const ChangeSet& changeSet) noexcept
+bool DoesDependencySetIntersect(const SCComputedDependencySet& dependencies, const SCChangeSet& SCChangeSet) noexcept
 {
-    for (const auto& change : changeSet.changes)
+    for (const auto& change : SCChangeSet.changes)
     {
         const auto factIt = std::find_if(
             dependencies.factFields.begin(),
             dependencies.factFields.end(),
-            [&](const FieldDependency& dependency)
+            [&](const SCFieldDependency& dependency)
             {
                 return DependencyMatchesChange(dependency, change);
             });
@@ -636,7 +636,7 @@ bool DoesDependencySetIntersect(const ComputedDependencySet& dependencies, const
         const auto relationIt = std::find_if(
             dependencies.relationFields.begin(),
             dependencies.relationFields.end(),
-            [&](const FieldDependency& dependency)
+            [&](const SCFieldDependency& dependency)
             {
                 return DependencyMatchesChange(dependency, change);
             });

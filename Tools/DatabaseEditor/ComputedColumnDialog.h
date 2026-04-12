@@ -6,7 +6,7 @@
 #include <QLineEdit>
 #include <QPlainTextEdit>
 
-#include "StableCore/Storage/Types.h"
+#include "StableCore/Storage/SCTypes.h"
 
 namespace stablecore::storage::editor
 {
@@ -19,20 +19,20 @@ public:
     explicit ComputedColumnDialog(const QString& currentTableName, QWidget* parent = nullptr);
     ComputedColumnDialog(
         const QString& currentTableName,
-        const stablecore::storage::ComputedColumnDef& initialValue,
+        const stablecore::storage::SCComputedColumnDef& initialValue,
         QWidget* parent = nullptr);
 
-    bool BuildDefinition(stablecore::storage::ComputedColumnDef* outColumn, QString* outError) const;
+    bool BuildDefinition(stablecore::storage::SCComputedColumnDef* outColumn, QString* outError) const;
 
 private slots:
     void UpdateModeVisibility();
 
 private:
     void BuildForm();
-    void ApplyInitialValue(const stablecore::storage::ComputedColumnDef& initialValue);
+    void ApplyInitialValue(const stablecore::storage::SCComputedColumnDef& initialValue);
     stablecore::storage::ValueKind CurrentValueKind() const;
     stablecore::storage::ComputedFieldKind CurrentComputedKind() const;
-    stablecore::storage::AggregateKind CurrentAggregateKind() const;
+    stablecore::storage::SCAggregateKind CurrentAggregateKind() const;
 
     QString currentTableName_;
     QLineEdit* nameEdit_{nullptr};

@@ -47,17 +47,17 @@ Most precise judgment:
 
 Covered by:
 
-- `Include/StableCore/Storage/Types.h`
+- `Include/StableCore/Storage/SCTypes.h`
 - `Include/StableCore/Storage/Interfaces.h`
-- `Include/StableCore/Storage/Storage.h`
+- `Include/StableCore/Storage/SCStorage.h`
 
-### Value system
+### SCValue system
 
 - `Implemented`
 
 Covered by:
 
-- `Value`
+- `SCValue`
 - typed accessors
 - `Null` semantics
 - `RecordId` / `Enum` access
@@ -214,7 +214,7 @@ Covered by:
 
 Files:
 
-- `Include/StableCore/Storage/Types.h`
+- `Include/StableCore/Storage/SCTypes.h`
 
 #### Minimal expression evaluator
 
@@ -443,7 +443,7 @@ Reason:
 
 ### Low-priority gaps
 
-- repository status documentation should continue distinguishing “implemented” from “fully production-validated”
+- repository status documentation should continue distinguishing “implemented�?from “fully production-validated�?
 
 ## Final Judgment
 

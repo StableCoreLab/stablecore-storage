@@ -1,4 +1,4 @@
-#include "StableCore/Storage/Migration.h"
+#include "StableCore/Storage/SCMigration.h"
 
 #include <algorithm>
 
@@ -8,8 +8,8 @@ namespace stablecore::storage
 ErrorCode BuildMigrationPlan(
     std::int32_t currentVersion,
     std::int32_t targetVersion,
-    const std::vector<MigrationStep>& availableSteps,
-    MigrationPlan* outPlan)
+    const std::vector<SCMigrationStep>& availableSteps,
+    SCMigrationPlan* outPlan)
 {
     if (outPlan == nullptr)
     {
@@ -20,7 +20,7 @@ ErrorCode BuildMigrationPlan(
         return SC_E_INVALIDARG;
     }
 
-    MigrationPlan plan;
+    SCMigrationPlan plan;
     plan.currentVersion = currentVersion;
     plan.targetVersion = targetVersion;
 
@@ -30,7 +30,7 @@ ErrorCode BuildMigrationPlan(
         const auto stepIt = std::find_if(
             availableSteps.begin(),
             availableSteps.end(),
-            [&](const MigrationStep& step)
+            [&](const SCMigrationStep& step)
             {
                 return step.fromVersion == cursor;
             });

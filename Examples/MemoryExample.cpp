@@ -1,46 +1,46 @@
 #include <iostream>
 
-#include "StableCore/Storage/Storage.h"
+#include "StableCore/Storage/SCStorage.h"
 
 namespace sc = stablecore::storage;
 
 int main()
 {
-    sc::DbPtr db;
+    sc::SCDbPtr db;
     if (sc::Failed(sc::CreateInMemoryDatabase(db)))
     {
         return 1;
     }
 
-    sc::TablePtr beamTable;
+    sc::SCTablePtr beamTable;
     if (sc::Failed(db->CreateTable(L"Beam", beamTable)))
     {
         return 1;
     }
 
-    sc::SchemaPtr schema;
+    sc::SCSchemaPtr schema;
     if (sc::Failed(beamTable->GetSchema(schema)))
     {
         return 1;
     }
 
-    sc::ColumnDef width;
+    sc::SCColumnDef width;
     width.name = L"Width";
     width.displayName = L"Width";
     width.valueKind = sc::ValueKind::Int64;
-    width.defaultValue = sc::Value::FromInt64(0);
+    width.defaultValue = sc::SCValue::FromInt64(0);
     if (sc::Failed(schema->AddColumn(width)))
     {
         return 1;
     }
 
-    sc::EditPtr edit;
+    sc::SCEditPtr edit;
     if (sc::Failed(db->BeginEdit(L"Create Beam", edit)))
     {
         return 1;
     }
 
-    sc::RecordPtr beam;
+    sc::SCRecordPtr beam;
     if (sc::Failed(beamTable->CreateRecord(beam)))
     {
         return 1;

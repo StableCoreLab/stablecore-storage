@@ -1,11 +1,11 @@
-#include "StableCore/Storage/Factory.h"
+#include "StableCore/Storage/SCFactory.h"
 
 #include <algorithm>
 #include <map>
 #include <memory>
 #include <unordered_map>
 
-#include "StableCore/Storage/RefCounted.h"
+#include "StableCore/Storage/SCRefCounted.h"
 
 namespace stablecore::storage
 {
@@ -25,10 +25,10 @@ struct MemoryRecordData
     RecordId id{0};
     RecordState state{RecordState::Alive};
     VersionId lastModifiedVersion{0};
-    std::unordered_map<std::wstring, Value> values;
+    std::unordered_map<std::wstring, SCValue> values;
 };
 
-ErrorCode ValidateValueKind(ValueKind expected, const Value& value, bool nullable)
+ErrorCode ValidateValueKind(ValueKind expected, const SCValue& value, bool nullable)
 {
     if (value.IsNull())
     {
@@ -38,7 +38,7 @@ ErrorCode ValidateValueKind(ValueKind expected, const Value& value, bool nullabl
     return value.GetKind() == expected ? SC_OK : SC_E_TYPE_MISMATCH;
 }
 
-ErrorCode ValidateColumnDef(const ColumnDef& def)
+ErrorCode ValidateColumnDef(const SCColumnDef& def)
 {
     if (def.name.empty())
     {
@@ -80,7 +80,7 @@ ErrorCode ValidateColumnDef(const ColumnDef& def)
     return SC_OK;
 }
 
-class MemorySchema final : public ISchema, public RefCountedObject
+class MemorySchema final : public ISCSchema, public SCRefCountedObject
 {
 public:
     ErrorCode GetColumnCount(std::int32_t* outCount) override
@@ -94,7 +94,7 @@ public:
         return SC_OK;
     }
 
-    ErrorCode GetColumn(std::int32_t index, ColumnDef* outDef) override
+    ErrorCode GetColumn(std::int32_t index, SCColumnDef* outDef) override
     {
         if (outDef == nullptr)
         {
@@ -109,7 +109,7 @@ public:
         return SC_OK;
     }
 
-    ErrorCode FindColumn(const wchar_t* name, ColumnDef* outDef) override
+    ErrorCode FindColumn(const wchar_t* name, SCColumnDef* outDef) override
     {
         if (name == nullptr)
         {
@@ -130,14 +130,14 @@ public:
         return SC_OK;
     }
 
-    ErrorCode AddColumn(const ColumnDef& def) override
+    ErrorCode AddColumn(const SCColumnDef& def) override
     {
         const ErrorCode validate = ValidateColumnDef(def);
         if (Failed(validate))
         {
             return validate;
         }
-        if (columnsByName_.contains(def.name))
+        if (columnsByName_.find(def.name) != columnsByName_.end())
         {
             return SC_E_COLUMN_EXISTS;
         }
@@ -147,18 +147,18 @@ public:
         return SC_OK;
     }
 
-    const ColumnDef* FindColumnDef(const std::wstring& name) const noexcept
+    const SCColumnDef* FindColumnDef(const std::wstring& name) const noexcept
     {
         const auto it = columnsByName_.find(name);
         return it == columnsByName_.end() ? nullptr : &it->second;
     }
 
 private:
-    std::vector<ColumnDef> columns_;
-    std::unordered_map<std::wstring, ColumnDef> columnsByName_;
+    std::vector<SCColumnDef> columns_;
+    std::unordered_map<std::wstring, SCColumnDef> columnsByName_;
 };
 
-class MemoryEditSession final : public IEditSession, public RefCountedObject
+class MemoryEditSession final : public ISCEditSession, public SCRefCountedObject
 {
 public:
     MemoryEditSession(std::wstring name, VersionId version)
@@ -193,7 +193,7 @@ private:
     EditState state_{EditState::Active};
 };
 
-class MemoryRecord final : public IRecord, public RefCountedObject
+class MemoryRecord final : public ISCRecord, public SCRefCountedObject
 {
 public:
     MemoryRecord(MemoryDatabase* db, MemoryTable* table, std::shared_ptr<MemoryRecordData> data)
@@ -207,8 +207,8 @@ public:
     bool IsDeleted() const noexcept override;
     VersionId GetLastModifiedVersion() const noexcept override;
 
-    ErrorCode GetValue(const wchar_t* name, Value* outValue) override;
-    ErrorCode SetValue(const wchar_t* name, const Value& value) override;
+    ErrorCode GetValue(const wchar_t* name, SCValue* outValue) override;
+    ErrorCode SetValue(const wchar_t* name, const SCValue& value) override;
 
     ErrorCode GetInt64(const wchar_t* name, std::int64_t* outValue) override;
     ErrorCode SetInt64(const wchar_t* name, std::int64_t value) override;
@@ -227,17 +227,17 @@ public:
     ErrorCode SetRef(const wchar_t* name, RecordId value) override;
 
 private:
-    ErrorCode ReadTypedValue(const wchar_t* name, Value* outValue);
+    ErrorCode ReadTypedValue(const wchar_t* name, SCValue* outValue);
 
     MemoryDatabase* db_{nullptr};
     MemoryTable* table_{nullptr};
     std::shared_ptr<MemoryRecordData> data_;
 };
 
-class MemoryRecordCursor final : public IRecordCursor, public RefCountedObject
+class MemoryRecordCursor final : public ISCRecordCursor, public SCRefCountedObject
 {
 public:
-    explicit MemoryRecordCursor(std::vector<RecordPtr> records)
+    explicit MemoryRecordCursor(std::vector<SCRecordPtr> records)
         : records_(std::move(records))
     {
     }
@@ -261,7 +261,7 @@ public:
         return SC_OK;
     }
 
-    ErrorCode GetCurrent(RecordPtr& outRecord) override
+    ErrorCode GetCurrent(SCRecordPtr& outRecord) override
     {
         if (!current_)
         {
@@ -273,33 +273,33 @@ public:
     }
 
 private:
-    std::vector<RecordPtr> records_;
+    std::vector<SCRecordPtr> records_;
     std::size_t index_{0};
-    RecordPtr current_;
+    SCRecordPtr current_;
 };
 
-class MemoryTable final : public ITable, public RefCountedObject
+class MemoryTable final : public ISCTable, public SCRefCountedObject
 {
 public:
     MemoryTable(MemoryDatabase* db, std::wstring name)
         : db_(db)
         , name_(std::move(name))
-        , schema_(MakeRef<MemorySchema>())
+        , schema_(SCMakeRef<MemorySchema>())
     {
     }
 
-    ErrorCode GetRecord(RecordId id, RecordPtr& outRecord) override;
-    ErrorCode CreateRecord(RecordPtr& outRecord) override;
+    ErrorCode GetRecord(RecordId id, SCRecordPtr& outRecord) override;
+    ErrorCode CreateRecord(SCRecordPtr& outRecord) override;
     ErrorCode DeleteRecord(RecordId id) override;
 
-    ErrorCode GetSchema(SchemaPtr& outSchema) override
+    ErrorCode GetSchema(SCSchemaPtr& outSchema) override
     {
         outSchema = schema_;
         return SC_OK;
     }
 
-    ErrorCode EnumerateRecords(RecordCursorPtr& outCursor) override;
-    ErrorCode FindRecords(const QueryCondition& condition, RecordCursorPtr& outCursor) override;
+    ErrorCode EnumerateRecords(SCRecordCursorPtr& outCursor) override;
+    ErrorCode FindRecords(const SCQueryCondition& condition, SCRecordCursorPtr& outCursor) override;
 
     const std::wstring& Name() const noexcept
     {
@@ -323,34 +323,34 @@ public:
     }
 
 private:
-    RecordPtr MakeRecord(const std::shared_ptr<MemoryRecordData>& data)
+    SCRecordPtr MakeRecord(const std::shared_ptr<MemoryRecordData>& data)
     {
-        return MakeRef<MemoryRecord>(db_, this, data);
+        return SCMakeRef<MemoryRecord>(db_, this, data);
     }
 
     MemoryDatabase* db_{nullptr};
     std::wstring name_;
-    RefPtr<MemorySchema> schema_;
+    SCRefPtr<MemorySchema> schema_;
     std::unordered_map<RecordId, std::shared_ptr<MemoryRecordData>> records_;
 };
 
-class MemoryDatabase final : public IDatabase, public RefCountedObject
+class MemoryDatabase final : public ISCDatabase, public SCRefCountedObject
 {
 public:
-    ErrorCode BeginEdit(const wchar_t* name, EditPtr& outEdit) override;
-    ErrorCode Commit(IEditSession* edit) override;
-    ErrorCode Rollback(IEditSession* edit) override;
+    ErrorCode BeginEdit(const wchar_t* name, SCEditPtr& outEdit) override;
+    ErrorCode Commit(ISCEditSession* edit) override;
+    ErrorCode Rollback(ISCEditSession* edit) override;
 
     ErrorCode Undo() override;
     ErrorCode Redo() override;
 
     ErrorCode GetTableCount(std::int32_t* outCount) override;
     ErrorCode GetTableName(std::int32_t index, std::wstring* outName) override;
-    ErrorCode GetTable(const wchar_t* name, TablePtr& outTable) override;
-    ErrorCode CreateTable(const wchar_t* name, TablePtr& outTable) override;
+    ErrorCode GetTable(const wchar_t* name, SCTablePtr& outTable) override;
+    ErrorCode CreateTable(const wchar_t* name, SCTablePtr& outTable) override;
 
-    ErrorCode AddObserver(IDatabaseObserver* observer) override;
-    ErrorCode RemoveObserver(IDatabaseObserver* observer) override;
+    ErrorCode AddObserver(ISCDatabaseObserver* observer) override;
+    ErrorCode RemoveObserver(ISCDatabaseObserver* observer) override;
 
     VersionId GetCurrentVersion() const noexcept override
     {
@@ -367,7 +367,7 @@ public:
         return nextRecordId_++;
     }
 
-    ErrorCode WriteValue(MemoryTable* table, const std::shared_ptr<MemoryRecordData>& data, const std::wstring& fieldName, const Value& value);
+    ErrorCode WriteValue(MemoryTable* table, const std::shared_ptr<MemoryRecordData>& data, const std::wstring& fieldName, const SCValue& value);
     ErrorCode DeleteRecord(MemoryTable* table, const std::shared_ptr<MemoryRecordData>& data);
     void RecordCreate(MemoryTable* table, const std::shared_ptr<MemoryRecordData>& data);
 
@@ -378,8 +378,8 @@ private:
         bool deletedInActiveEdit{false};
     };
 
-    ErrorCode ValidateActiveEdit(IEditSession* edit) const;
-    ErrorCode ValidateWrite(MemoryTable* table, const std::shared_ptr<MemoryRecordData>& data, const std::wstring& fieldName, const Value& value);
+    ErrorCode ValidateActiveEdit(ISCEditSession* edit) const;
+    ErrorCode ValidateWrite(MemoryTable* table, const std::shared_ptr<MemoryRecordData>& data, const std::wstring& fieldName, const SCValue& value);
     bool IsRecordReferenced(const std::wstring& tableName, RecordId recordId) const;
     JournalLookup LookupRecordJournalState(const std::wstring& tableName, RecordId recordId) const;
     void RemoveFieldJournalEntries(const std::wstring& tableName, RecordId recordId);
@@ -388,8 +388,8 @@ private:
         const std::wstring& tableName,
         RecordId recordId,
         const std::wstring& fieldName,
-        const Value& oldValue,
-        const Value& newValue,
+        const SCValue& oldValue,
+        const SCValue& newValue,
         bool oldDeleted,
         bool newDeleted,
         JournalOp forcedOp);
@@ -397,20 +397,20 @@ private:
     void ApplyJournalForward(const JournalTransaction& tx);
     void ApplyEntry(const JournalEntry& entry, bool reverse);
     void UpdateTouchedVersions(const JournalTransaction& tx, VersionId version);
-    ChangeSet BuildChangeSet(const JournalTransaction& tx, ChangeSource source, VersionId version) const;
-    void NotifyObservers(const ChangeSet& changeSet);
+    SCChangeSet BuildChangeSet(const JournalTransaction& tx, ChangeSource source, VersionId version) const;
+    void NotifyObservers(const SCChangeSet& SCChangeSet);
 
     VersionId version_{0};
     RecordId nextRecordId_{1};
-    std::map<std::wstring, TablePtr> tables_;
-    std::vector<IDatabaseObserver*> observers_;
-    RefPtr<MemoryEditSession> activeEdit_;
+    std::map<std::wstring, SCTablePtr> tables_;
+    std::vector<ISCDatabaseObserver*> observers_;
+    SCRefPtr<MemoryEditSession> activeEdit_;
     JournalTransaction activeJournal_;
     std::vector<JournalTransaction> undoStack_;
     std::vector<JournalTransaction> redoStack_;
 };
 
-ErrorCode MemoryDatabase::BeginEdit(const wchar_t* name, EditPtr& outEdit)
+ErrorCode MemoryDatabase::BeginEdit(const wchar_t* name, SCEditPtr& outEdit)
 {
     if (activeEdit_)
     {
@@ -419,12 +419,12 @@ ErrorCode MemoryDatabase::BeginEdit(const wchar_t* name, EditPtr& outEdit)
 
     activeJournal_ = JournalTransaction{};
     activeJournal_.actionName = (name != nullptr && *name != L'\0') ? name : L"Edit";
-    activeEdit_ = MakeRef<MemoryEditSession>(activeJournal_.actionName, version_);
+    activeEdit_ = SCMakeRef<MemoryEditSession>(activeJournal_.actionName, version_);
     outEdit = activeEdit_;
     return SC_OK;
 }
 
-ErrorCode MemoryDatabase::Commit(IEditSession* edit)
+ErrorCode MemoryDatabase::Commit(ISCEditSession* edit)
 {
     const ErrorCode validate = ValidateActiveEdit(edit);
     if (Failed(validate))
@@ -446,14 +446,14 @@ ErrorCode MemoryDatabase::Commit(IEditSession* edit)
     undoStack_.push_back(activeJournal_);
     redoStack_.clear();
 
-    ChangeSet changeSet = BuildChangeSet(activeJournal_, ChangeSource::UserEdit, version_);
+    SCChangeSet SCChangeSet = BuildChangeSet(activeJournal_, ChangeSource::UserEdit, version_);
     activeEdit_.Reset();
     activeJournal_ = JournalTransaction{};
-    NotifyObservers(changeSet);
+    NotifyObservers(SCChangeSet);
     return SC_OK;
 }
 
-ErrorCode MemoryDatabase::Rollback(IEditSession* edit)
+ErrorCode MemoryDatabase::Rollback(ISCEditSession* edit)
 {
     const ErrorCode validate = ValidateActiveEdit(edit);
     if (Failed(validate))
@@ -514,7 +514,7 @@ ErrorCode MemoryDatabase::Redo()
     return SC_OK;
 }
 
-ErrorCode MemoryDatabase::GetTable(const wchar_t* name, TablePtr& outTable)
+ErrorCode MemoryDatabase::GetTable(const wchar_t* name, SCTablePtr& outTable)
 {
     if (name == nullptr)
     {
@@ -559,7 +559,7 @@ ErrorCode MemoryDatabase::GetTableName(std::int32_t index, std::wstring* outName
     return SC_OK;
 }
 
-ErrorCode MemoryDatabase::CreateTable(const wchar_t* name, TablePtr& outTable)
+ErrorCode MemoryDatabase::CreateTable(const wchar_t* name, SCTablePtr& outTable)
 {
     if (name == nullptr || *name == L'\0')
     {
@@ -573,13 +573,13 @@ ErrorCode MemoryDatabase::CreateTable(const wchar_t* name, TablePtr& outTable)
         return SC_OK;
     }
 
-    TablePtr table = MakeRef<MemoryTable>(this, std::wstring{name});
+    SCTablePtr table = SCMakeRef<MemoryTable>(this, std::wstring{name});
     tables_.emplace(name, table);
     outTable = std::move(table);
     return SC_OK;
 }
 
-ErrorCode MemoryDatabase::AddObserver(IDatabaseObserver* observer)
+ErrorCode MemoryDatabase::AddObserver(ISCDatabaseObserver* observer)
 {
     if (observer == nullptr)
     {
@@ -590,13 +590,13 @@ ErrorCode MemoryDatabase::AddObserver(IDatabaseObserver* observer)
     return SC_OK;
 }
 
-ErrorCode MemoryDatabase::RemoveObserver(IDatabaseObserver* observer)
+ErrorCode MemoryDatabase::RemoveObserver(ISCDatabaseObserver* observer)
 {
     observers_.erase(std::remove(observers_.begin(), observers_.end(), observer), observers_.end());
     return SC_OK;
 }
 
-ErrorCode MemoryDatabase::ValidateActiveEdit(IEditSession* edit) const
+ErrorCode MemoryDatabase::ValidateActiveEdit(ISCEditSession* edit) const
 {
     if (!activeEdit_)
     {
@@ -621,7 +621,7 @@ ErrorCode MemoryDatabase::ValidateWrite(
     MemoryTable* table,
     const std::shared_ptr<MemoryRecordData>& data,
     const std::wstring& fieldName,
-    const Value& value)
+    const SCValue& value)
 {
     if (!activeEdit_)
     {
@@ -632,7 +632,7 @@ ErrorCode MemoryDatabase::ValidateWrite(
         return SC_E_RECORD_DELETED;
     }
 
-    const ColumnDef* column = table->Schema()->FindColumnDef(fieldName);
+    const SCColumnDef* column = table->Schema()->FindColumnDef(fieldName);
     if (column == nullptr)
     {
         return SC_E_COLUMN_NOT_FOUND;
@@ -730,7 +730,7 @@ ErrorCode MemoryDatabase::WriteValue(
     MemoryTable* table,
     const std::shared_ptr<MemoryRecordData>& data,
     const std::wstring& fieldName,
-    const Value& value)
+    const SCValue& value)
 {
     const ErrorCode validate = ValidateWrite(table, data, fieldName, value);
     if (Failed(validate))
@@ -744,8 +744,8 @@ ErrorCode MemoryDatabase::WriteValue(
         return SC_E_RECORD_DELETED;
     }
 
-    const ColumnDef* column = table->Schema()->FindColumnDef(fieldName);
-    Value oldValue = column->defaultValue;
+    const SCColumnDef* column = table->Schema()->FindColumnDef(fieldName);
+    SCValue oldValue = column->defaultValue;
     const auto existing = data->values.find(fieldName);
     if (existing != data->values.end())
     {
@@ -796,7 +796,7 @@ ErrorCode MemoryDatabase::DeleteRecord(MemoryTable* table, const std::shared_ptr
     }
 
     RemoveFieldJournalEntries(table->Name(), data->id);
-    RecordJournal(table->Name(), data->id, L"", Value::Null(), Value::Null(), false, true, JournalOp::DeleteRecord);
+    RecordJournal(table->Name(), data->id, L"", SCValue::Null(), SCValue::Null(), false, true, JournalOp::DeleteRecord);
     return SC_OK;
 }
 
@@ -810,7 +810,7 @@ bool MemoryDatabase::IsRecordReferenced(const std::wstring& tableName, RecordId 
             continue;
         }
 
-        SchemaPtr schema;
+        SCSchemaPtr schema;
         if (Failed(table->GetSchema(schema)) || !schema)
         {
             continue;
@@ -824,7 +824,7 @@ bool MemoryDatabase::IsRecordReferenced(const std::wstring& tableName, RecordId 
 
         for (std::int32_t columnIndex = 0; columnIndex < columnCount; ++columnIndex)
         {
-            ColumnDef column;
+            SCColumnDef column;
             if (Failed(schema->GetColumn(columnIndex, &column)))
             {
                 continue;
@@ -860,15 +860,15 @@ bool MemoryDatabase::IsRecordReferenced(const std::wstring& tableName, RecordId 
 
 void MemoryDatabase::RecordCreate(MemoryTable* table, const std::shared_ptr<MemoryRecordData>& data)
 {
-    RecordJournal(table->Name(), data->id, L"", Value::Null(), Value::Null(), true, false, JournalOp::CreateRecord);
+    RecordJournal(table->Name(), data->id, L"", SCValue::Null(), SCValue::Null(), true, false, JournalOp::CreateRecord);
 }
 
 void MemoryDatabase::RecordJournal(
     const std::wstring& tableName,
     RecordId recordId,
     const std::wstring& fieldName,
-    const Value& oldValue,
-    const Value& newValue,
+    const SCValue& oldValue,
+    const SCValue& newValue,
     bool oldDeleted,
     bool newDeleted,
     JournalOp forcedOp)
@@ -983,16 +983,16 @@ void MemoryDatabase::UpdateTouchedVersions(const JournalTransaction& tx, Version
     }
 }
 
-ChangeSet MemoryDatabase::BuildChangeSet(const JournalTransaction& tx, ChangeSource source, VersionId version) const
+SCChangeSet MemoryDatabase::BuildChangeSet(const JournalTransaction& tx, ChangeSource source, VersionId version) const
 {
-    ChangeSet changeSet;
-    changeSet.actionName = tx.actionName;
-    changeSet.source = source;
-    changeSet.version = version;
+    SCChangeSet SCChangeSet;
+    SCChangeSet.actionName = tx.actionName;
+    SCChangeSet.source = source;
+    SCChangeSet.version = version;
 
     for (const auto& entry : tx.entries)
     {
-        DataChange change;
+        SCDataChange change;
         change.tableName = entry.tableName;
         change.recordId = entry.recordId;
         change.fieldName = entry.fieldName;
@@ -1018,25 +1018,25 @@ ChangeSet MemoryDatabase::BuildChangeSet(const JournalTransaction& tx, ChangeSou
             break;
         }
 
-        changeSet.changes.push_back(std::move(change));
+        SCChangeSet.changes.push_back(std::move(change));
     }
 
-    return changeSet;
+    return SCChangeSet;
 }
 
-void MemoryDatabase::NotifyObservers(const ChangeSet& changeSet)
+void MemoryDatabase::NotifyObservers(const SCChangeSet& SCChangeSet)
 {
-    std::vector<IDatabaseObserver*> observers = observers_;
+    std::vector<ISCDatabaseObserver*> observers = observers_;
     for (auto* observer : observers)
     {
         if (observer != nullptr)
         {
-            observer->OnDatabaseChanged(changeSet);
+            observer->OnDatabaseChanged(SCChangeSet);
         }
     }
 }
 
-ErrorCode MemoryRecord::ReadTypedValue(const wchar_t* name, Value* outValue)
+ErrorCode MemoryRecord::ReadTypedValue(const wchar_t* name, SCValue* outValue)
 {
     const ErrorCode rc = GetValue(name, outValue);
     return rc;
@@ -1057,7 +1057,7 @@ VersionId MemoryRecord::GetLastModifiedVersion() const noexcept
     return data_->lastModifiedVersion;
 }
 
-ErrorCode MemoryRecord::GetValue(const wchar_t* name, Value* outValue)
+ErrorCode MemoryRecord::GetValue(const wchar_t* name, SCValue* outValue)
 {
     if (name == nullptr)
     {
@@ -1072,7 +1072,7 @@ ErrorCode MemoryRecord::GetValue(const wchar_t* name, Value* outValue)
         return SC_E_RECORD_DELETED;
     }
 
-    const ColumnDef* column = table_->Schema()->FindColumnDef(name);
+    const SCColumnDef* column = table_->Schema()->FindColumnDef(name);
     if (column == nullptr)
     {
         return SC_E_COLUMN_NOT_FOUND;
@@ -1083,7 +1083,7 @@ ErrorCode MemoryRecord::GetValue(const wchar_t* name, Value* outValue)
     return outValue->IsNull() ? SC_E_VALUE_IS_NULL : SC_OK;
 }
 
-ErrorCode MemoryRecord::SetValue(const wchar_t* name, const Value& value)
+ErrorCode MemoryRecord::SetValue(const wchar_t* name, const SCValue& value)
 {
     if (name == nullptr)
     {
@@ -1094,7 +1094,7 @@ ErrorCode MemoryRecord::SetValue(const wchar_t* name, const Value& value)
 
 ErrorCode MemoryRecord::GetInt64(const wchar_t* name, std::int64_t* outValue)
 {
-    Value value;
+    SCValue value;
     const ErrorCode rc = ReadTypedValue(name, &value);
     if (Failed(rc))
     {
@@ -1105,12 +1105,12 @@ ErrorCode MemoryRecord::GetInt64(const wchar_t* name, std::int64_t* outValue)
 
 ErrorCode MemoryRecord::SetInt64(const wchar_t* name, std::int64_t value)
 {
-    return SetValue(name, Value::FromInt64(value));
+    return SetValue(name, SCValue::FromInt64(value));
 }
 
 ErrorCode MemoryRecord::GetDouble(const wchar_t* name, double* outValue)
 {
-    Value value;
+    SCValue value;
     const ErrorCode rc = ReadTypedValue(name, &value);
     if (Failed(rc))
     {
@@ -1121,12 +1121,12 @@ ErrorCode MemoryRecord::GetDouble(const wchar_t* name, double* outValue)
 
 ErrorCode MemoryRecord::SetDouble(const wchar_t* name, double value)
 {
-    return SetValue(name, Value::FromDouble(value));
+    return SetValue(name, SCValue::FromDouble(value));
 }
 
 ErrorCode MemoryRecord::GetBool(const wchar_t* name, bool* outValue)
 {
-    Value value;
+    SCValue value;
     const ErrorCode rc = ReadTypedValue(name, &value);
     if (Failed(rc))
     {
@@ -1137,12 +1137,12 @@ ErrorCode MemoryRecord::GetBool(const wchar_t* name, bool* outValue)
 
 ErrorCode MemoryRecord::SetBool(const wchar_t* name, bool value)
 {
-    return SetValue(name, Value::FromBool(value));
+    return SetValue(name, SCValue::FromBool(value));
 }
 
 ErrorCode MemoryRecord::GetString(const wchar_t* name, const wchar_t** outValue)
 {
-    Value value;
+    SCValue value;
     const ErrorCode rc = ReadTypedValue(name, &value);
     if (Failed(rc))
     {
@@ -1153,7 +1153,7 @@ ErrorCode MemoryRecord::GetString(const wchar_t* name, const wchar_t** outValue)
 
 ErrorCode MemoryRecord::GetStringCopy(const wchar_t* name, std::wstring* outValue)
 {
-    Value value;
+    SCValue value;
     const ErrorCode rc = ReadTypedValue(name, &value);
     if (Failed(rc))
     {
@@ -1164,12 +1164,12 @@ ErrorCode MemoryRecord::GetStringCopy(const wchar_t* name, std::wstring* outValu
 
 ErrorCode MemoryRecord::SetString(const wchar_t* name, const wchar_t* value)
 {
-    return SetValue(name, value == nullptr ? Value::Null() : Value::FromString(value));
+    return SetValue(name, value == nullptr ? SCValue::Null() : SCValue::FromString(value));
 }
 
 ErrorCode MemoryRecord::GetRef(const wchar_t* name, RecordId* outValue)
 {
-    Value value;
+    SCValue value;
     const ErrorCode rc = ReadTypedValue(name, &value);
     if (Failed(rc))
     {
@@ -1180,10 +1180,10 @@ ErrorCode MemoryRecord::GetRef(const wchar_t* name, RecordId* outValue)
 
 ErrorCode MemoryRecord::SetRef(const wchar_t* name, RecordId value)
 {
-    return SetValue(name, Value::FromRecordId(value));
+    return SetValue(name, SCValue::FromRecordId(value));
 }
 
-ErrorCode MemoryTable::GetRecord(RecordId id, RecordPtr& outRecord)
+ErrorCode MemoryTable::GetRecord(RecordId id, SCRecordPtr& outRecord)
 {
     auto data = FindRecordData(id);
     if (data == nullptr)
@@ -1195,7 +1195,7 @@ ErrorCode MemoryTable::GetRecord(RecordId id, RecordPtr& outRecord)
     return SC_OK;
 }
 
-ErrorCode MemoryTable::CreateRecord(RecordPtr& outRecord)
+ErrorCode MemoryTable::CreateRecord(SCRecordPtr& outRecord)
 {
     if (!db_->HasActiveEdit())
     {
@@ -1220,9 +1220,9 @@ ErrorCode MemoryTable::DeleteRecord(RecordId id)
     return db_->DeleteRecord(this, data);
 }
 
-ErrorCode MemoryTable::EnumerateRecords(RecordCursorPtr& outCursor)
+ErrorCode MemoryTable::EnumerateRecords(SCRecordCursorPtr& outCursor)
 {
-    std::vector<RecordPtr> records;
+    std::vector<SCRecordPtr> records;
     records.reserve(records_.size());
     for (const auto& [_, data] : records_)
     {
@@ -1232,19 +1232,19 @@ ErrorCode MemoryTable::EnumerateRecords(RecordCursorPtr& outCursor)
         }
     }
 
-    outCursor = MakeRef<MemoryRecordCursor>(std::move(records));
+    outCursor = SCMakeRef<MemoryRecordCursor>(std::move(records));
     return SC_OK;
 }
 
-ErrorCode MemoryTable::FindRecords(const QueryCondition& condition, RecordCursorPtr& outCursor)
+ErrorCode MemoryTable::FindRecords(const SCQueryCondition& condition, SCRecordCursorPtr& outCursor)
 {
-    const ColumnDef* column = Schema()->FindColumnDef(condition.fieldName);
+    const SCColumnDef* column = Schema()->FindColumnDef(condition.fieldName);
     if (column == nullptr)
     {
         return SC_E_COLUMN_NOT_FOUND;
     }
 
-    std::vector<RecordPtr> matched;
+    std::vector<SCRecordPtr> matched;
     for (const auto& [_, data] : records_)
     {
         if (data->state == RecordState::Deleted)
@@ -1252,7 +1252,7 @@ ErrorCode MemoryTable::FindRecords(const QueryCondition& condition, RecordCursor
             continue;
         }
 
-        Value actual = column->defaultValue;
+        SCValue actual = column->defaultValue;
         const auto it = data->values.find(condition.fieldName);
         if (it != data->values.end())
         {
@@ -1265,15 +1265,15 @@ ErrorCode MemoryTable::FindRecords(const QueryCondition& condition, RecordCursor
         }
     }
 
-    outCursor = MakeRef<MemoryRecordCursor>(std::move(matched));
+    outCursor = SCMakeRef<MemoryRecordCursor>(std::move(matched));
     return SC_OK;
 }
 
 }  // namespace
 
-ErrorCode CreateInMemoryDatabase(DbPtr& outDatabase)
+ErrorCode CreateInMemoryDatabase(SCDbPtr& outDatabase)
 {
-    outDatabase = MakeRef<MemoryDatabase>();
+    outDatabase = SCMakeRef<MemoryDatabase>();
     return SC_OK;
 }
 

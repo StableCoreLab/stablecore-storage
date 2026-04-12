@@ -1,21 +1,21 @@
 #include <iostream>
 #include <vector>
 
-#include "StableCore/Storage/Storage.h"
+#include "StableCore/Storage/SCStorage.h"
 
 namespace sc = stablecore::storage;
 
 namespace
 {
 
-class QuantityObserver final : public sc::IDatabaseObserver
+class QuantityObserver final : public sc::ISCDatabaseObserver
 {
 public:
-    void OnDatabaseChanged(const sc::ChangeSet& changeSet) override
+    void OnDatabaseChanged(const sc::SCChangeSet& SCChangeSet) override
     {
         std::wstring text;
-        sc::DescribeChangeSet(changeSet, &text);
-        std::wcout << L"[ChangeSet]\n" << text << L"\n";
+        sc::DescribeChangeSet(SCChangeSet, &text);
+        std::wcout << L"[SCChangeSet]\n" << text << L"\n";
     }
 };
 
@@ -23,7 +23,7 @@ public:
 
 int main()
 {
-    sc::DbPtr db;
+    sc::SCDbPtr db;
     if (sc::Failed(sc::CreateInMemoryDatabase(db)))
     {
         return 1;
@@ -32,22 +32,22 @@ int main()
     QuantityObserver observer;
     db->AddObserver(&observer);
 
-    sc::TablePtr floorTable;
-    sc::TablePtr beamTable;
+    sc::SCTablePtr floorTable;
+    sc::SCTablePtr beamTable;
     db->CreateTable(L"Floor", floorTable);
     db->CreateTable(L"Beam", beamTable);
 
-    sc::SchemaPtr floorSchema;
+    sc::SCSchemaPtr floorSchema;
     floorTable->GetSchema(floorSchema);
-    floorSchema->AddColumn(sc::ColumnDef{L"Name", L"Name", sc::ValueKind::String, sc::ColumnKind::Fact, false, true, false, false, false, L"", L"", sc::Value::FromString(L"")});
+    floorSchema->AddColumn(sc::SCColumnDef{L"Name", L"Name", sc::ValueKind::String, sc::ColumnKind::Fact, false, true, false, false, false, L"", L"", sc::SCValue::FromString(L"")});
 
-    sc::SchemaPtr beamSchema;
+    sc::SCSchemaPtr beamSchema;
     beamTable->GetSchema(beamSchema);
-    beamSchema->AddColumn(sc::ColumnDef{L"Length", L"Length", sc::ValueKind::Double, sc::ColumnKind::Fact, false, true, false, false, true, L"mm", L"", sc::Value::FromDouble(0.0)});
-    beamSchema->AddColumn(sc::ColumnDef{L"Width", L"Width", sc::ValueKind::Double, sc::ColumnKind::Fact, false, true, false, false, true, L"mm", L"", sc::Value::FromDouble(0.0)});
-    beamSchema->AddColumn(sc::ColumnDef{L"Height", L"Height", sc::ValueKind::Double, sc::ColumnKind::Fact, false, true, false, false, true, L"mm", L"", sc::Value::FromDouble(0.0)});
+    beamSchema->AddColumn(sc::SCColumnDef{L"Length", L"Length", sc::ValueKind::Double, sc::ColumnKind::Fact, false, true, false, false, true, L"mm", L"", sc::SCValue::FromDouble(0.0)});
+    beamSchema->AddColumn(sc::SCColumnDef{L"Width", L"Width", sc::ValueKind::Double, sc::ColumnKind::Fact, false, true, false, false, true, L"mm", L"", sc::SCValue::FromDouble(0.0)});
+    beamSchema->AddColumn(sc::SCColumnDef{L"Height", L"Height", sc::ValueKind::Double, sc::ColumnKind::Fact, false, true, false, false, true, L"mm", L"", sc::SCValue::FromDouble(0.0)});
 
-    sc::ColumnDef floorRef;
+    sc::SCColumnDef floorRef;
     floorRef.name = L"FloorRef";
     floorRef.displayName = L"FloorRef";
     floorRef.valueKind = sc::ValueKind::RecordId;
@@ -55,15 +55,15 @@ int main()
     floorRef.referenceTable = L"Floor";
     beamSchema->AddColumn(floorRef);
 
-    std::vector<sc::BatchTableRequest> importRequests;
-    sc::BatchTableRequest floorImport;
+    std::vector<sc::SCBatchTableRequest> importRequests;
+    sc::SCBatchTableRequest floorImport;
     floorImport.tableName = L"Floor";
-    floorImport.creates.push_back({{{L"Name", sc::Value::FromString(L"2F")}}});
+    floorImport.creates.push_back({{{L"Name", sc::SCValue::FromString(L"2F")}}});
     importRequests.push_back(floorImport);
 
-    sc::ExecuteImport(db.Get(), importRequests, sc::ImportOptions{L"Import Floors"}, nullptr);
+    sc::ExecuteImport(db.Get(), importRequests, sc::ISCmportOptions{L"Import Floors"}, nullptr);
 
-    sc::RecordCursorPtr floorCursor;
+    sc::SCRecordCursorPtr floorCursor;
     floorTable->EnumerateRecords(floorCursor);
     bool hasFloor = false;
     floorCursor->MoveNext(&hasFloor);
@@ -72,31 +72,31 @@ int main()
         return 1;
     }
 
-    sc::RecordPtr floor;
+    sc::SCRecordPtr floor;
     floorCursor->GetCurrent(floor);
 
-    std::vector<sc::BatchTableRequest> beamImport;
-    sc::BatchTableRequest beamRequest;
+    std::vector<sc::SCBatchTableRequest> beamImport;
+    sc::SCBatchTableRequest beamRequest;
     beamRequest.tableName = L"Beam";
     beamRequest.creates.push_back({{
-        {L"Length", sc::Value::FromDouble(6000.0)},
-        {L"Width", sc::Value::FromDouble(300.0)},
-        {L"Height", sc::Value::FromDouble(500.0)},
-        {L"FloorRef", sc::Value::FromRecordId(floor->GetId())},
+        {L"Length", sc::SCValue::FromDouble(6000.0)},
+        {L"Width", sc::SCValue::FromDouble(300.0)},
+        {L"Height", sc::SCValue::FromDouble(500.0)},
+        {L"FloorRef", sc::SCValue::FromRecordId(floor->GetId())},
     }});
     beamImport.push_back(beamRequest);
 
-    sc::BatchExecutionResult importResult;
-    sc::ExecuteImport(db.Get(), beamImport, sc::ImportOptions{L"Import Beams"}, &importResult);
-    std::wcout << L"Imported beams, version=" << importResult.committedVersion << L"\n";
+    sc::SCBatchExecutionResult ISCmportResult;
+    sc::ExecuteImport(db.Get(), beamImport, sc::ISCmportOptions{L"Import Beams"}, &ISCmportResult);
+    std::wcout << L"Imported beams, version=" << ISCmportResult.committedVersion << L"\n";
 
-    sc::ComputedTableViewPtr beamView;
+    sc::SCComputedTableViewPtr beamView;
     if (sc::Failed(sc::CreateComputedTableView(db.Get(), L"Beam", nullptr, beamView)))
     {
         return 1;
     }
 
-    sc::ComputedColumnDef volumeColumn;
+    sc::SCComputedColumnDef volumeColumn;
     volumeColumn.name = L"Volume";
     volumeColumn.displayName = L"Volume";
     volumeColumn.valueKind = sc::ValueKind::Double;
@@ -109,7 +109,7 @@ int main()
     };
     beamView->AddComputedColumn(volumeColumn);
 
-    sc::RecordCursorPtr beamCursor;
+    sc::SCRecordCursorPtr beamCursor;
     beamView->EnumerateRecords(beamCursor);
     bool hasBeam = false;
     beamCursor->MoveNext(&hasBeam);
@@ -118,10 +118,10 @@ int main()
         return 1;
     }
 
-    sc::RecordPtr beam;
+    sc::SCRecordPtr beam;
     beamCursor->GetCurrent(beam);
 
-    sc::Value volume;
+    sc::SCValue volume;
     if (sc::Failed(beamView->GetCellValue(beam->GetId(), L"Volume", &volume)))
     {
         return 1;
@@ -131,7 +131,7 @@ int main()
     volume.AsDouble(&volumeValue);
     std::wcout << L"Computed beam volume = " << volumeValue << L"\n";
 
-    sc::StorageHealthReport report;
+    sc::SCStorageHealthReport report;
     sc::BuildStorageHealthReport(db.Get(), L"InMemory", &report);
     std::wcout << L"Health report diagnostics = " << report.diagnostics.size() << L"\n";
     return 0;

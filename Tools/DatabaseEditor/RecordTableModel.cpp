@@ -12,46 +12,46 @@ QString ToQString(const std::wstring& text)
     return QString::fromStdWString(text);
 }
 
-QVariant ValueToVariant(const sc::Value& value)
+QVariant ValueToVariant(const sc::SCValue& SCValue)
 {
-    switch (value.GetKind())
+    switch (SCValue.GetKind())
     {
     case sc::ValueKind::Null:
         return QVariant{};
     case sc::ValueKind::Int64:
     {
         std::int64_t v = 0;
-        value.AsInt64(&v);
+        SCValue.AsInt64(&v);
         return QVariant::fromValue<qlonglong>(v);
     }
     case sc::ValueKind::Double:
     {
         double v = 0.0;
-        value.AsDouble(&v);
+        SCValue.AsDouble(&v);
         return v;
     }
     case sc::ValueKind::Bool:
     {
         bool v = false;
-        value.AsBool(&v);
+        SCValue.AsBool(&v);
         return v;
     }
     case sc::ValueKind::String:
     {
         std::wstring v;
-        value.AsStringCopy(&v);
+        SCValue.AsStringCopy(&v);
         return ToQString(v);
     }
     case sc::ValueKind::RecordId:
     {
         sc::RecordId v = 0;
-        value.AsRecordId(&v);
+        SCValue.AsRecordId(&v);
         return QVariant::fromValue<qlonglong>(v);
     }
     case sc::ValueKind::Enum:
     {
         std::wstring v;
-        value.AsEnumCopy(&v);
+        SCValue.AsEnumCopy(&v);
         return ToQString(v);
     }
     default:
@@ -91,14 +91,14 @@ QVariant RecordTableModel::data(const QModelIndex& index, int role) const
         return QVariant{};
     }
 
-    sc::IComputedTableView* view = session_->CurrentTableView();
+    sc::ISCComputedTableView* view = session_->CurrentTableView();
     if (view == nullptr)
     {
         return QVariant{};
     }
 
-    sc::Value value;
-    const sc::ErrorCode rc = view->GetCellValue(rows_[index.row()].recordId, columns_[index.column()].name.c_str(), &value);
+    sc::SCValue SCValue;
+    const sc::ErrorCode rc = view->GetCellValue(rows_[index.row()].recordId, columns_[index.column()].name.c_str(), &SCValue);
     if (rc == sc::SC_E_VALUE_IS_NULL)
     {
         return QVariant{};
@@ -107,7 +107,7 @@ QVariant RecordTableModel::data(const QModelIndex& index, int role) const
     {
         return role == Qt::DisplayRole || role == Qt::ToolTipRole ? QStringLiteral("<error>") : QVariant{};
     }
-    return ValueToVariant(value);
+    return ValueToVariant(SCValue);
 }
 
 QVariant RecordTableModel::headerData(int section, Qt::Orientation orientation, int role) const
@@ -145,7 +145,7 @@ Qt::ItemFlags RecordTableModel::flags(const QModelIndex& index) const
     return result;
 }
 
-bool RecordTableModel::setData(const QModelIndex& index, const QVariant& value, int role)
+bool RecordTableModel::setData(const QModelIndex& index, const QVariant& SCValue, int role)
 {
     if (role != Qt::EditRole || !index.isValid())
     {
@@ -156,7 +156,7 @@ bool RecordTableModel::setData(const QModelIndex& index, const QVariant& value, 
     const bool ok = session_->SetCellValue(
         rows_[index.row()].recordId,
         ToQString(columns_[index.column()].name),
-        value,
+        SCValue,
         &error);
     if (ok)
     {
@@ -174,7 +174,7 @@ sc::RecordId RecordTableModel::RecordIdAt(int row) const
     return rows_[row].recordId;
 }
 
-sc::TableViewColumnDef RecordTableModel::ColumnAt(int column) const
+sc::SCTableViewColumnDef RecordTableModel::ColumnAt(int column) const
 {
     if (column < 0 || column >= columns_.size())
     {
@@ -194,7 +194,7 @@ void RecordTableModel::Refresh()
     columns_.clear();
     rows_.clear();
 
-    sc::IComputedTableView* view = session_->CurrentTableView();
+    sc::ISCComputedTableView* view = session_->CurrentTableView();
     if (view != nullptr)
     {
         std::int32_t columnCount = 0;
@@ -202,7 +202,7 @@ void RecordTableModel::Refresh()
         {
             for (std::int32_t index = 0; index < columnCount; ++index)
             {
-                sc::TableViewColumnDef column;
+                sc::SCTableViewColumnDef column;
                 if (view->GetColumn(index, &column) == sc::SC_OK)
                 {
                     columns_.push_back(column);
@@ -210,13 +210,13 @@ void RecordTableModel::Refresh()
             }
         }
 
-        sc::RecordCursorPtr cursor;
+        sc::SCRecordCursorPtr cursor;
         if (view->EnumerateRecords(cursor) == sc::SC_OK)
         {
             bool hasRow = false;
             while (cursor->MoveNext(&hasRow) == sc::SC_OK && hasRow)
             {
-                sc::RecordPtr record;
+                sc::SCRecordPtr record;
                 if (cursor->GetCurrent(record) == sc::SC_OK)
                 {
                     rows_.push_back(RowData{record->GetId()});

@@ -13,9 +13,9 @@ namespace stablecore::storage::editor
 namespace
 {
 
-std::vector<sc::FieldDependency> ParseDependencies(const QString& text, const QString& currentTableName)
+std::vector<sc::SCFieldDependency> ParseDependencies(const QString& text, const QString& currentTableName)
 {
-    std::vector<sc::FieldDependency> result;
+    std::vector<sc::SCFieldDependency> result;
     const QStringList parts = text.split(',', Qt::SkipEmptyParts);
     for (const QString& rawPart : parts)
     {
@@ -28,13 +28,13 @@ std::vector<sc::FieldDependency> ParseDependencies(const QString& text, const QS
         const int dot = token.indexOf('.');
         if (dot >= 0)
         {
-            result.push_back(sc::FieldDependency{
+            result.push_back(sc::SCFieldDependency{
                 token.left(dot).trimmed().toStdWString(),
                 token.mid(dot + 1).trimmed().toStdWString()});
             continue;
         }
 
-        result.push_back(sc::FieldDependency{
+        result.push_back(sc::SCFieldDependency{
             currentTableName.toStdWString(),
             token.toStdWString()});
     }
@@ -42,11 +42,11 @@ std::vector<sc::FieldDependency> ParseDependencies(const QString& text, const QS
 }
 
 QString JoinDependencies(
-    const std::vector<sc::FieldDependency>& dependencies,
+    const std::vector<sc::SCFieldDependency>& dependencies,
     const QString& currentTableName)
 {
     QStringList parts;
-    for (const sc::FieldDependency& dependency : dependencies)
+    for (const sc::SCFieldDependency& dependency : dependencies)
     {
         const QString tableName = QString::fromStdWString(dependency.tableName);
         const QString fieldName = QString::fromStdWString(dependency.fieldName);
@@ -71,7 +71,7 @@ ComputedColumnDialog::ComputedColumnDialog(const QString& currentTableName, QWid
 
 ComputedColumnDialog::ComputedColumnDialog(
     const QString& currentTableName,
-    const sc::ComputedColumnDef& initialValue,
+    const sc::SCComputedColumnDef& initialValue,
     QWidget* parent)
     : QDialog(parent)
     , currentTableName_(currentTableName)
@@ -114,10 +114,10 @@ void ComputedColumnDialog::BuildForm()
     ruleIdEdit_->setPlaceholderText(QStringLiteral("Rule registry id"));
 
     aggregateKindCombo_ = new QComboBox(this);
-    aggregateKindCombo_->addItem(QStringLiteral("Count"), static_cast<int>(sc::AggregateKind::Count));
-    aggregateKindCombo_->addItem(QStringLiteral("Sum"), static_cast<int>(sc::AggregateKind::Sum));
-    aggregateKindCombo_->addItem(QStringLiteral("Min"), static_cast<int>(sc::AggregateKind::Min));
-    aggregateKindCombo_->addItem(QStringLiteral("Max"), static_cast<int>(sc::AggregateKind::Max));
+    aggregateKindCombo_->addItem(QStringLiteral("Count"), static_cast<int>(sc::SCAggregateKind::Count));
+    aggregateKindCombo_->addItem(QStringLiteral("Sum"), static_cast<int>(sc::SCAggregateKind::Sum));
+    aggregateKindCombo_->addItem(QStringLiteral("Min"), static_cast<int>(sc::SCAggregateKind::Min));
+    aggregateKindCombo_->addItem(QStringLiteral("Max"), static_cast<int>(sc::SCAggregateKind::Max));
 
     aggregateRelationEdit_ = new QLineEdit(this);
     aggregateRelationEdit_->setPlaceholderText(QStringLiteral("Example: Beam.FloorRef"));
@@ -134,7 +134,7 @@ void ComputedColumnDialog::BuildForm()
 
     form->addRow(QStringLiteral("Name"), nameEdit_);
     form->addRow(QStringLiteral("Display Name"), displayNameEdit_);
-    form->addRow(QStringLiteral("Value Kind"), valueKindCombo_);
+    form->addRow(QStringLiteral("SCValue Kind"), valueKindCombo_);
     form->addRow(QStringLiteral("Kind"), kindCombo_);
     form->addRow(QStringLiteral("Expression"), expressionEdit_);
     form->addRow(QStringLiteral("Rule Id"), ruleIdEdit_);
@@ -156,7 +156,7 @@ void ComputedColumnDialog::BuildForm()
     UpdateModeVisibility();
 }
 
-void ComputedColumnDialog::ApplyInitialValue(const sc::ComputedColumnDef& initialValue)
+void ComputedColumnDialog::ApplyInitialValue(const sc::SCComputedColumnDef& initialValue)
 {
     nameEdit_->setText(QString::fromStdWString(initialValue.name));
     displayNameEdit_->setText(QString::fromStdWString(initialValue.displayName));
@@ -173,7 +173,7 @@ void ComputedColumnDialog::ApplyInitialValue(const sc::ComputedColumnDef& initia
     UpdateModeVisibility();
 }
 
-bool ComputedColumnDialog::BuildDefinition(sc::ComputedColumnDef* outColumn, QString* outError) const
+bool ComputedColumnDialog::BuildDefinition(sc::SCComputedColumnDef* outColumn, QString* outError) const
 {
     if (outColumn == nullptr)
     {
@@ -194,7 +194,7 @@ bool ComputedColumnDialog::BuildDefinition(sc::ComputedColumnDef* outColumn, QSt
         return false;
     }
 
-    sc::ComputedColumnDef column;
+    sc::SCComputedColumnDef column;
     column.name = name.toStdWString();
     column.displayName = displayNameEdit_->text().trimmed().toStdWString();
     column.valueKind = CurrentValueKind();
@@ -242,7 +242,7 @@ bool ComputedColumnDialog::BuildDefinition(sc::ComputedColumnDef* outColumn, QSt
 
         column.aggregateKind = CurrentAggregateKind();
         column.aggregateRelation = relation.toStdWString();
-        if (column.aggregateKind != sc::AggregateKind::Count)
+        if (column.aggregateKind != sc::SCAggregateKind::Count)
         {
             const QString field = aggregateFieldEdit_->text().trimmed();
             if (field.isEmpty())
@@ -283,9 +283,9 @@ sc::ComputedFieldKind ComputedColumnDialog::CurrentComputedKind() const
     return static_cast<sc::ComputedFieldKind>(kindCombo_->currentData().toInt());
 }
 
-sc::AggregateKind ComputedColumnDialog::CurrentAggregateKind() const
+sc::SCAggregateKind ComputedColumnDialog::CurrentAggregateKind() const
 {
-    return static_cast<sc::AggregateKind>(aggregateKindCombo_->currentData().toInt());
+    return static_cast<sc::SCAggregateKind>(aggregateKindCombo_->currentData().toInt());
 }
 
 }  // namespace stablecore::storage::editor

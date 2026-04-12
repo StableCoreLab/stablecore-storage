@@ -7,7 +7,7 @@
 #include <QFormLayout>
 #include <QLineEdit>
 
-#include "StableCore/Storage/Storage.h"
+#include "StableCore/Storage/SCStorage.h"
 
 namespace stablecore::storage::editor
 {
@@ -19,7 +19,7 @@ class AddColumnDialog final : public QDialog
 public:
     explicit AddColumnDialog(QWidget* parent = nullptr);
 
-    stablecore::storage::ColumnDef BuildColumnDef() const;
+    stablecore::storage::SCColumnDef BuildColumnDef() const;
 
 private:
     QLineEdit* nameEdit_{nullptr};
