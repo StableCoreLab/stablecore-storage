@@ -5,9 +5,9 @@
 #include <QLabel>
 #include <QVBoxLayout>
 
-namespace sc = stablecore::storage;
+namespace sc = StableCore::Storage;
 
-namespace stablecore::storage::editor
+namespace StableCore::Storage::Editor
 {
 
 SCRelationPickerDialog::SCRelationPickerDialog(
@@ -118,4 +118,4 @@ void SCRelationPickerDialog::PopulateRows()
     }
 }
 
-}  // namespace stablecore::storage::editor
+}  // namespace StableCore::Storage::Editor

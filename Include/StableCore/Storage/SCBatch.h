@@ -4,7 +4,7 @@
 
 #include "StableCore/Storage/ISCInterfaces.h"
 
-namespace stablecore::storage
+namespace StableCore::Storage
 {
 
 struct SCFieldValueAssignment
@@ -61,4 +61,4 @@ ErrorCode ExecuteImport(
     const ISCmportOptions& options,
     ISCmportResult* outResult);
 
-}  // namespace stablecore::storage
+}  // namespace StableCore::Storage

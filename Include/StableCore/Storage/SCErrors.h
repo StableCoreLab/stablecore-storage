@@ -1,6 +1,6 @@
 #pragma once
 
-namespace stablecore::storage
+namespace StableCore::Storage
 {
 
 using ErrorCode = long;
@@ -44,4 +44,4 @@ inline bool Failed(ErrorCode code) noexcept
     return !Succeeded(code);
 }
 
-}  // namespace stablecore::storage
+}  // namespace StableCore::Storage

@@ -4,8 +4,8 @@
 
 #include "SCDatabaseSession.h"
 
-namespace sc = stablecore::storage;
-namespace editor = stablecore::storage::editor;
+namespace sc = StableCore::Storage;
+namespace editor = StableCore::Storage::Editor;
 namespace fs = std::filesystem;
 
 namespace

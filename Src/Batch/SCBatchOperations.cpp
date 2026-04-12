@@ -1,6 +1,6 @@
 #include "StableCore/Storage/SCBatch.h"
 
-namespace stablecore::storage
+namespace StableCore::Storage
 {
 namespace
 {
@@ -170,4 +170,4 @@ ErrorCode ExecuteImport(
     return ExecuteBatchEdit(database, requests, effective, outResult);
 }
 
-}  // namespace stablecore::storage
+}  // namespace StableCore::Storage

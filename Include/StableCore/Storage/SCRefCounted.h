@@ -4,7 +4,7 @@
 
 #include "StableCore/Storage/ISCRefPtr.h"
 
-namespace stablecore::storage
+namespace StableCore::Storage
 {
 
 class SCRefCountedObject : public virtual ISCRefObject
@@ -32,4 +32,4 @@ private:
     std::atomic<unsigned int> refCount_{1};
 };
 
-}  // namespace stablecore::storage
+}  // namespace StableCore::Storage

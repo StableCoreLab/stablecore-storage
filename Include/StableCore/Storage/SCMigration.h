@@ -5,7 +5,7 @@
 #include "StableCore/Storage/SCErrors.h"
 #include "StableCore/Storage/SCTypes.h"
 
-namespace stablecore::storage
+namespace StableCore::Storage
 {
 
 struct SCMigrationStep
@@ -29,4 +29,4 @@ ErrorCode BuildMigrationPlan(
     const std::vector<SCMigrationStep>& availableSteps,
     SCMigrationPlan* outPlan);
 
-}  // namespace stablecore::storage
+}  // namespace StableCore::Storage

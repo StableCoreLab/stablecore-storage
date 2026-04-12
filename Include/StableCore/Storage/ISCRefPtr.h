@@ -2,7 +2,7 @@
 
 #include <utility>
 
-namespace stablecore::storage
+namespace StableCore::Storage
 {
 
 class ISCRefObject
@@ -138,4 +138,4 @@ SCRefPtr<T> SCMakeRef(Args&&... args)
     return SCRefPtr<T>(new T(std::forward<Args>(args)...), false);
 }
 
-}  // namespace stablecore::storage
+}  // namespace StableCore::Storage

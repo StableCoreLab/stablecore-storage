@@ -5,7 +5,7 @@
 
 #include "StableCore/Storage/SCStorage.h"
 
-namespace sc = stablecore::storage;
+namespace sc = StableCore::Storage;
 
 namespace
 {

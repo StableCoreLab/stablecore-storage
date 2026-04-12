@@ -7,7 +7,7 @@
 
 #include "SCDatabaseSession.h"
 
-namespace stablecore::storage::editor
+namespace StableCore::Storage::Editor
 {
 
 class SCRelationPickerDialog final : public QDialog
@@ -20,7 +20,7 @@ public:
         const QVector<SCDatabaseSession::RelationCandidate>& candidates,
         QWidget* parent = nullptr);
 
-    stablecore::storage::RecordId SelectedRecordId() const noexcept;
+    StableCore::Storage::RecordId SelectedRecordId() const noexcept;
 
 private slots:
     void ApplyFilter(const QString& text);
@@ -35,4 +35,4 @@ private:
     QTableWidget* tableWidget_{nullptr};
 };
 
-}  // namespace stablecore::storage::editor
+}  // namespace StableCore::Storage::Editor

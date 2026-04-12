@@ -2,7 +2,7 @@
 
 #include <sstream>
 
-namespace stablecore::storage
+namespace StableCore::Storage
 {
 
 ErrorCode BuildStorageHealthReport(
@@ -77,4 +77,4 @@ ErrorCode DescribeChangeSet(const SCChangeSet& SCChangeSet, std::wstring* outTex
     return SC_OK;
 }
 
-}  // namespace stablecore::storage
+}  // namespace StableCore::Storage

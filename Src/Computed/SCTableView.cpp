@@ -8,7 +8,7 @@
 
 #include "StableCore/Storage/SCRefCounted.h"
 
-namespace stablecore::storage
+namespace StableCore::Storage
 {
 namespace
 {
@@ -438,4 +438,4 @@ ErrorCode CreateComputedTableView(
     return SC_OK;
 }
 
-}  // namespace stablecore::storage
+}  // namespace StableCore::Storage

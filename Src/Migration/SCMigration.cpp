@@ -2,7 +2,7 @@
 
 #include <algorithm>
 
-namespace stablecore::storage
+namespace StableCore::Storage
 {
 
 ErrorCode BuildMigrationPlan(
@@ -52,4 +52,4 @@ ErrorCode BuildMigrationPlan(
     return SC_OK;
 }
 
-}  // namespace stablecore::storage
+}  // namespace StableCore::Storage

@@ -2,7 +2,7 @@
 
 #include <QAbstractItemModel>
 
-namespace stablecore::storage::editor
+namespace StableCore::Storage::Editor
 {
 
 SCRecordFilterProxyModel::SCRecordFilterProxyModel(QObject* parent)
@@ -53,4 +53,4 @@ bool SCRecordFilterProxyModel::lessThan(const QModelIndex& left, const QModelInd
     return QString::localeAwareCompare(leftValue.toString(), rightValue.toString()) < 0;
 }
 
-}  // namespace stablecore::storage::editor
+}  // namespace StableCore::Storage::Editor

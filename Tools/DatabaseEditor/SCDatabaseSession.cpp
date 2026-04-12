@@ -4,9 +4,9 @@
 
 #include <QStringList>
 
-namespace sc = stablecore::storage;
+namespace sc = StableCore::Storage;
 
-namespace stablecore::storage::editor
+namespace StableCore::Storage::Editor
 {
 namespace
 {
@@ -1177,4 +1177,4 @@ QString SCDatabaseSession::ErrorToString(sc::ErrorCode error) const
     return QStringLiteral("Storage error: 0x") + QString::number(static_cast<qulonglong>(error), 16);
 }
 
-}  // namespace stablecore::storage::editor
+}  // namespace StableCore::Storage::Editor

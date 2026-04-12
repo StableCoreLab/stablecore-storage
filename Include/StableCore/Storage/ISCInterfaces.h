@@ -4,7 +4,7 @@
 #include "StableCore/Storage/ISCRefPtr.h"
 #include "StableCore/Storage/SCTypes.h"
 
-namespace stablecore::storage
+namespace StableCore::Storage
 {
 
 class ISCSchema;
@@ -129,4 +129,4 @@ public:
     virtual VersionId GetCurrentVersion() const noexcept = 0;
 };
 
-}  // namespace stablecore::storage
+}  // namespace StableCore::Storage

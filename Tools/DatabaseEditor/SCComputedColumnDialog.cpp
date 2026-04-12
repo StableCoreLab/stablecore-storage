@@ -6,9 +6,9 @@
 #include <QStringList>
 #include <QVBoxLayout>
 
-namespace sc = stablecore::storage;
+namespace sc = StableCore::Storage;
 
-namespace stablecore::storage::editor
+namespace StableCore::Storage::Editor
 {
 namespace
 {
@@ -288,4 +288,4 @@ sc::SCAggregateKind SCComputedColumnDialog::CurrentAggregateKind() const
     return static_cast<sc::SCAggregateKind>(aggregateKindCombo_->currentData().toInt());
 }
 
-}  // namespace stablecore::storage::editor
+}  // namespace StableCore::Storage::Editor

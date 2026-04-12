@@ -18,9 +18,9 @@
 #include <QVBoxLayout>
 #include <QWidget>
 
-namespace sc = stablecore::storage;
+namespace sc = StableCore::Storage;
 
-namespace stablecore::storage::editor
+namespace StableCore::Storage::Editor
 {
 namespace
 {
@@ -781,4 +781,4 @@ void SCDatabaseEditorMainWindow::SetStatusMessage(const QString& text)
     statusLabel_->setText(text);
 }
 
-}  // namespace stablecore::storage::editor
+}  // namespace StableCore::Storage::Editor

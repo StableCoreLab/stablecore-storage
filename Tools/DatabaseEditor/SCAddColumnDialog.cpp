@@ -1,8 +1,8 @@
 #include "SCAddColumnDialog.h"
 
-namespace sc = stablecore::storage;
+namespace sc = StableCore::Storage;
 
-namespace stablecore::storage::editor
+namespace StableCore::Storage::Editor
 {
 namespace
 {
@@ -107,4 +107,4 @@ sc::SCColumnDef SCAddColumnDialog::BuildColumnDef() const
     return column;
 }
 
-}  // namespace stablecore::storage::editor
+}  // namespace StableCore::Storage::Editor

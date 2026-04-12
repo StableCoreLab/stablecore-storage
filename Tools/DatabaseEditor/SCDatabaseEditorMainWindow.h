@@ -18,7 +18,7 @@
 #include "SCRecordTableModel.h"
 #include "SCRelationPickerDialog.h"
 
-namespace stablecore::storage::editor
+namespace StableCore::Storage::Editor
 {
 
 class SCDatabaseEditorMainWindow final : public QMainWindow
@@ -75,4 +75,4 @@ private:
     QLabel* statusLabel_{nullptr};
 };
 
-}  // namespace stablecore::storage::editor
+}  // namespace StableCore::Storage::Editor

@@ -8,7 +8,7 @@
 
 #include "StableCore/Storage/SCTypes.h"
 
-namespace stablecore::storage::editor
+namespace StableCore::Storage::Editor
 {
 
 class SCComputedColumnDialog final : public QDialog
@@ -19,20 +19,20 @@ public:
     explicit SCComputedColumnDialog(const QString& currentTableName, QWidget* parent = nullptr);
     SCComputedColumnDialog(
         const QString& currentTableName,
-        const stablecore::storage::SCComputedColumnDef& initialValue,
+        const StableCore::Storage::SCComputedColumnDef& initialValue,
         QWidget* parent = nullptr);
 
-    bool BuildDefinition(stablecore::storage::SCComputedColumnDef* outColumn, QString* outError) const;
+    bool BuildDefinition(StableCore::Storage::SCComputedColumnDef* outColumn, QString* outError) const;
 
 private slots:
     void UpdateModeVisibility();
 
 private:
     void BuildForm();
-    void ApplyInitialValue(const stablecore::storage::SCComputedColumnDef& initialValue);
-    stablecore::storage::ValueKind CurrentValueKind() const;
-    stablecore::storage::ComputedFieldKind CurrentComputedKind() const;
-    stablecore::storage::SCAggregateKind CurrentAggregateKind() const;
+    void ApplyInitialValue(const StableCore::Storage::SCComputedColumnDef& initialValue);
+    StableCore::Storage::ValueKind CurrentValueKind() const;
+    StableCore::Storage::ComputedFieldKind CurrentComputedKind() const;
+    StableCore::Storage::SCAggregateKind CurrentAggregateKind() const;
 
     QString currentTableName_;
     QLineEdit* nameEdit_{nullptr};
@@ -49,4 +49,4 @@ private:
     QCheckBox* cacheableCheck_{nullptr};
 };
 
-}  // namespace stablecore::storage::editor
+}  // namespace StableCore::Storage::Editor

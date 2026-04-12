@@ -4,7 +4,7 @@
 
 #include "StableCore/Storage/ISCInterfaces.h"
 
-namespace stablecore::storage
+namespace StableCore::Storage
 {
 
 enum class SCDiagnosticSeverity
@@ -42,4 +42,4 @@ ErrorCode BuildStorageHealthReport(
 
 ErrorCode DescribeChangeSet(const SCChangeSet& SCChangeSet, std::wstring* outText);
 
-}  // namespace stablecore::storage
+}  // namespace StableCore::Storage

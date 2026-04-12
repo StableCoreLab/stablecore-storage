@@ -2,10 +2,10 @@
 
 #include "StableCore/Storage/ISCInterfaces.h"
 
-namespace stablecore::storage
+namespace StableCore::Storage
 {
 
 ErrorCode CreateInMemoryDatabase(SCDbPtr& outDatabase);
 ErrorCode CreateSqliteDatabase(const wchar_t* path, SCDbPtr& outDatabase);
 
-}  // namespace stablecore::storage
+}  // namespace StableCore::Storage

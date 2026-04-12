@@ -8,7 +8,7 @@
 
 #include "StableCore/Storage/SCErrors.h"
 
-namespace stablecore::storage
+namespace StableCore::Storage
 {
 
 using RecordId = std::int64_t;
@@ -398,4 +398,4 @@ struct SCChangeSet
     std::vector<SCDataChange> changes;
 };
 
-}  // namespace stablecore::storage
+}  // namespace StableCore::Storage

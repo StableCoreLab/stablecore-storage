@@ -2,7 +2,7 @@
 
 #include "StableCore/Storage/ISCComputed.h"
 
-namespace stablecore::storage
+namespace StableCore::Storage
 {
 
 class ISCComputedTableView;
@@ -36,4 +36,4 @@ ErrorCode CreateComputedTableView(
     ISCRuleRegistry* ruleRegistry,
     SCComputedTableViewPtr& outView);
 
-}  // namespace stablecore::storage
+}  // namespace StableCore::Storage

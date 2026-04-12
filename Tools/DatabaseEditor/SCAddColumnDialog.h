@@ -9,7 +9,7 @@
 
 #include "StableCore/Storage/SCStorage.h"
 
-namespace stablecore::storage::editor
+namespace StableCore::Storage::Editor
 {
 
 class SCAddColumnDialog final : public QDialog
@@ -19,7 +19,7 @@ class SCAddColumnDialog final : public QDialog
 public:
     explicit SCAddColumnDialog(QWidget* parent = nullptr);
 
-    stablecore::storage::SCColumnDef BuildColumnDef() const;
+    StableCore::Storage::SCColumnDef BuildColumnDef() const;
 
 private:
     QLineEdit* nameEdit_{nullptr};
@@ -36,4 +36,4 @@ private:
     QLineEdit* defaultValueEdit_{nullptr};
 };
 
-}  // namespace stablecore::storage::editor
+}  // namespace StableCore::Storage::Editor

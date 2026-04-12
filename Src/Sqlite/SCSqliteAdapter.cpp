@@ -21,7 +21,7 @@
 #include <windows.h>
 #endif
 
-namespace stablecore::storage
+namespace StableCore::Storage
 {
 namespace
 {
@@ -2292,4 +2292,4 @@ ErrorCode CreateSqliteDatabase(const wchar_t* path, SCDbPtr& outDatabase)
     }
 }
 
-}  // namespace stablecore::storage
+}  // namespace StableCore::Storage

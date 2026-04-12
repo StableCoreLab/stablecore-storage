@@ -7,7 +7,7 @@
 
 #include "StableCore/Storage/SCRefCounted.h"
 
-namespace stablecore::storage
+namespace StableCore::Storage
 {
 namespace
 {
@@ -1277,4 +1277,4 @@ ErrorCode CreateInMemoryDatabase(SCDbPtr& outDatabase)
     return SC_OK;
 }
 
-}  // namespace stablecore::storage
+}  // namespace StableCore::Storage

@@ -1,8 +1,8 @@
 #include "SCRecordTableModel.h"
 
-namespace sc = stablecore::storage;
+namespace sc = StableCore::Storage;
 
-namespace stablecore::storage::editor
+namespace StableCore::Storage::Editor
 {
 namespace
 {
@@ -228,4 +228,4 @@ void SCRecordTableModel::Refresh()
     endResetModel();
 }
 
-}  // namespace stablecore::storage::editor
+}  // namespace StableCore::Storage::Editor

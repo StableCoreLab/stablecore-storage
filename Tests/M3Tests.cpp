@@ -8,7 +8,7 @@
 
 #include "StableCore/Storage/SCStorage.h"
 
-namespace sc = stablecore::storage;
+namespace sc = StableCore::Storage;
 namespace fs = std::filesystem;
 
 namespace

@@ -4,7 +4,7 @@
 
 #include "StableCore/Storage/ISCInterfaces.h"
 
-namespace stablecore::storage
+namespace StableCore::Storage
 {
 
 class ISCComputedContext;
@@ -82,4 +82,4 @@ ErrorCode EvaluateComputedColumn(
 
 bool DoesDependencySetIntersect(const SCComputedDependencySet& dependencies, const SCChangeSet& SCChangeSet) noexcept;
 
-}  // namespace stablecore::storage
+}  // namespace StableCore::Storage

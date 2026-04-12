@@ -2,7 +2,7 @@
 
 #include <QSortFilterProxyModel>
 
-namespace stablecore::storage::editor
+namespace StableCore::Storage::Editor
 {
 
 class SCRecordFilterProxyModel final : public QSortFilterProxyModel
@@ -17,4 +17,4 @@ protected:
     bool lessThan(const QModelIndex& left, const QModelIndex& right) const override;
 };
 
-}  // namespace stablecore::storage::editor
+}  // namespace StableCore::Storage::Editor

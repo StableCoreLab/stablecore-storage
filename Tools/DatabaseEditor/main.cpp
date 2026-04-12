@@ -8,7 +8,7 @@ int main(int argc, char* argv[])
     QApplication::setApplicationName(QStringLiteral("StableCore Database Editor"));
     QApplication::setOrganizationName(QStringLiteral("StableCore"));
 
-    stablecore::storage::editor::SCDatabaseEditorMainWindow window;
+    StableCore::Storage::Editor::SCDatabaseEditorMainWindow window;
     window.show();
     return app.exec();
 }

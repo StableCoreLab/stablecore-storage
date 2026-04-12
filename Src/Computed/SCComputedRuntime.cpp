@@ -11,7 +11,7 @@
 
 #include "StableCore/Storage/SCRefCounted.h"
 
-namespace stablecore::storage
+namespace StableCore::Storage
 {
 namespace
 {
@@ -649,4 +649,4 @@ bool DoesDependencySetIntersect(const SCComputedDependencySet& dependencies, con
     return false;
 }
 
-}  // namespace stablecore::storage
+}  // namespace StableCore::Storage
