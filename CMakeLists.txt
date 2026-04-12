@@ -26,6 +26,7 @@ endif()
 
 set(SCSTORAGE_INSTALL_BIN_DIR "${CMAKE_INSTALL_BINDIR}/$<CONFIG>/${SCSTORAGE_INSTALL_PLATFORM}")
 set(SCSTORAGE_INSTALL_LIB_DIR "${CMAKE_INSTALL_LIBDIR}/$<CONFIG>/${SCSTORAGE_INSTALL_PLATFORM}")
+set(SCSTORAGE_INSTALL_PDB_DIR "${SCSTORAGE_INSTALL_BIN_DIR}")
 
 function(SCStorageConfigureOutputDirs target_name)
     if (MSVC AND CMAKE_GENERATOR MATCHES "Visual Studio")
@@ -43,6 +44,15 @@ function(SCStorageConfigureOutputDirs target_name)
             COMPILE_PDB_OUTPUT_DIRECTORY "${SCSTORAGE_BIN_ROOT}/$<CONFIG>/${SCSTORAGE_OUTPUT_PLATFORM}"
             PDB_NAME "${target_name}"
             COMPILE_PDB_NAME "${target_name}"
+            MSVC_DEBUG_INFORMATION_FORMAT ProgramDatabase
+        )
+        target_compile_options(${target_name} PRIVATE
+            $<$<CONFIG:Release>:/Zi>
+            $<$<CONFIG:RelWithDebInfo>:/Zi>
+        )
+        target_link_options(${target_name} PRIVATE
+            $<$<CONFIG:Release>:/DEBUG>
+            $<$<CONFIG:RelWithDebInfo>:/DEBUG>
         )
     else()
         set_target_properties(${target_name} PROPERTIES
@@ -230,6 +240,11 @@ install(TARGETS ${SCSTORAGE_TARGET}
     INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
 )
 
+install(FILES $<TARGET_PDB_FILE:${SCSTORAGE_TARGET}>
+    CONFIGURATIONS Debug RelWithDebInfo Release
+    DESTINATION ${SCSTORAGE_INSTALL_PDB_DIR}
+)
+
 install(FILES ${SCSTORAGE_PUBLIC_HEADERS}
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/StableCore/Storage
 )
@@ -238,9 +253,21 @@ install(TARGETS ${SCSTORAGE_MEMORY_EXAMPLE_TARGET} ${SCSTORAGE_PRODUCT_EXAMPLE_T
     RUNTIME DESTINATION ${SCSTORAGE_INSTALL_BIN_DIR}
 )
 
+install(FILES
+    $<TARGET_PDB_FILE:${SCSTORAGE_MEMORY_EXAMPLE_TARGET}>
+    $<TARGET_PDB_FILE:${SCSTORAGE_PRODUCT_EXAMPLE_TARGET}>
+    CONFIGURATIONS Debug RelWithDebInfo Release
+    DESTINATION ${SCSTORAGE_INSTALL_PDB_DIR}
+)
+
 if (SCSTORAGE_BUILD_DB_EDITOR)
     install(TARGETS SCStorageDatabaseEditor
         RUNTIME DESTINATION ${SCSTORAGE_INSTALL_BIN_DIR}
+    )
+
+    install(FILES $<TARGET_PDB_FILE:SCStorageDatabaseEditor>
+        CONFIGURATIONS Debug RelWithDebInfo Release
+        DESTINATION ${SCSTORAGE_INSTALL_PDB_DIR}
     )
 endif()
 
