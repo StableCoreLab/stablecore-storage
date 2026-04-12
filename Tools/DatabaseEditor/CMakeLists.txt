@@ -15,11 +15,13 @@ add_executable(SCStorageDatabaseEditor
     RelationPickerDialog.h
     main.cpp
 )
-stablecore_configure_output_dirs(SCStorageDatabaseEditor)
+SCStorageConfigureOutputDirs(SCStorageDatabaseEditor)
+
+SCEnableUtf8ForTargets(SCStorageDatabaseEditor)
 
 target_link_libraries(SCStorageDatabaseEditor
-    PRIVATE
-        ${STABLECORE_STORAGE_TARGET}
+        PRIVATE
+        ${SCSTORAGE_TARGET}
         Qt6::Widgets
 )
 

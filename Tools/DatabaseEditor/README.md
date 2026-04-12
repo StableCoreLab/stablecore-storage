@@ -22,8 +22,8 @@
 
 ```powershell
 cmake -S Storage -B Build\StorageDbEditor `
-  -DSTABLECORE_STORAGE_BUILD_DB_EDITOR=ON `
-  -DSTABLECORE_STORAGE_BUILD_TESTS=OFF `
+  -DSCSTORAGE_BUILD_DB_EDITOR=ON `
+  -DSCSTORAGE_BUILD_TESTS=OFF `
   -DCMAKE_PREFIX_PATH=C:\Qt\6.8.0\msvc2022_64
 cmake --build Build\StorageDbEditor --config Release --target SCStorageDatabaseEditor
 ```
@@ -173,7 +173,7 @@ Build\StorageDbEditor\Release\SCStorageDatabaseEditor.exe
 - 过滤是全文本匹配，不支持高级条件构造
 - 计算列当前支持新增、编辑、删除，但不支持导入、导出
 - 诊断面板当前是摘要文本，不是完整诊断工作台
-- 默认 CMake 配置不会构建该工具，需要显式开启 `STABLECORE_STORAGE_BUILD_DB_EDITOR`
+- 默认 CMake 配置不会构建该工具，需要显式开启 `SCSTORAGE_BUILD_DB_EDITOR`
 
 ## 相关文件
 

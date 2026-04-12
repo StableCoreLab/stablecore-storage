@@ -10,7 +10,7 @@ if not exist "%BUILD_DIR%" (
     mkdir "%BUILD_DIR%"
 )
 
-cmake -S "%SCRIPT_DIR%" -B "%BUILD_DIR%" -G "Visual Studio 17 2022" -A x64 -DSTABLECORE_STORAGE_BUILD_DB_EDITOR=ON
+cmake -S "%SCRIPT_DIR%" -B "%BUILD_DIR%" -G "Visual Studio 17 2022" -A x64 -DSCSTORAGE_BUILD_DB_EDITOR=ON
 
 if errorlevel 1 (
     echo.
@@ -20,7 +20,7 @@ if errorlevel 1 (
 
 echo.
 echo Solution generated successfully:
-echo   %BUILD_DIR%\StablecoreStorage.sln
+echo   %BUILD_DIR%\SCStorage.sln
 
 endlocal
 pause
