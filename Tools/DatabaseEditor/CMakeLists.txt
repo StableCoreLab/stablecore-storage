@@ -1,4 +1,4 @@
-add_executable(stablecore_storage_db_editor
+add_executable(SCStorageDatabaseEditor
     AddColumnDialog.cpp
     AddColumnDialog.h
     ComputedColumnDialog.cpp
@@ -15,12 +15,12 @@ add_executable(stablecore_storage_db_editor
     RelationPickerDialog.h
     main.cpp
 )
-stablecore_configure_output_dirs(stablecore_storage_db_editor)
+stablecore_configure_output_dirs(SCStorageDatabaseEditor)
 
-target_link_libraries(stablecore_storage_db_editor
+target_link_libraries(SCStorageDatabaseEditor
     PRIVATE
-        stablecore_storage
+        ${STABLECORE_STORAGE_TARGET}
         Qt6::Widgets
 )
 
-target_compile_features(stablecore_storage_db_editor PRIVATE cxx_std_20)
+target_compile_features(SCStorageDatabaseEditor PRIVATE cxx_std_20)

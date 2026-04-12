@@ -1,13 +1,18 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(stablecore_storage LANGUAGES C CXX)
+project(StablecoreStorage LANGUAGES C CXX)
 
 include(CTest)
 include(FetchContent)
 
 option(STABLECORE_STORAGE_BUILD_DB_EDITOR "Build the Qt database editor tool" OFF)
 
-set(STABLECORE_STORAGE_BIN_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/Bin")
+set(STABLECORE_STORAGE_TARGET SCStorage)
+set(STABLECORE_STORAGE_MEMORY_EXAMPLE_TARGET SCStorageMemoryExample)
+set(STABLECORE_STORAGE_PRODUCT_EXAMPLE_TARGET SCStorageProductExample)
+set(STABLECORE_STORAGE_TESTS_TARGET SCStorageTests)
+set(STABLECORE_STORAGE_DB_EDITOR_TESTS_TARGET SCStorageDatabaseEditorTests)
+set(STABLECORE_STORAGE_BIN_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../Bin")
 
 function(stablecore_configure_output_dirs target_name)
     if (MSVC AND CMAKE_GENERATOR MATCHES "Visual Studio")
@@ -43,22 +48,7 @@ if (NOT DEFINED Qt6_DIR AND DEFINED ENV{QT6_8_x64} AND NOT "$ENV{QT6_8_x64}" STR
     set(Qt6_DIR "$ENV{QT6_8_x64}/lib/cmake/Qt6")
 endif()
 
-add_library(sqlite3 STATIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/../ThirdParty/sqlite/sqlite3.c
-)
-stablecore_configure_output_dirs(sqlite3)
-
-target_include_directories(sqlite3
-    PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}/../ThirdParty/sqlite
-)
-
-target_compile_definitions(sqlite3
-    PRIVATE
-        SQLITE_THREADSAFE=1
-)
-
-add_library(stablecore_storage SHARED
+add_library(${STABLECORE_STORAGE_TARGET} SHARED
     Src/Factory.cpp
     Src/Batch/BatchOperations.cpp
     Src/Computed/ComputedRuntime.cpp
@@ -67,56 +57,52 @@ add_library(stablecore_storage SHARED
     Src/Migration/Migration.cpp
     Src/Memory/MemoryDatabase.cpp
     Src/Sqlite/SqliteAdapter.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../ThirdParty/Sqlite/sqlite3.c
 )
-stablecore_configure_output_dirs(stablecore_storage)
+stablecore_configure_output_dirs(${STABLECORE_STORAGE_TARGET})
 
-target_include_directories(stablecore_storage
+target_include_directories(${STABLECORE_STORAGE_TARGET}
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/Include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../ThirdParty/Sqlite
 )
 
-target_compile_features(stablecore_storage PUBLIC cxx_std_20)
+target_compile_features(${STABLECORE_STORAGE_TARGET} PUBLIC cxx_std_20)
 
 if (MSVC)
-    target_compile_options(stablecore_storage PRIVATE /utf-8)
-    target_compile_options(sqlite3 PRIVATE /utf-8)
+    target_compile_options(${STABLECORE_STORAGE_TARGET} PRIVATE /utf-8)
 endif()
 
-set_target_properties(stablecore_storage PROPERTIES
+set_target_properties(${STABLECORE_STORAGE_TARGET} PROPERTIES
     WINDOWS_EXPORT_ALL_SYMBOLS ON
 )
 
-target_link_libraries(stablecore_storage
-    PRIVATE
-        sqlite3
-)
-
-add_executable(stablecore_storage_memory_example
+add_executable(${STABLECORE_STORAGE_MEMORY_EXAMPLE_TARGET}
     Examples/MemoryExample.cpp
 )
-stablecore_configure_output_dirs(stablecore_storage_memory_example)
+stablecore_configure_output_dirs(${STABLECORE_STORAGE_MEMORY_EXAMPLE_TARGET})
 
 if (MSVC)
-    target_compile_options(stablecore_storage_memory_example PRIVATE /utf-8)
+    target_compile_options(${STABLECORE_STORAGE_MEMORY_EXAMPLE_TARGET} PRIVATE /utf-8)
 endif()
 
-target_link_libraries(stablecore_storage_memory_example
+target_link_libraries(${STABLECORE_STORAGE_MEMORY_EXAMPLE_TARGET}
     PRIVATE
-        stablecore_storage
+        ${STABLECORE_STORAGE_TARGET}
 )
 
-add_executable(stablecore_storage_product_example
+add_executable(${STABLECORE_STORAGE_PRODUCT_EXAMPLE_TARGET}
     Examples/ProductIntegrationExample.cpp
 )
-stablecore_configure_output_dirs(stablecore_storage_product_example)
+stablecore_configure_output_dirs(${STABLECORE_STORAGE_PRODUCT_EXAMPLE_TARGET})
 
 if (MSVC)
-    target_compile_options(stablecore_storage_product_example PRIVATE /utf-8)
+    target_compile_options(${STABLECORE_STORAGE_PRODUCT_EXAMPLE_TARGET} PRIVATE /utf-8)
 endif()
 
-target_link_libraries(stablecore_storage_product_example
+target_link_libraries(${STABLECORE_STORAGE_PRODUCT_EXAMPLE_TARGET}
     PRIVATE
-        stablecore_storage
+        ${STABLECORE_STORAGE_TARGET}
 )
 
 if (STABLECORE_STORAGE_BUILD_DB_EDITOR)
@@ -140,13 +126,13 @@ if (STABLECORE_STORAGE_BUILD_TESTS)
 
         FetchContent_Declare(
             googletest
-            SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../ThirdParty/googletest-1.17.0"
+            SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../ThirdParty/GoogleTest"
         )
 
         FetchContent_MakeAvailable(googletest)
     endif()
 
-    add_executable(stablecore_storage_tests
+    add_executable(${STABLECORE_STORAGE_TESTS_TARGET}
         Tests/ComputedTests.cpp
         Tests/M1Tests.cpp
         Tests/M2SqliteTests.cpp
@@ -154,49 +140,49 @@ if (STABLECORE_STORAGE_BUILD_TESTS)
         Tests/PerformanceSmokeTests.cpp
         Tests/TableViewTests.cpp
     )
-    stablecore_configure_output_dirs(stablecore_storage_tests)
+    stablecore_configure_output_dirs(${STABLECORE_STORAGE_TESTS_TARGET})
 
     if (MSVC)
-        target_compile_options(stablecore_storage_tests PRIVATE /utf-8)
+        target_compile_options(${STABLECORE_STORAGE_TESTS_TARGET} PRIVATE /utf-8)
     endif()
 
-    target_link_libraries(stablecore_storage_tests
+    target_link_libraries(${STABLECORE_STORAGE_TESTS_TARGET}
         PRIVATE
-            stablecore_storage
+            ${STABLECORE_STORAGE_TARGET}
             GTest::gtest
             GTest::gtest_main
     )
 
     include(GoogleTest)
-    gtest_discover_tests(stablecore_storage_tests)
+    gtest_discover_tests(${STABLECORE_STORAGE_TESTS_TARGET})
 
     if (STABLECORE_STORAGE_BUILD_DB_EDITOR)
-        add_executable(stablecore_storage_db_editor_tests
+        add_executable(${STABLECORE_STORAGE_DB_EDITOR_TESTS_TARGET}
             Tests/DatabaseEditorSessionTests.cpp
             Tools/DatabaseEditor/DatabaseSession.cpp
             Tools/DatabaseEditor/DatabaseSession.h
         )
-        stablecore_configure_output_dirs(stablecore_storage_db_editor_tests)
+        stablecore_configure_output_dirs(${STABLECORE_STORAGE_DB_EDITOR_TESTS_TARGET})
 
         if (MSVC)
-            target_compile_options(stablecore_storage_db_editor_tests PRIVATE /utf-8)
+            target_compile_options(${STABLECORE_STORAGE_DB_EDITOR_TESTS_TARGET} PRIVATE /utf-8)
         endif()
 
-        target_include_directories(stablecore_storage_db_editor_tests
+        target_include_directories(${STABLECORE_STORAGE_DB_EDITOR_TESTS_TARGET}
             PRIVATE
                 ${CMAKE_CURRENT_SOURCE_DIR}/Tools/DatabaseEditor
         )
 
-        target_link_libraries(stablecore_storage_db_editor_tests
+        target_link_libraries(${STABLECORE_STORAGE_DB_EDITOR_TESTS_TARGET}
             PRIVATE
-                stablecore_storage
+                ${STABLECORE_STORAGE_TARGET}
                 GTest::gtest
                 GTest::gtest_main
                 Qt6::Core
         )
 
-        target_compile_features(stablecore_storage_db_editor_tests PRIVATE cxx_std_20)
+        target_compile_features(${STABLECORE_STORAGE_DB_EDITOR_TESTS_TARGET} PRIVATE cxx_std_20)
         include(GoogleTest)
-        gtest_discover_tests(stablecore_storage_db_editor_tests)
+        gtest_discover_tests(${STABLECORE_STORAGE_DB_EDITOR_TESTS_TARGET})
     endif()
 endif()

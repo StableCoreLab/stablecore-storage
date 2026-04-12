@@ -1,6 +1,6 @@
 # StableCore Database Editor
 
-`StableCore Database Editor` 是基于 `Qt Widgets` 的桌面工具，用于直接操作 `stablecore_storage` 的 SQLite 数据库。
+`StableCore Database Editor` 是基于 `Qt Widgets` 的桌面工具，用于直接操作 `SCStorage` 的 SQLite 数据库。
 
 当前实现重点是：
 
@@ -21,11 +21,11 @@
 默认情况下数据库编辑器不会参与构建，需要显式开启：
 
 ```powershell
-cmake -S stablecore-storage -B stablecore-storage\build-db-editor `
+cmake -S Storage -B Build\StorageDbEditor `
   -DSTABLECORE_STORAGE_BUILD_DB_EDITOR=ON `
   -DSTABLECORE_STORAGE_BUILD_TESTS=OFF `
   -DCMAKE_PREFIX_PATH=C:\Qt\6.8.0\msvc2022_64
-cmake --build stablecore-storage\build-db-editor --config Release --target stablecore_storage_db_editor
+cmake --build Build\StorageDbEditor --config Release --target SCStorageDatabaseEditor
 ```
 
 如果 CMake 提示找不到 `Qt6Config.cmake`，请检查：
@@ -39,7 +39,7 @@ cmake --build stablecore-storage\build-db-editor --config Release --target stabl
 构建成功后运行：
 
 ```powershell
-stablecore-storage\build-db-editor\Release\stablecore_storage_db_editor.exe
+Build\StorageDbEditor\Release\SCStorageDatabaseEditor.exe
 ```
 
 启动后可通过菜单或工具栏使用：

@@ -4,7 +4,7 @@ setlocal
 set "SCRIPT_DIR=%~dp0"
 if "%SCRIPT_DIR:~-1%"=="\" set "SCRIPT_DIR=%SCRIPT_DIR:~0,-1%"
 
-set "BUILD_DIR=%SCRIPT_DIR%\BuildVs2022"
+set "BUILD_DIR=%SCRIPT_DIR%\..\Build\StorageVs2022"
 
 if not exist "%BUILD_DIR%" (
     mkdir "%BUILD_DIR%"
@@ -20,7 +20,7 @@ if errorlevel 1 (
 
 echo.
 echo Solution generated successfully:
-echo   %BUILD_DIR%\stablecore_storage.sln
+echo   %BUILD_DIR%\StablecoreStorage.sln
 
 endlocal
 pause

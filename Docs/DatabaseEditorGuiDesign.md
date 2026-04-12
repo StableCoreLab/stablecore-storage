@@ -1,6 +1,6 @@
 # 数据库编辑工具 GUI 设计文档
 
-本文档定义一个图形界面的数据库编辑工具，用于在 `stablecore_storage` 之上定义和维护算量软件所需的原始事实数据。
+本文档定义一个图形界面的数据库编辑工具，用于在 `SCStorage` 之上定义和维护算量软件所需的原始事实数据。
 
 状态：
 
@@ -99,7 +99,7 @@ GUI 编辑器位于当前存储运行时之上：
 ```text
 数据库编辑工具 GUI
   -> 编辑器 ViewModel 层
-    -> stablecore_storage 公共 API
+    -> SCStorage 公共 API
       -> InMemory / SQLite 后端
 ```
 

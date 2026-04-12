@@ -5,7 +5,7 @@
 Current implementation includes:
 
 - Public V1 headers under `Include/StableCore/Storage`
-- Shared library target `stablecore_storage` (`.dll` on Windows)
+- Shared library target `SCStorage` (`.dll` on Windows)
 - In-memory database baseline with transaction, schema, undo/redo, changeset, and relation field support
 - SQLite persistence backend under `Src/Sqlite`
 - Computed-column metadata baseline in public types for upper-layer table tools
@@ -58,12 +58,12 @@ Computed columns are modeled separately from storage schema facts. Use `ColumnDe
 Default Visual Studio generation script:
 
 ```bat
-stablecore-storage\GenerateVs2022.bat
+Storage\GenerateStorageVs2022.bat
 ```
 
 Current defaults:
 
-- `stablecore_storage` is generated as a shared library
+- `SCStorage` is generated as a shared library
 - database editor generation is enabled by default
 
 Database editor requires `Qt 6.8 Widgets`. Before running the script, set one of:
@@ -86,7 +86,7 @@ set Qt6_DIR=C:\Qt\6.8.0\msvc2022_64\lib\cmake\Qt6
 
 If Qt is not configured, CMake will fail while generating the editor target.
 
-Top-level `CMakeLists.txt` and `GenerateVs2022.bat` both support reading `QT6_8_x64` directly and will derive `Qt6_DIR` from it automatically.
+Top-level `CMakeLists.txt` and `GenerateStorageVs2022.bat` both support reading `QT6_8_x64` directly and will derive `Qt6_DIR` from it automatically.
 
 For higher-level integration:
 

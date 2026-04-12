@@ -1,6 +1,6 @@
 # StableCore Storage Task Breakdown
 
-这份文档把 [Roadmap.md](d:/code/StableCore/stablecore-storage/Docs/Roadmap.md) 中的 `M1 ~ M3` 进一步拆成顺序执行的任务列表。
+这份文档把 [Roadmap.md](./Roadmap.md) 中的 `M1 ~ M3` 进一步拆成顺序执行的任务列表。
 
 原则：
 
