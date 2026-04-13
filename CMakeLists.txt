@@ -6,7 +6,7 @@ include(CTest)
 include(FetchContent)
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
-include(${CMAKE_CURRENT_LIST_DIR}/../cmake/SCUtf8.cmake)
+include(${CMAKE_CURRENT_LIST_DIR}/cmake/SCUtf8.cmake)
 
 option(SCSTORAGE_BUILD_DB_EDITOR "Build the Qt database editor tool" OFF)
 
