@@ -1,4 +1,4 @@
-#include "StableCore/Storage/ISCDiagnostics.h"
+#include "ISCDiagnostics.h"
 
 #include <sstream>
 

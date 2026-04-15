@@ -6,7 +6,7 @@
 #include <variant>
 #include <vector>
 
-#include "StableCore/Storage/SCErrors.h"
+#include "SCErrors.h"
 
 namespace StableCore::Storage
 {

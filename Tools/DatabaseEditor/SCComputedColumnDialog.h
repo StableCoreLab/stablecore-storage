@@ -6,7 +6,7 @@
 #include <QLineEdit>
 #include <QPlainTextEdit>
 
-#include "StableCore/Storage/SCTypes.h"
+#include "SCTypes.h"
 
 namespace StableCore::Storage::Editor
 {

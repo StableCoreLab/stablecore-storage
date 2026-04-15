@@ -1,4 +1,4 @@
-#include "StableCore/Storage/SCFactory.h"
+#include "SCFactory.h"
 
 #include <algorithm>
 #include <map>
@@ -13,9 +13,9 @@
 
 #include <sqlite3.h>
 
-#include "StableCore/Storage/ISCDiagnostics.h"
-#include "StableCore/Storage/SCMigration.h"
-#include "StableCore/Storage/SCRefCounted.h"
+#include "ISCDiagnostics.h"
+#include "SCMigration.h"
+#include "SCRefCounted.h"
 
 #if defined(_WIN32)
 #include <windows.h>

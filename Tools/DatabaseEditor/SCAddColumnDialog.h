@@ -7,7 +7,7 @@
 #include <QFormLayout>
 #include <QLineEdit>
 
-#include "StableCore/Storage/SCStorage.h"
+#include "SCStorage.h"
 
 namespace StableCore::Storage::Editor
 {

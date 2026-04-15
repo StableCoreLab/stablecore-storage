@@ -10,7 +10,7 @@
 #include <QVariant>
 #include <QVector>
 
-#include "StableCore/Storage/SCStorage.h"
+#include "SCStorage.h"
 
 namespace StableCore::Storage::Editor
 {

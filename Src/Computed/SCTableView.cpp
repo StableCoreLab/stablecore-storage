@@ -1,4 +1,4 @@
-#include "StableCore/Storage/ISCTableView.h"
+#include "ISCTableView.h"
 
 #include <algorithm>
 #include <cwctype>
@@ -6,7 +6,7 @@
 #include <unordered_map>
 #include <utility>
 
-#include "StableCore/Storage/SCRefCounted.h"
+#include "SCRefCounted.h"
 
 namespace StableCore::Storage
 {

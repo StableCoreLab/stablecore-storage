@@ -1,11 +1,11 @@
-#include "StableCore/Storage/SCFactory.h"
+#include "SCFactory.h"
 
 #include <algorithm>
 #include <map>
 #include <memory>
 #include <unordered_map>
 
-#include "StableCore/Storage/SCRefCounted.h"
+#include "SCRefCounted.h"
 
 namespace StableCore::Storage
 {

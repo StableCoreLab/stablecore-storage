@@ -141,18 +141,18 @@ if (SCSTORAGE_BUILD_DB_EDITOR)
 endif()
 
 set(SCSTORAGE_PUBLIC_HEADERS
-    Include/StableCore/Storage/SCBatch.h
-    Include/StableCore/Storage/ISCComputed.h
-    Include/StableCore/Storage/ISCDiagnostics.h
-    Include/StableCore/Storage/SCErrors.h
-    Include/StableCore/Storage/SCFactory.h
-    Include/StableCore/Storage/ISCInterfaces.h
-    Include/StableCore/Storage/SCMigration.h
-    Include/StableCore/Storage/SCRefCounted.h
-    Include/StableCore/Storage/ISCRefPtr.h
-    Include/StableCore/Storage/SCStorage.h
-    Include/StableCore/Storage/ISCTableView.h
-    Include/StableCore/Storage/SCTypes.h
+    Include/SCBatch.h
+    Include/ISCComputed.h
+    Include/ISCDiagnostics.h
+    Include/SCErrors.h
+    Include/SCFactory.h
+    Include/ISCInterfaces.h
+    Include/SCMigration.h
+    Include/SCRefCounted.h
+    Include/ISCRefPtr.h
+    Include/SCStorage.h
+    Include/ISCTableView.h
+    Include/SCTypes.h
 )
 
 option(SCSTORAGE_BUILD_TESTS "Build tests" ON)
@@ -242,7 +242,7 @@ install(FILES $<TARGET_PDB_FILE:${SCSTORAGE_TARGET}>
 )
 
 install(FILES ${SCSTORAGE_PUBLIC_HEADERS}
-    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/StableCore/Storage
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
 )
 
 install(TARGETS ${SCSTORAGE_MEMORY_EXAMPLE_TARGET} ${SCSTORAGE_PRODUCT_EXAMPLE_TARGET}

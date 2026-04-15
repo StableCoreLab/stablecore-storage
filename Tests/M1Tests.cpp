@@ -2,7 +2,7 @@
 
 #include <gtest/gtest.h>
 
-#include "StableCore/Storage/SCStorage.h"
+#include "SCStorage.h"
 
 namespace sc = StableCore::Storage;
 

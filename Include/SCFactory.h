@@ -1,6 +1,6 @@
 #pragma once
 
-#include "StableCore/Storage/ISCInterfaces.h"
+#include "ISCInterfaces.h"
 
 namespace StableCore::Storage
 {

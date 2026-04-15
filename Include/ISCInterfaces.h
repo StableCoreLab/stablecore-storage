@@ -1,8 +1,8 @@
 #pragma once
 
-#include "StableCore/Storage/SCErrors.h"
-#include "StableCore/Storage/ISCRefPtr.h"
-#include "StableCore/Storage/SCTypes.h"
+#include "SCErrors.h"
+#include "ISCRefPtr.h"
+#include "SCTypes.h"
 
 namespace StableCore::Storage
 {

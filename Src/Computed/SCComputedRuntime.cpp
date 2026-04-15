@@ -1,4 +1,4 @@
-#include "StableCore/Storage/ISCComputed.h"
+#include "ISCComputed.h"
 
 #include <algorithm>
 #include <cmath>
@@ -9,7 +9,7 @@
 #include <unordered_map>
 #include <utility>
 
-#include "StableCore/Storage/SCRefCounted.h"
+#include "SCRefCounted.h"
 
 namespace StableCore::Storage
 {

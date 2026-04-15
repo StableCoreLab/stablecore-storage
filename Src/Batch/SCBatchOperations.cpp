@@ -1,4 +1,4 @@
-#include "StableCore/Storage/SCBatch.h"
+#include "SCBatch.h"
 
 namespace StableCore::Storage
 {

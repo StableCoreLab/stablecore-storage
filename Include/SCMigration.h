@@ -2,8 +2,8 @@
 
 #include <vector>
 
-#include "StableCore/Storage/SCErrors.h"
-#include "StableCore/Storage/SCTypes.h"
+#include "SCErrors.h"
+#include "SCTypes.h"
 
 namespace StableCore::Storage
 {

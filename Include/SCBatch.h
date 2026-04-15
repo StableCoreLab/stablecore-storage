@@ -2,7 +2,7 @@
 
 #include <vector>
 
-#include "StableCore/Storage/ISCInterfaces.h"
+#include "ISCInterfaces.h"
 
 namespace StableCore::Storage
 {

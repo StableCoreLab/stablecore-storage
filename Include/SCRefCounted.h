@@ -2,7 +2,7 @@
 
 #include <atomic>
 
-#include "StableCore/Storage/ISCRefPtr.h"
+#include "ISCRefPtr.h"
 
 namespace StableCore::Storage
 {
