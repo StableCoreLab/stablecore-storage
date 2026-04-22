@@ -43,6 +43,7 @@ private slots:
     void RedoLastAction();
     void RefreshCurrentView();
     void ShowHealthSummary();
+    void ExportDebugPackage();
     void OnTableSelectionChanged();
     void OnGridSelectionChanged();
     void OnFilterTextChanged(const QString& text);

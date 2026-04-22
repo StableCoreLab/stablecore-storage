@@ -2,6 +2,8 @@
 
 #include <algorithm>
 
+#include <QIODevice>
+#include <QSaveFile>
 #include <QStringList>
 
 namespace sc = StableCore::Storage;
@@ -93,6 +95,67 @@ QString PickRecordLabel(
     }
 
     return QStringLiteral("Record %1").arg(recordId);
+}
+
+QString MaskIfNeeded(const QString& value, bool redact)
+{
+    if (!redact || value.isEmpty())
+    {
+        return value;
+    }
+
+    return QString(value.size(), QLatin1Char('*'));
+}
+
+sc::ErrorCode SaveFileWriteCallback(void* userData, const void* data, std::size_t size, std::size_t* bytesWritten)
+{
+    if (userData == nullptr)
+    {
+        return sc::SC_E_EXPORT_INVALID_STATE;
+    }
+
+    auto* file = static_cast<QSaveFile*>(userData);
+    const qint64 written = file->write(static_cast<const char*>(data), static_cast<qint64>(size));
+    if (written < 0)
+    {
+        if (bytesWritten != nullptr)
+        {
+            *bytesWritten = 0;
+        }
+        return sc::SC_E_EXPORT_WRITE_FAILED;
+    }
+
+    if (bytesWritten != nullptr)
+    {
+        *bytesWritten = static_cast<std::size_t>(written);
+    }
+    return written == static_cast<qint64>(size) ? sc::SC_OK : sc::SC_E_EXPORT_WRITE_FAILED;
+}
+
+bool WriteDebugPackageLine(sc::SCStreamingExportContext* context, const QString& line, const sc::SCPackageSizePolicy& sizePolicy, QString* outError)
+{
+    const sc::ErrorCode rc = sc::WriteExportLine(context, sc::Utf8Encode(line.toStdWString()), sizePolicy);
+    if (sc::Failed(rc))
+    {
+        if (outError != nullptr)
+        {
+            if (rc == sc::SC_E_EXPORT_TOO_LARGE)
+            {
+                *outError = QStringLiteral("Export package exceeds the configured size limit.");
+            }
+            else if (rc == sc::SC_E_EXPORT_CANCELLED)
+            {
+                *outError = QStringLiteral("Export package was cancelled.");
+            }
+            else
+            {
+                *outError = QStringLiteral("Export package write failed.");
+            }
+        }
+        return false;
+    }
+
+    return true;
 }
 
 }  // namespace
@@ -1121,6 +1184,257 @@ bool SCDatabaseSession::BeginAndCommitSingleAction(
         if (outError != nullptr)
         {
             *outError = ErrorToString(rc);
+        }
+        return false;
+    }
+
+    return true;
+}
+
+bool SCDatabaseSession::ExportDebugPackage(
+    const QString& filePath,
+    const sc::SCExportRequest& request,
+    QString* outError) const
+{
+    if (!IsOpen())
+    {
+        if (outError != nullptr)
+        {
+            *outError = QStringLiteral("No database is open.");
+        }
+        return false;
+    }
+
+    QSaveFile file(filePath);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text))
+    {
+        if (outError != nullptr)
+        {
+            *outError = QStringLiteral("Failed to open debug package file for writing.");
+        }
+        return false;
+    }
+
+    sc::SCStreamingExportContext context;
+    context.write = &SaveFileWriteCallback;
+    context.userData = &file;
+
+    const sc::SCPackageSizePolicy sizePolicy = request.packageSize.maxBytes > 0
+        ? request.packageSize
+        : sc::BuildDefaultPackageSizePolicy(request.mode);
+    const sc::SCRedactionPolicy redactionPolicy = request.redaction.redactPaths
+        || request.redaction.redactUserNames
+        || request.redaction.redactSensitiveText
+        || request.redaction.redactReplayPayloads
+        ? request.redaction
+        : sc::BuildDefaultRedactionPolicy(request.mode);
+    const sc::SCAssetSelection assets = request.assets.includeProject
+        || request.assets.includeSystemConfig
+        || request.assets.includeUserConfig
+        || request.assets.includeReplayJournal
+        || request.assets.includeReplaySnapshot
+        || request.assets.includeReplaySession
+        || request.assets.includeDiagnostics
+        || request.assets.includeLog
+        ? request.assets
+        : sc::BuildDefaultAssetSelection(request.mode);
+
+    if (!WriteDebugPackageLine(&context, QStringLiteral("[DebugPackage]"), sizePolicy, outError))
+    {
+        return false;
+    }
+    if (!WriteDebugPackageLine(&context, QStringLiteral("ExportMode=DebugPackage"), sizePolicy, outError))
+    {
+        return false;
+    }
+    if (!WriteDebugPackageLine(&context,
+                               QStringLiteral("Assets.Project=") + (assets.includeProject ? QStringLiteral("true")
+                                                                                       : QStringLiteral("false")),
+                               sizePolicy,
+                               outError))
+    {
+        return false;
+    }
+    if (!WriteDebugPackageLine(&context,
+                               QStringLiteral("Assets.SystemConfig=") + (assets.includeSystemConfig ? QStringLiteral("true")
+                                                                                                   : QStringLiteral("false")),
+                               sizePolicy,
+                               outError))
+    {
+        return false;
+    }
+    if (!WriteDebugPackageLine(&context,
+                               QStringLiteral("Assets.UserConfig=") + (assets.includeUserConfig ? QStringLiteral("true")
+                                                                                               : QStringLiteral("false")),
+                               sizePolicy,
+                               outError))
+    {
+        return false;
+    }
+    if (!WriteDebugPackageLine(&context,
+                               QStringLiteral("Assets.ReplayJournal=") + (assets.includeReplayJournal ? QStringLiteral("true")
+                                                                                                     : QStringLiteral("false")),
+                               sizePolicy,
+                               outError))
+    {
+        return false;
+    }
+    if (!WriteDebugPackageLine(&context,
+                               QStringLiteral("Assets.ReplaySnapshot=") + (assets.includeReplaySnapshot ? QStringLiteral("true")
+                                                                                                       : QStringLiteral("false")),
+                               sizePolicy,
+                               outError))
+    {
+        return false;
+    }
+    if (!WriteDebugPackageLine(&context,
+                               QStringLiteral("Assets.ReplaySession=") + (assets.includeReplaySession ? QStringLiteral("true")
+                                                                                                     : QStringLiteral("false")),
+                               sizePolicy,
+                               outError))
+    {
+        return false;
+    }
+    if (!WriteDebugPackageLine(&context,
+                               QStringLiteral("Assets.Diagnostics=") + (assets.includeDiagnostics ? QStringLiteral("true")
+                                                                                                  : QStringLiteral("false")),
+                               sizePolicy,
+                               outError))
+    {
+        return false;
+    }
+    if (!WriteDebugPackageLine(&context,
+                               QStringLiteral("Assets.Log=") + (assets.includeLog ? QStringLiteral("true")
+                                                                                  : QStringLiteral("false")),
+                               sizePolicy,
+                               outError))
+    {
+        return false;
+    }
+    if (!WriteDebugPackageLine(&context,
+                               QStringLiteral("PackageSize.MaxBytes=") + QString::number(sizePolicy.maxBytes),
+                               sizePolicy,
+                               outError))
+    {
+        return false;
+    }
+    if (!WriteDebugPackageLine(&context,
+                               QStringLiteral("Redaction.Paths=") + (redactionPolicy.redactPaths ? QStringLiteral("true")
+                                                                                                 : QStringLiteral("false")),
+                               sizePolicy,
+                               outError))
+    {
+        return false;
+    }
+    if (!WriteDebugPackageLine(&context,
+                               QStringLiteral("Redaction.UserNames=")
+                                   + (redactionPolicy.redactUserNames ? QStringLiteral("true") : QStringLiteral("false")),
+                               sizePolicy,
+                               outError))
+    {
+        return false;
+    }
+    if (!WriteDebugPackageLine(&context,
+                               QStringLiteral("Redaction.SensitiveText=")
+                                   + (redactionPolicy.redactSensitiveText ? QStringLiteral("true")
+                                                                          : QStringLiteral("false")),
+                               sizePolicy,
+                               outError))
+    {
+        return false;
+    }
+    if (!WriteDebugPackageLine(&context,
+                               QStringLiteral("Redaction.ReplayPayloads=")
+                                   + (redactionPolicy.redactReplayPayloads ? QStringLiteral("true")
+                                                                           : QStringLiteral("false")),
+                               sizePolicy,
+                               outError))
+    {
+        return false;
+    }
+
+    if (assets.includeProject)
+    {
+        if (!WriteDebugPackageLine(&context, QStringLiteral("[Project]"), sizePolicy, outError))
+        {
+            return false;
+        }
+        if (!WriteDebugPackageLine(&context,
+                                   QStringLiteral("DatabasePath=") + MaskIfNeeded(databasePath_, redactionPolicy.redactPaths),
+                                   sizePolicy,
+                                   outError))
+        {
+            return false;
+        }
+        if (!WriteDebugPackageLine(&context,
+                                   QStringLiteral("CurrentTable=") + MaskIfNeeded(currentTableName_, redactionPolicy.redactSensitiveText),
+                                   sizePolicy,
+                                   outError))
+        {
+            return false;
+        }
+        if (!WriteDebugPackageLine(&context,
+                                   QStringLiteral("TableCount=") + QString::number(tableNames_.size()),
+                                   sizePolicy,
+                                   outError))
+        {
+            return false;
+        }
+    }
+
+    if (assets.includeDiagnostics)
+    {
+        sc::SCStorageHealthReport report;
+        const sc::ErrorCode rc = sc::BuildStorageHealthReport(db_.Get(), L"SQLite", &report);
+        if (sc::Failed(rc))
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("Failed to build storage health report.");
+            }
+            return false;
+        }
+
+        if (!WriteDebugPackageLine(&context, QStringLiteral("[Diagnostics]"), sizePolicy, outError))
+        {
+            return false;
+        }
+        if (!WriteDebugPackageLine(&context,
+                                   QStringLiteral("Backend=") + QString::fromStdWString(report.backendName),
+                                   sizePolicy,
+                                   outError))
+        {
+            return false;
+        }
+        if (!WriteDebugPackageLine(&context,
+                                   QStringLiteral("SchemaVersion=") + QString::number(static_cast<qulonglong>(report.currentVersion)),
+                                   sizePolicy,
+                                   outError))
+        {
+            return false;
+        }
+        for (const sc::SCDiagnosticEntry& entry : report.diagnostics)
+        {
+            const QString severity = entry.severity == sc::SCDiagnosticSeverity::Error
+                ? QStringLiteral("Error")
+                : entry.severity == sc::SCDiagnosticSeverity::Warning ? QStringLiteral("Warning") : QStringLiteral("Info");
+            if (!WriteDebugPackageLine(&context,
+                                       QStringLiteral("Diagnostic=") + severity + QStringLiteral("|")
+                                           + QString::fromStdWString(entry.category) + QStringLiteral("|")
+                                           + QString::fromStdWString(entry.message),
+                                       sizePolicy,
+                                       outError))
+            {
+                return false;
+            }
+        }
+    }
+
+    if (!file.commit())
+    {
+        if (outError != nullptr)
+        {
+            *outError = QStringLiteral("Failed to finalize debug package file.");
         }
         return false;
     }

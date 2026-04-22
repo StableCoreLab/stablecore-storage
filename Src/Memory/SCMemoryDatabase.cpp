@@ -1,9 +1,13 @@
+#include "SCBatch.h"
 #include "SCFactory.h"
+#include "ISCQuery.h"
+#include "SCQueryMemoryExecutor.h"
 
 #include <algorithm>
 #include <map>
 #include <memory>
 #include <unordered_map>
+#include <typeindex>
 
 #include "SCRefCounted.h"
 
@@ -334,7 +338,7 @@ private:
     std::unordered_map<RecordId, std::shared_ptr<MemoryRecordData>> records_;
 };
 
-class MemoryDatabase final : public ISCDatabase, public SCRefCountedObject
+class MemoryDatabase final : public ISCDatabase, public IReferenceIndexProvider, public SCRefCountedObject
 {
 public:
     ErrorCode BeginEdit(const wchar_t* name, SCEditPtr& outEdit) override;
@@ -348,13 +352,38 @@ public:
     ErrorCode GetTableName(std::int32_t index, std::wstring* outName) override;
     ErrorCode GetTable(const wchar_t* name, SCTablePtr& outTable) override;
     ErrorCode CreateTable(const wchar_t* name, SCTablePtr& outTable) override;
+    ErrorCode ExecuteUpgradePlan(const SCUpgradePlan& plan, bool confirmed, SCUpgradeResult* outResult) override;
+    ErrorCode BeginImportSession(const SCImportSessionOptions& options, SCImportStagingArea* outSession) override;
+    ErrorCode AppendImportChunk(
+        SCImportStagingArea* session,
+        const SCImportChunk& chunk,
+        SCImportCheckpoint* outCheckpoint) override;
+    ErrorCode LoadImportRecoveryState(std::uint64_t sessionId, SCImportRecoveryState* outState) override;
+    ErrorCode FinalizeImportSession(const SCImportFinalizeCommit& commit, SCImportRecoveryState* outState) override;
+    ErrorCode AbortImportSession(std::uint64_t sessionId) override;
 
     ErrorCode AddObserver(ISCDatabaseObserver* observer) override;
     ErrorCode RemoveObserver(ISCDatabaseObserver* observer) override;
 
+    ErrorCode GetReferencesBySource(
+        const std::wstring& sourceTable,
+        RecordId sourceRecordId,
+        std::vector<ReferenceRecord>* outRecords) const override;
+    ErrorCode GetReferencesByTarget(
+        const std::wstring& targetTable,
+        RecordId targetRecordId,
+        std::vector<ReverseReferenceRecord>* outRecords) const override;
+    ErrorCode CheckReferenceIndex(ReferenceIndexCheckResult* outResult) const override;
+    ErrorCode GetAllReferencesDiagnosticOnly(ReferenceIndex* outIndex) const override;
+
     VersionId GetCurrentVersion() const noexcept override
     {
         return version_;
+    }
+
+    std::int32_t GetSchemaVersion() const noexcept override
+    {
+        return schemaVersion_;
     }
 
     bool HasActiveEdit() const noexcept
@@ -402,6 +431,9 @@ private:
 
     VersionId version_{0};
     RecordId nextRecordId_{1};
+    std::int32_t schemaVersion_{2};
+    SCImportSessionId nextImportSessionId_{1};
+    std::map<SCImportSessionId, SCImportRecoveryState> importSessions_;
     std::map<std::wstring, SCTablePtr> tables_;
     std::vector<ISCDatabaseObserver*> observers_;
     SCRefPtr<MemoryEditSession> activeEdit_;
@@ -576,6 +608,132 @@ ErrorCode MemoryDatabase::CreateTable(const wchar_t* name, SCTablePtr& outTable)
     SCTablePtr table = SCMakeRef<MemoryTable>(this, std::wstring{name});
     tables_.emplace(name, table);
     outTable = std::move(table);
+    return SC_OK;
+}
+
+ErrorCode MemoryDatabase::ExecuteUpgradePlan(const SCUpgradePlan&, bool, SCUpgradeResult*)
+{
+    return SC_E_NOTIMPL;
+}
+
+ErrorCode MemoryDatabase::BeginImportSession(const SCImportSessionOptions& options, SCImportStagingArea* outSession)
+{
+    if (outSession == nullptr)
+    {
+        return SC_E_POINTER;
+    }
+
+    SCImportStagingArea session;
+    session.sessionId = nextImportSessionId_++;
+    session.sessionName = options.sessionName.empty() ? L"Import" : options.sessionName;
+    session.baseVersion = version_;
+    session.chunkSize = options.chunkSize == 0 ? 1 : options.chunkSize;
+    session.state = SCImportSessionState::Staging;
+
+    SCImportRecoveryState recoveryState;
+    recoveryState.sessionId = session.sessionId;
+    recoveryState.state = SCImportSessionState::Staging;
+    recoveryState.stagingArea = session;
+    recoveryState.checkpoint.sessionId = session.sessionId;
+    recoveryState.checkpoint.baseVersion = version_;
+    recoveryState.canResume = true;
+    recoveryState.canFinalize = false;
+    recoveryState.reason = L"Import session staged in memory.";
+
+    importSessions_.emplace(session.sessionId, recoveryState);
+    *outSession = std::move(session);
+    return SC_OK;
+}
+
+ErrorCode MemoryDatabase::AppendImportChunk(
+    SCImportStagingArea* session,
+    const SCImportChunk& chunk,
+    SCImportCheckpoint* outCheckpoint)
+{
+    if (session == nullptr)
+    {
+        return SC_E_POINTER;
+    }
+
+    session->chunks.push_back(chunk);
+    session->state = SCImportSessionState::Checkpointed;
+
+    const auto it = importSessions_.find(session->sessionId);
+    if (it == importSessions_.end())
+    {
+        return SC_E_RECORD_NOT_FOUND;
+    }
+
+    it->second.stagingArea = *session;
+    it->second.state = SCImportSessionState::Checkpointed;
+    it->second.checkpoint.sessionId = session->sessionId;
+    it->second.checkpoint.lastChunkId = chunk.chunkId;
+    it->second.checkpoint.chunkCount = session->chunks.size();
+    it->second.checkpoint.baseVersion = session->baseVersion;
+    it->second.checkpoint.persisted = true;
+    it->second.checkpointPersisted = true;
+    it->second.canResume = true;
+    it->second.canFinalize = true;
+    it->second.reason = L"Import checkpoint stored in memory.";
+
+    if (outCheckpoint != nullptr)
+    {
+        *outCheckpoint = it->second.checkpoint;
+    }
+    return SC_OK;
+}
+
+ErrorCode MemoryDatabase::LoadImportRecoveryState(std::uint64_t sessionId, SCImportRecoveryState* outState)
+{
+    if (outState == nullptr)
+    {
+        return SC_E_POINTER;
+    }
+
+    const auto it = importSessions_.find(sessionId);
+    if (it == importSessions_.end())
+    {
+        return SC_E_RECORD_NOT_FOUND;
+    }
+
+    *outState = it->second;
+    return SC_OK;
+}
+
+ErrorCode MemoryDatabase::FinalizeImportSession(const SCImportFinalizeCommit& commit, SCImportRecoveryState* outState)
+{
+    if (!commit.confirmed)
+    {
+        return SC_E_INVALIDARG;
+    }
+
+    const auto it = importSessions_.find(commit.sessionId);
+    if (it == importSessions_.end())
+    {
+        return SC_E_RECORD_NOT_FOUND;
+    }
+
+    it->second.state = SCImportSessionState::Finalized;
+    it->second.canResume = false;
+    it->second.canFinalize = false;
+    it->second.reason = L"Import session finalized.";
+    if (outState != nullptr)
+    {
+        *outState = it->second;
+    }
+    importSessions_.erase(it);
+    return SC_OK;
+}
+
+ErrorCode MemoryDatabase::AbortImportSession(std::uint64_t sessionId)
+{
+    const auto it = importSessions_.find(sessionId);
+    if (it == importSessions_.end())
+    {
+        return SC_E_RECORD_NOT_FOUND;
+    }
+
+    importSessions_.erase(it);
     return SC_OK;
 }
 
@@ -800,8 +958,264 @@ ErrorCode MemoryDatabase::DeleteRecord(MemoryTable* table, const std::shared_ptr
     return SC_OK;
 }
 
+ErrorCode MemoryDatabase::GetReferencesBySource(
+    const std::wstring& sourceTable,
+    RecordId sourceRecordId,
+    std::vector<ReferenceRecord>* outRecords) const
+{
+    if (outRecords == nullptr)
+    {
+        return SC_E_POINTER;
+    }
+    outRecords->clear();
+
+    const auto tableIt = tables_.find(sourceTable);
+    if (tableIt == tables_.end())
+    {
+        return SC_OK;
+    }
+
+    auto* table = static_cast<MemoryTable*>(tableIt->second.Get());
+    if (table == nullptr)
+    {
+        return SC_OK;
+    }
+
+    const auto recordIt = table->Records().find(sourceRecordId);
+    if (recordIt == table->Records().end() || recordIt->second == nullptr || recordIt->second->state == RecordState::Deleted)
+    {
+        return SC_OK;
+    }
+
+    SCSchemaPtr schema;
+    const ErrorCode schemaRc = table->GetSchema(schema);
+    if (Failed(schemaRc) || !schema)
+    {
+        return schemaRc;
+    }
+
+    std::int32_t columnCount = 0;
+    const ErrorCode countRc = schema->GetColumnCount(&columnCount);
+    if (Failed(countRc))
+    {
+        return countRc;
+    }
+
+    for (std::int32_t columnIndex = 0; columnIndex < columnCount; ++columnIndex)
+    {
+        SCColumnDef column;
+        if (Failed(schema->GetColumn(columnIndex, &column)))
+        {
+            continue;
+        }
+        if (column.columnKind != ColumnKind::Relation)
+        {
+            continue;
+        }
+
+        const auto valueIt = recordIt->second->values.find(column.name);
+        if (valueIt == recordIt->second->values.end())
+        {
+            continue;
+        }
+
+        RecordId targetRecordId = 0;
+        if (Failed(valueIt->second.AsRecordId(&targetRecordId)))
+        {
+            continue;
+        }
+
+        outRecords->push_back(ReferenceRecord{
+            sourceTable,
+            sourceRecordId,
+            column.name,
+            column.referenceTable,
+            targetRecordId,
+            version_,
+            0,
+            std::nullopt});
+    }
+
+    return SC_OK;
+}
+
+ErrorCode MemoryDatabase::GetReferencesByTarget(
+    const std::wstring& targetTable,
+    RecordId targetRecordId,
+    std::vector<ReverseReferenceRecord>* outRecords) const
+{
+    if (outRecords == nullptr)
+    {
+        return SC_E_POINTER;
+    }
+    outRecords->clear();
+
+    for (const auto& [_, tableRef] : tables_)
+    {
+        auto* table = static_cast<MemoryTable*>(tableRef.Get());
+        if (table == nullptr)
+        {
+            continue;
+        }
+
+        SCSchemaPtr schema;
+        if (Failed(table->GetSchema(schema)) || !schema)
+        {
+            continue;
+        }
+
+        std::int32_t columnCount = 0;
+        if (Failed(schema->GetColumnCount(&columnCount)))
+        {
+            continue;
+        }
+
+        for (std::int32_t columnIndex = 0; columnIndex < columnCount; ++columnIndex)
+        {
+            SCColumnDef column;
+            if (Failed(schema->GetColumn(columnIndex, &column)))
+            {
+                continue;
+            }
+            if (column.columnKind != ColumnKind::Relation || column.referenceTable != targetTable)
+            {
+                continue;
+            }
+
+            for (const auto& [candidateId, candidateData] : table->Records())
+            {
+                if (candidateData == nullptr || candidateData->state == RecordState::Deleted)
+                {
+                    continue;
+                }
+
+                const auto valueIt = candidateData->values.find(column.name);
+                if (valueIt == candidateData->values.end())
+                {
+                    continue;
+                }
+
+                RecordId referencedId = 0;
+                if (Succeeded(valueIt->second.AsRecordId(&referencedId)) && referencedId == targetRecordId)
+                {
+                    outRecords->push_back(ReverseReferenceRecord{
+                        targetTable,
+                        targetRecordId,
+                        table->Name(),
+                        candidateId,
+                        column.name,
+                        version_,
+                        0,
+                        std::nullopt});
+                }
+            }
+        }
+    }
+
+    return SC_OK;
+}
+
+ErrorCode MemoryDatabase::CheckReferenceIndex(ReferenceIndexCheckResult* outResult) const
+{
+    if (outResult == nullptr)
+    {
+        return SC_E_POINTER;
+    }
+
+    outResult->state = ReferenceIndexHealthState::Missing;
+    outResult->indexVersion = 0;
+    outResult->expectedVersion = 1;
+    outResult->message = L"reference-index-read-only-scan-provider";
+    return SC_OK;
+}
+
+ErrorCode MemoryDatabase::GetAllReferencesDiagnosticOnly(ReferenceIndex* outIndex) const
+{
+    if (outIndex == nullptr)
+    {
+        return SC_E_POINTER;
+    }
+
+    outIndex->records.clear();
+    for (const auto& [_, tableRef] : tables_)
+    {
+        auto* table = static_cast<MemoryTable*>(tableRef.Get());
+        if (table == nullptr)
+        {
+            continue;
+        }
+
+        SCSchemaPtr schema;
+        if (Failed(table->GetSchema(schema)) || !schema)
+        {
+            continue;
+        }
+
+        std::int32_t columnCount = 0;
+        if (Failed(schema->GetColumnCount(&columnCount)))
+        {
+            continue;
+        }
+
+        for (const auto& [recordId, recordData] : table->Records())
+        {
+            if (recordData == nullptr || recordData->state == RecordState::Deleted)
+            {
+                continue;
+            }
+
+            for (std::int32_t columnIndex = 0; columnIndex < columnCount; ++columnIndex)
+            {
+                SCColumnDef column;
+                if (Failed(schema->GetColumn(columnIndex, &column)))
+                {
+                    continue;
+                }
+                if (column.columnKind != ColumnKind::Relation)
+                {
+                    continue;
+                }
+
+                const auto valueIt = recordData->values.find(column.name);
+                if (valueIt == recordData->values.end())
+                {
+                    continue;
+                }
+
+                RecordId targetId = 0;
+                if (Failed(valueIt->second.AsRecordId(&targetId)))
+                {
+                    continue;
+                }
+
+                outIndex->records.push_back(ReferenceRecord{
+                    table->Name(),
+                    recordId,
+                    column.name,
+                    column.referenceTable,
+                    targetId,
+                    version_,
+                    0,
+                    std::nullopt});
+            }
+        }
+    }
+
+    return SC_OK;
+}
+
 bool MemoryDatabase::IsRecordReferenced(const std::wstring& tableName, RecordId recordId) const
 {
+    ReferenceIndexCheckResult check;
+    if (Succeeded(CheckReferenceIndex(&check)) && check.state == ReferenceIndexHealthState::Healthy)
+    {
+        std::vector<ReverseReferenceRecord> refs;
+        if (Succeeded(GetReferencesByTarget(tableName, recordId, &refs)))
+        {
+            return !refs.empty();
+        }
+    }
+
     for (const auto& [_, tableRef] : tables_)
     {
         auto* table = static_cast<MemoryTable*>(tableRef.Get());
@@ -1238,35 +1652,42 @@ ErrorCode MemoryTable::EnumerateRecords(SCRecordCursorPtr& outCursor)
 
 ErrorCode MemoryTable::FindRecords(const SCQueryCondition& condition, SCRecordCursorPtr& outCursor)
 {
-    const SCColumnDef* column = Schema()->FindColumnDef(condition.fieldName);
-    if (column == nullptr)
+    QueryPlan legacyPlan;
+    const ErrorCode bridgeRc = SCQueryBridge::BuildPlanFromLegacyFindRecords(Name(), condition, &legacyPlan);
+    if (Failed(bridgeRc))
     {
-        return SC_E_COLUMN_NOT_FOUND;
+        return bridgeRc;
     }
 
-    std::vector<SCRecordPtr> matched;
-    for (const auto& [_, data] : records_)
+    auto planner = CreateDefaultQueryPlanner();
+    if (!planner)
     {
-        if (data->state == RecordState::Deleted)
-        {
-            continue;
-        }
-
-        SCValue actual = column->defaultValue;
-        const auto it = data->values.find(condition.fieldName);
-        if (it != data->values.end())
-        {
-            actual = it->second;
-        }
-
-        if (actual == condition.expectedValue)
-        {
-            matched.push_back(MakeRecord(data));
-        }
+        return SC_E_NOTIMPL;
     }
 
-    outCursor = SCMakeRef<MemoryRecordCursor>(std::move(matched));
-    return SC_OK;
+    QueryPlan executablePlan;
+    const ErrorCode planRc = planner->BuildPlan(
+        legacyPlan.target,
+        legacyPlan.conditionGroups,
+        legacyPlan.conditionGroupLogic,
+        legacyPlan.orderBy,
+        legacyPlan.page,
+        legacyPlan.hints,
+        legacyPlan.constraints,
+        &executablePlan);
+    if (Failed(planRc))
+    {
+        return planRc;
+    }
+
+    QueryExecutionContext context;
+    context.backendKind = QueryBackendKind::Memory;
+    context.database = db_;
+    context.backendHandle = db_;
+    context.resultCursor = &outCursor;
+
+    QueryExecutionResult executionResult;
+    return ExecuteQueryPlan(executablePlan, context, &executionResult);
 }
 
 }  // namespace
@@ -1274,6 +1695,7 @@ ErrorCode MemoryTable::FindRecords(const SCQueryCondition& condition, SCRecordCu
 ErrorCode CreateInMemoryDatabase(SCDbPtr& outDatabase)
 {
     outDatabase = SCMakeRef<MemoryDatabase>();
+    RegisterQueryExecutionContextDispatch(QueryBackendKind::Memory, &ExecuteMemoryQueryDispatch);
     return SC_OK;
 }
 

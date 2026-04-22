@@ -14,6 +14,37 @@ class ISCTable;
 class ISCEditSession;
 class ISCDatabase;
 class ISCDatabaseObserver;
+class IQueryPlanner;
+class IQueryExecutor;
+class IQueryIndexProvider;
+class IQueryIndexMaintainer;
+class IReferenceIndexProvider;
+class IReferenceIndexMaintainer;
+class SCQueryBridge;
+// Query planner and bridge remain compatibility seams only; backend execution stays out of this header.
+struct QueryTarget;
+struct QueryCondition;
+struct QueryConditionGroup;
+struct SortSpec;
+struct QueryPage;
+struct QueryHints;
+struct QueryConstraints;
+struct QueryPlan;
+struct QueryExecutionResult;
+struct QueryIndexCheckResult;
+struct ReferenceIndexCheckResult;
+struct ReferenceRecord;
+struct ReverseReferenceRecord;
+struct ReferenceIndex;
+struct ReverseReferenceIndex;
+struct SCImportSessionOptions;
+struct SCImportStagingArea;
+struct SCImportChunk;
+struct SCImportCheckpoint;
+struct SCImportFinalizeCommit;
+struct SCImportRecoveryState;
+struct SCUpgradePlan;
+struct SCUpgradeResult;
 
 using SCSchemaPtr = SCRefPtr<ISCSchema>;
 using SCRecordPtr = SCRefPtr<ISCRecord>;
@@ -123,10 +154,29 @@ public:
     virtual ErrorCode GetTable(const wchar_t* name, SCTablePtr& outTable) = 0;
     virtual ErrorCode CreateTable(const wchar_t* name, SCTablePtr& outTable) = 0;
 
+    // Executes an explicit upgrade plan after the caller has confirmed the change.
+    virtual ErrorCode ExecuteUpgradePlan(
+        const SCUpgradePlan& plan,
+        bool confirmed,
+        SCUpgradeResult* outResult) = 0;
+
+    // Import sessions stage chunked data before a final commit makes it visible to the live model.
+    virtual ErrorCode BeginImportSession(const SCImportSessionOptions& options, SCImportStagingArea* outSession) = 0;
+    virtual ErrorCode AppendImportChunk(
+        SCImportStagingArea* session,
+        const SCImportChunk& chunk,
+        SCImportCheckpoint* outCheckpoint) = 0;
+    virtual ErrorCode LoadImportRecoveryState(std::uint64_t sessionId, SCImportRecoveryState* outState) = 0;
+    virtual ErrorCode FinalizeImportSession(
+        const SCImportFinalizeCommit& commit,
+        SCImportRecoveryState* outState) = 0;
+    virtual ErrorCode AbortImportSession(std::uint64_t sessionId) = 0;
+
     virtual ErrorCode AddObserver(ISCDatabaseObserver* observer) = 0;
     virtual ErrorCode RemoveObserver(ISCDatabaseObserver* observer) = 0;
 
     virtual VersionId GetCurrentVersion() const noexcept = 0;
+    virtual std::int32_t GetSchemaVersion() const noexcept = 0;
 };
 
 }  // namespace StableCore::Storage

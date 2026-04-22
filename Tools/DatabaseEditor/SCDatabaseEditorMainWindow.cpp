@@ -229,6 +229,7 @@ void SCDatabaseEditorMainWindow::BuildMenus()
 
     auto* toolsMenu = menuBar()->addMenu(QStringLiteral("&Tools"));
     toolsMenu->addAction(QStringLiteral("Show Health Summary"), this, &SCDatabaseEditorMainWindow::ShowHealthSummary);
+    toolsMenu->addAction(QStringLiteral("Export Debug Package..."), this, &SCDatabaseEditorMainWindow::ExportDebugPackage);
 
     auto* toolbar = addToolBar(QStringLiteral("Main"));
     toolbar->addAction(QStringLiteral("Open"), this, &SCDatabaseEditorMainWindow::OpenDatabase);
@@ -585,6 +586,34 @@ void SCDatabaseEditorMainWindow::RefreshCurrentView()
 void SCDatabaseEditorMainWindow::ShowHealthSummary()
 {
     diagnosticsText_->setPlainText(session_->BuildHealthSummary());
+}
+
+void SCDatabaseEditorMainWindow::ExportDebugPackage()
+{
+    const QString filePath = QFileDialog::getSaveFileName(
+        this,
+        QStringLiteral("Export Debug Package"),
+        QString(),
+        QStringLiteral("Debug Package (*.scdbg);;All Files (*)"));
+    if (filePath.isEmpty())
+    {
+        return;
+    }
+
+    sc::SCExportRequest request;
+    request.mode = sc::SCExportMode::DebugPackage;
+    request.assets = sc::BuildDefaultAssetSelection(request.mode);
+    request.redaction = sc::BuildDefaultRedactionPolicy(request.mode);
+    request.packageSize = sc::BuildDefaultPackageSizePolicy(request.mode);
+
+    QString error;
+    if (!session_->ExportDebugPackage(filePath, request, &error))
+    {
+        ShowError(QStringLiteral("Export Debug Package Failed"), error);
+        return;
+    }
+
+    SetStatusMessage(QStringLiteral("Debug package exported: ") + filePath);
 }
 
 void SCDatabaseEditorMainWindow::OnTableSelectionChanged()

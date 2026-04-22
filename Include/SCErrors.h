@@ -33,6 +33,11 @@ constexpr ErrorCode SC_E_REDO_STACK_EMPTY     = 0xA0010202L;
 
 constexpr ErrorCode SC_E_CONSTRAINT_VIOLATION = 0xA0010301L;
 constexpr ErrorCode SC_E_REFERENCE_INVALID    = 0xA0010302L;
+constexpr ErrorCode SC_E_READ_ONLY_DATABASE   = 0xA0010303L;
+constexpr ErrorCode SC_E_EXPORT_TOO_LARGE      = 0xA0010304L;
+constexpr ErrorCode SC_E_EXPORT_CANCELLED      = 0xA0010305L;
+constexpr ErrorCode SC_E_EXPORT_WRITE_FAILED   = 0xA0010306L;
+constexpr ErrorCode SC_E_EXPORT_INVALID_STATE  = 0xA0010307L;
 
 inline bool Succeeded(ErrorCode code) noexcept
 {

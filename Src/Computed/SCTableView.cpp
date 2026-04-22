@@ -1,4 +1,5 @@
 #include "ISCTableView.h"
+#include "SCQuery.h"
 
 #include <algorithm>
 #include <cwctype>
@@ -70,6 +71,16 @@ public:
 
         SCTablePtr relatedTable;
         ErrorCode rc = database_->GetTable(parts[0].c_str(), relatedTable);
+        if (Failed(rc))
+        {
+            return rc;
+        }
+
+        [[maybe_unused]] QueryPlan legacyPlan;
+        rc = SCQueryBridge::BuildPlanFromLegacyFindRecords(
+            parts[0],
+            SCQueryCondition{parts[1], SCValue::FromRecordId(record_->GetId())},
+            &legacyPlan);
         if (Failed(rc))
         {
             return rc;

@@ -26,6 +26,13 @@ struct RecordingObserver final : sc::ISCDatabaseObserver
 
 using CreateDbFn = std::function<sc::SCDbPtr()>;
 
+struct RelationProviderFixture
+{
+    sc::SCDbPtr db;
+    sc::RecordId floor2Id{0};
+    sc::RecordId beamAId{0};
+};
+
 fs::path MakeTempDbPath(const wchar_t* fileName)
 {
     fs::path path = fs::temp_directory_path() / fileName;
@@ -177,6 +184,47 @@ void RunM3RelationBaseline(const CreateDbFn& createDb)
     EXPECT_EQ(db->RemoveObserver(&observer), sc::SC_OK);
 }
 
+RelationProviderFixture CreateRelationProviderFixture(const CreateDbFn& createDb)
+{
+    RelationProviderFixture fixture;
+    fixture.db = createDb();
+    EXPECT_TRUE(static_cast<bool>(fixture.db));
+
+    sc::SCTablePtr floorTable = CreateFloorTable(fixture.db);
+    sc::SCTablePtr beamTable = CreateBeamTable(fixture.db);
+
+    sc::SCEditPtr seedEdit;
+    EXPECT_EQ(fixture.db->BeginEdit(L"seed relation provider fixture", seedEdit), sc::SC_OK);
+
+    sc::SCRecordPtr floor2;
+    EXPECT_EQ(floorTable->CreateRecord(floor2), sc::SC_OK);
+    EXPECT_EQ(floor2->SetString(L"Title", L"2F"), sc::SC_OK);
+    fixture.floor2Id = floor2->GetId();
+
+    sc::SCRecordPtr floor3;
+    EXPECT_EQ(floorTable->CreateRecord(floor3), sc::SC_OK);
+    EXPECT_EQ(floor3->SetString(L"Title", L"3F"), sc::SC_OK);
+
+    sc::SCRecordPtr beamA;
+    EXPECT_EQ(beamTable->CreateRecord(beamA), sc::SC_OK);
+    EXPECT_EQ(beamA->SetString(L"Name", L"B-A"), sc::SC_OK);
+    EXPECT_EQ(beamA->SetRef(L"FloorRef", floor2->GetId()), sc::SC_OK);
+    fixture.beamAId = beamA->GetId();
+
+    sc::SCRecordPtr beamB;
+    EXPECT_EQ(beamTable->CreateRecord(beamB), sc::SC_OK);
+    EXPECT_EQ(beamB->SetString(L"Name", L"B-B"), sc::SC_OK);
+    EXPECT_EQ(beamB->SetRef(L"FloorRef", floor2->GetId()), sc::SC_OK);
+
+    sc::SCRecordPtr beamC;
+    EXPECT_EQ(beamTable->CreateRecord(beamC), sc::SC_OK);
+    EXPECT_EQ(beamC->SetString(L"Name", L"B-C"), sc::SC_OK);
+    EXPECT_EQ(beamC->SetRef(L"FloorRef", floor3->GetId()), sc::SC_OK);
+
+    EXPECT_EQ(fixture.db->Commit(seedEdit.Get()), sc::SC_OK);
+    return fixture;
+}
+
 }  // namespace
 
 TEST(StorageM3, MemoryRelationBaseline)
@@ -225,4 +273,60 @@ TEST(StorageM3, SqliteRelationBaseline)
 
     const std::vector<std::wstring> remainingBeams = CollectBeamNames(beamTable, aliveFloorIds.front());
     EXPECT_EQ(remainingBeams.size(), 3u);
+}
+
+TEST(StorageM3, MemoryReferenceIndexReadOnlyAccess)
+{
+    const auto fixture = CreateRelationProviderFixture([]()
+    {
+        sc::SCDbPtr db;
+        EXPECT_EQ(sc::CreateInMemoryDatabase(db), sc::SC_OK);
+        return db;
+    });
+
+    const auto* provider = dynamic_cast<const sc::IReferenceIndexProvider*>(fixture.db.Get());
+    ASSERT_NE(provider, nullptr);
+
+    sc::ReferenceIndexCheckResult check;
+    EXPECT_EQ(provider->CheckReferenceIndex(&check), sc::SC_OK);
+    EXPECT_EQ(check.state, sc::ReferenceIndexHealthState::Missing);
+
+    std::vector<sc::ReverseReferenceRecord> reverseRefs;
+    EXPECT_EQ(provider->GetReferencesByTarget(L"Floor", fixture.floor2Id, &reverseRefs), sc::SC_OK);
+    EXPECT_EQ(reverseRefs.size(), 2u);
+
+    std::vector<sc::ReferenceRecord> forwardRefs;
+    EXPECT_EQ(provider->GetReferencesBySource(L"Beam", fixture.beamAId, &forwardRefs), sc::SC_OK);
+    ASSERT_EQ(forwardRefs.size(), 1u);
+    EXPECT_EQ(forwardRefs.front().sourceTable, L"Beam");
+    EXPECT_EQ(forwardRefs.front().targetTable, L"Floor");
+}
+
+TEST(StorageM3, SqliteReferenceIndexReadOnlyAccess)
+{
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_M3_ReferenceIndex.sqlite");
+
+    const auto fixture = CreateRelationProviderFixture([&dbPath]()
+    {
+        sc::SCDbPtr db;
+        EXPECT_EQ(sc::CreateSqliteDatabase(dbPath.c_str(), db), sc::SC_OK);
+        return db;
+    });
+
+    const auto* provider = dynamic_cast<const sc::IReferenceIndexProvider*>(fixture.db.Get());
+    ASSERT_NE(provider, nullptr);
+
+    sc::ReferenceIndexCheckResult check;
+    EXPECT_EQ(provider->CheckReferenceIndex(&check), sc::SC_OK);
+    EXPECT_EQ(check.state, sc::ReferenceIndexHealthState::Missing);
+
+    std::vector<sc::ReverseReferenceRecord> reverseRefs;
+    EXPECT_EQ(provider->GetReferencesByTarget(L"Floor", fixture.floor2Id, &reverseRefs), sc::SC_OK);
+    EXPECT_EQ(reverseRefs.size(), 2u);
+
+    std::vector<sc::ReferenceRecord> forwardRefs;
+    EXPECT_EQ(provider->GetReferencesBySource(L"Beam", fixture.beamAId, &forwardRefs), sc::SC_OK);
+    ASSERT_EQ(forwardRefs.size(), 1u);
+    EXPECT_EQ(forwardRefs.front().sourceTable, L"Beam");
+    EXPECT_EQ(forwardRefs.front().targetTable, L"Floor");
 }

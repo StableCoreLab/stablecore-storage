@@ -48,6 +48,15 @@ public:
     bool DeleteRecord(StableCore::Storage::RecordId recordId, QString* outError);
     bool Undo(QString* outError);
     bool Redo(QString* outError);
+    bool BeginImportSession(const QString& sessionName, std::size_t chunkSize, QString* outError);
+    bool AppendImportChunk(const QVector<StableCore::Storage::SCBatchTableRequest>& requests, QString* outError);
+    bool FinalizeImportSession(QString* outError);
+    bool CancelImportSession(QString* outError);
+    bool GetImportRecoveryState(StableCore::Storage::SCImportRecoveryState* outState, QString* outError) const;
+    bool ExportDebugPackage(
+        const QString& filePath,
+        const StableCore::Storage::SCExportRequest& request,
+        QString* outError) const;
     bool SetCellValue(
         StableCore::Storage::RecordId recordId,
         const QString& columnName,
@@ -101,6 +110,8 @@ private:
     StableCore::Storage::SCDbPtr db_;
     StableCore::Storage::SCTablePtr currentTable_;
     StableCore::Storage::SCComputedTableViewPtr currentTableView_;
+    StableCore::Storage::SCImportStagingArea importSession_;
+    bool importSessionActive_{false};
     QString databasePath_;
     QString currentTableName_;
     QStringList tableNames_;

@@ -1,6 +1,7 @@
 #include <filesystem>
 
 #include <gtest/gtest.h>
+#include <sqlite3.h>
 
 #include "SCStorage.h"
 
@@ -16,6 +17,36 @@ fs::path MakeTempDbPath(const wchar_t* fileName)
     std::error_code ec;
     fs::remove(path, ec);
     return path;
+}
+
+bool ExecSqliteScript(const fs::path& dbPath, const char* sql)
+{
+    sqlite3* db = nullptr;
+    const std::string narrowPath = dbPath.string();
+    if (sqlite3_open_v2(narrowPath.c_str(), &db, SQLITE_OPEN_READWRITE, nullptr) != SQLITE_OK)
+    {
+        if (db != nullptr)
+        {
+            sqlite3_close(db);
+        }
+        return false;
+    }
+
+    char* error = nullptr;
+    const int rc = sqlite3_exec(db, sql, nullptr, nullptr, &error);
+    if (error != nullptr)
+    {
+        sqlite3_free(error);
+    }
+    sqlite3_close(db);
+    return rc == SQLITE_OK;
+}
+
+bool SetMetadataValue(const fs::path& dbPath, const char* key, const char* value)
+{
+    const std::string sql =
+        std::string("UPDATE metadata SET value='") + value + "' WHERE key='" + key + "';";
+    return ExecSqliteScript(dbPath, sql.c_str());
 }
 
 sc::SCTablePtr CreateBeamTable(sc::SCDbPtr& db)
@@ -222,4 +253,231 @@ TEST(StorageM2Sqlite, PersistedEmptyQueryIsNotError)
     bool hasRow = true;
     EXPECT_EQ(cursor->MoveNext(&hasRow), sc::SC_OK);
     EXPECT_FALSE(hasRow);
+}
+
+TEST(StorageM2Sqlite, VersionGraphReportsUpgradeWindow)
+{
+    sc::SCVersionGraph graph;
+    EXPECT_EQ(sc::BuildDefaultVersionGraph(&graph), sc::SC_OK);
+    EXPECT_GE(graph.latestSupportedVersion, 2);
+    EXPECT_FALSE(graph.nodes.empty());
+    EXPECT_FALSE(graph.edges.empty());
+
+    sc::SCOpenDecision decision;
+    EXPECT_EQ(sc::EvaluateOpenDecision(graph, 1, true, &decision), sc::SC_OK);
+    EXPECT_EQ(decision.mode, sc::SCOpenMode::UpgradeRequired);
+    EXPECT_TRUE(decision.needsUpgrade);
+    EXPECT_TRUE(decision.readOnlyOnly);
+    EXPECT_FALSE(decision.writable);
+
+    EXPECT_EQ(sc::EvaluateOpenDecision(graph, graph.latestSupportedVersion, true, &decision), sc::SC_OK);
+    EXPECT_EQ(decision.mode, sc::SCOpenMode::ReadWrite);
+    EXPECT_FALSE(decision.needsUpgrade);
+    EXPECT_FALSE(decision.readOnlyOnly);
+    EXPECT_TRUE(decision.writable);
+}
+
+TEST(StorageM2Sqlite, ReadOnlySqliteOpenRejectsWrites)
+{
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_M2_ReadOnly.sqlite");
+
+    {
+        sc::SCDbPtr db;
+        EXPECT_EQ(sc::CreateSqliteDatabase(dbPath.c_str(), db), sc::SC_OK);
+
+        sc::SCTablePtr beamTable = CreateBeamTable(db);
+
+        sc::SCEditPtr edit;
+        EXPECT_EQ(db->BeginEdit(L"seed", edit), sc::SC_OK);
+
+        sc::SCRecordPtr beam;
+        EXPECT_EQ(beamTable->CreateRecord(beam), sc::SC_OK);
+        EXPECT_EQ(beam->SetInt64(L"Width", 320), sc::SC_OK);
+        EXPECT_EQ(db->Commit(edit.Get()), sc::SC_OK);
+    }
+
+    sc::SCDbPtr readOnlyDb;
+    EXPECT_EQ(sc::CreateSqliteDatabase(dbPath.c_str(), true, readOnlyDb), sc::SC_OK);
+    EXPECT_EQ(readOnlyDb->GetSchemaVersion(), 2);
+
+    sc::SCEditPtr edit;
+    EXPECT_EQ(readOnlyDb->BeginEdit(L"read-only", edit), sc::SC_E_READ_ONLY_DATABASE);
+}
+
+TEST(StorageM2Sqlite, UpgradeExecutionIsExplicit)
+{
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_M2_ExplicitUpgrade.sqlite");
+
+    {
+        sc::SCDbPtr db;
+        EXPECT_EQ(sc::CreateSqliteDatabase(dbPath.c_str(), db), sc::SC_OK);
+        sc::SCTablePtr beamTable = CreateBeamTable(db);
+
+        sc::SCEditPtr edit;
+        EXPECT_EQ(db->BeginEdit(L"seed", edit), sc::SC_OK);
+
+        sc::SCRecordPtr beam;
+        EXPECT_EQ(beamTable->CreateRecord(beam), sc::SC_OK);
+        EXPECT_EQ(beam->SetInt64(L"Width", 320), sc::SC_OK);
+        EXPECT_EQ(db->Commit(edit.Get()), sc::SC_OK);
+    }
+
+    EXPECT_TRUE(SetMetadataValue(dbPath, "schema_version", "1"));
+
+    sc::SCDbPtr reopened;
+    EXPECT_EQ(sc::CreateSqliteDatabase(dbPath.c_str(), reopened), sc::SC_OK);
+    EXPECT_EQ(reopened->GetSchemaVersion(), 1);
+
+    sc::SCVersionGraph graph;
+    EXPECT_EQ(sc::BuildDefaultVersionGraph(&graph), sc::SC_OK);
+
+    sc::SCUpgradePlan plan;
+    EXPECT_EQ(sc::BuildUpgradePlan(1, graph.latestSupportedVersion, graph, &plan), sc::SC_OK);
+    EXPECT_TRUE(plan.requiresConfirmation);
+    EXPECT_TRUE(plan.upgradeRequired);
+
+    sc::SCUpgradeResult result;
+    EXPECT_EQ(reopened->ExecuteUpgradePlan(plan, false, &result), sc::SC_E_INVALIDARG);
+    EXPECT_EQ(result.status, sc::SCUpgradeStatus::Failed);
+    EXPECT_EQ(reopened->GetSchemaVersion(), 1);
+
+    EXPECT_EQ(reopened->ExecuteUpgradePlan(plan, true, &result), sc::SC_OK);
+    EXPECT_EQ(result.status, sc::SCUpgradeStatus::Success);
+    EXPECT_EQ(result.rolledBack, false);
+    EXPECT_EQ(reopened->GetSchemaVersion(), graph.latestSupportedVersion);
+}
+
+TEST(StorageM2Sqlite, UncleanShutdownBlocksUpgradeExecution)
+{
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_M2_UncleanUpgrade.sqlite");
+
+    {
+        sc::SCDbPtr db;
+        EXPECT_EQ(sc::CreateSqliteDatabase(dbPath.c_str(), db), sc::SC_OK);
+        sc::SCTablePtr beamTable = CreateBeamTable(db);
+
+        sc::SCEditPtr edit;
+        EXPECT_EQ(db->BeginEdit(L"seed", edit), sc::SC_OK);
+
+        sc::SCRecordPtr beam;
+        EXPECT_EQ(beamTable->CreateRecord(beam), sc::SC_OK);
+        EXPECT_EQ(beam->SetInt64(L"Width", 160), sc::SC_OK);
+        EXPECT_EQ(db->Commit(edit.Get()), sc::SC_OK);
+    }
+
+    EXPECT_TRUE(SetMetadataValue(dbPath, "schema_version", "1"));
+    EXPECT_TRUE(SetMetadataValue(dbPath, "clean_shutdown", "0"));
+
+    sc::SCDbPtr reopened;
+    EXPECT_EQ(sc::CreateSqliteDatabase(dbPath.c_str(), reopened), sc::SC_OK);
+    EXPECT_EQ(reopened->GetSchemaVersion(), 1);
+
+    sc::SCVersionGraph graph;
+    EXPECT_EQ(sc::BuildDefaultVersionGraph(&graph), sc::SC_OK);
+
+    sc::SCOpenDecision decision;
+    EXPECT_EQ(sc::EvaluateOpenDecision(graph, reopened->GetSchemaVersion(), false, &decision), sc::SC_OK);
+    EXPECT_EQ(decision.mode, sc::SCOpenMode::ReadOnly);
+
+    sc::SCUpgradePlan plan;
+    EXPECT_EQ(sc::BuildUpgradePlan(1, graph.latestSupportedVersion, graph, &plan), sc::SC_OK);
+
+    sc::SCUpgradeResult result;
+    EXPECT_EQ(reopened->ExecuteUpgradePlan(plan, true, &result), sc::SC_E_WRITE_CONFLICT);
+    EXPECT_EQ(result.status, sc::SCUpgradeStatus::Unsupported);
+    EXPECT_EQ(result.rolledBack, false);
+    EXPECT_EQ(reopened->GetSchemaVersion(), 1);
+}
+
+TEST(StorageM2Sqlite, ImportSessionCheckpointIsNotLiveState)
+{
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_M2_ImportCheckpoint.sqlite");
+
+    sc::SCDbPtr db;
+    EXPECT_EQ(sc::CreateSqliteDatabase(dbPath.c_str(), db), sc::SC_OK);
+
+    sc::SCTablePtr beamTable = CreateBeamTable(db);
+
+    sc::SCImportSessionOptions sessionOptions;
+    sessionOptions.sessionName = L"chunked import";
+    sessionOptions.chunkSize = 1;
+
+    sc::SCImportStagingArea session;
+    EXPECT_EQ(sc::BeginImportSession(db.Get(), sessionOptions, &session), sc::SC_OK);
+
+    sc::SCImportChunk chunk;
+    chunk.chunkId = 1;
+    sc::SCBatchTableRequest request;
+    request.tableName = L"Beam";
+    request.creates.push_back(sc::SCBatchCreateRecordRequest{{{L"Width", sc::SCValue::FromInt64(140)}}});
+    chunk.requests.push_back(request);
+
+    sc::SCImportCheckpoint checkpoint;
+    EXPECT_EQ(sc::AppendImportChunk(db.Get(), &session, chunk, &checkpoint), sc::SC_OK);
+    EXPECT_EQ(checkpoint.sessionId, session.sessionId);
+    EXPECT_EQ(checkpoint.chunkCount, 1u);
+    EXPECT_TRUE(checkpoint.persisted);
+
+    sc::SCImportRecoveryState recoveryState;
+    EXPECT_EQ(sc::GetImportRecoveryState(db.Get(), session.sessionId, &recoveryState), sc::SC_OK);
+    EXPECT_TRUE(recoveryState.canResume);
+    EXPECT_TRUE(recoveryState.canFinalize);
+    EXPECT_EQ(recoveryState.stagingArea.chunks.size(), 1u);
+
+    sc::SCRecordCursorPtr cursor;
+    EXPECT_EQ(beamTable->EnumerateRecords(cursor), sc::SC_OK);
+    bool hasRow = true;
+    EXPECT_EQ(cursor->MoveNext(&hasRow), sc::SC_OK);
+    EXPECT_FALSE(hasRow);
+
+    sc::SCImportFinalizeCommit commit;
+    commit.sessionId = session.sessionId;
+    commit.confirmed = true;
+    commit.commitName = L"finalize import";
+    sc::SCBatchExecutionResult result;
+    EXPECT_EQ(sc::FinalizeImportSession(db.Get(), session, commit, &result), sc::SC_OK);
+    EXPECT_EQ(result.importSessionId, session.sessionId);
+    EXPECT_EQ(result.chunkCount, 1u);
+
+    EXPECT_EQ(beamTable->EnumerateRecords(cursor), sc::SC_OK);
+    EXPECT_EQ(cursor->MoveNext(&hasRow), sc::SC_OK);
+    EXPECT_TRUE(hasRow);
+}
+
+TEST(StorageM2Sqlite, ExecuteImportUsesChunkedSessionModel)
+{
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_M2_ChunkedImport.sqlite");
+
+    sc::SCDbPtr db;
+    EXPECT_EQ(sc::CreateSqliteDatabase(dbPath.c_str(), db), sc::SC_OK);
+    sc::SCTablePtr beamTable = CreateBeamTable(db);
+
+    std::vector<sc::SCBatchTableRequest> requests;
+    for (int i = 0; i < 4; ++i)
+    {
+        sc::SCBatchTableRequest request;
+        request.tableName = L"Beam";
+        request.creates.push_back(sc::SCBatchCreateRecordRequest{{{L"Width", sc::SCValue::FromInt64(100 + i)}}});
+        requests.push_back(request);
+    }
+
+    sc::SCBatchExecutionOptions options;
+    options.editName = L"chunked import";
+    options.chunkSize = 2;
+
+    sc::SCBatchExecutionResult result;
+    EXPECT_EQ(sc::ExecuteImport(db.Get(), requests, options, &result), sc::SC_OK);
+    EXPECT_EQ(result.chunkCount, 2u);
+    EXPECT_EQ(result.checkpointCount, 2u);
+    EXPECT_EQ(result.createdCount, 4u);
+
+    sc::SCRecordCursorPtr cursor;
+    EXPECT_EQ(beamTable->EnumerateRecords(cursor), sc::SC_OK);
+    bool hasRow = false;
+    std::size_t count = 0;
+    while (cursor->MoveNext(&hasRow) == sc::SC_OK && hasRow)
+    {
+        ++count;
+    }
+    EXPECT_EQ(count, 4u);
 }

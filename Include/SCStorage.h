@@ -1,8 +1,11 @@
 #pragma once
 
 #include "SCBatch.h"
+#include "ISCDebugPackage.h"
 #include "ISCComputed.h"
 #include "ISCDiagnostics.h"
+#include "ISCQuery.h"
+#include "SCQuery.h"
 #include "SCErrors.h"
 #include "SCFactory.h"
 #include "ISCInterfaces.h"

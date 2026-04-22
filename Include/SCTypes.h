@@ -13,6 +13,9 @@ namespace StableCore::Storage
 
 using RecordId = std::int64_t;
 using VersionId = std::uint64_t;
+using CommitId = std::uint64_t;
+using SessionId = std::uint64_t;
+using SnapshotId = std::uint64_t;
 
 struct SCEnumValue
 {
@@ -354,6 +357,8 @@ struct SCComputedColumnDef
     bool editable{false};
 };
 
+// Legacy single-condition bridge for existing FindRecords paths.
+// New query plans should use QueryCondition / QueryConditionGroup.
 struct SCQueryCondition
 {
     std::wstring fieldName;

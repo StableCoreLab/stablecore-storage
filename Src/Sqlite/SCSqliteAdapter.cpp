@@ -1,6 +1,10 @@
 #include "SCFactory.h"
+#include "ISCQuery.h"
+#include "SCQuerySqliteExecutor.h"
 
 #include <algorithm>
+#include <iomanip>
+#include <mutex>
 #include <map>
 #include <memory>
 #include <set>
@@ -14,6 +18,7 @@
 #include <sqlite3.h>
 
 #include "ISCDiagnostics.h"
+#include "SCBatch.h"
 #include "SCMigration.h"
 #include "SCRefCounted.h"
 
@@ -26,9 +31,20 @@ namespace StableCore::Storage
 namespace
 {
 
+void EnsureSqliteQueryDispatchRegistered(ISCDatabase* database)
+{
+    (void)database;
+    static std::once_flag once;
+    std::call_once(
+        once,
+        []()
+    {
+            RegisterQueryExecutionContextDispatch(QueryBackendKind::SQLite, &ExecuteSqliteQueryDispatch);
+        });
+}
+
 constexpr int kStackUndo = 0;
 constexpr int kStackRedo = 1;
-constexpr std::int32_t kSqliteSchemaVersion = 2;
 
 std::string ToUtf8(const std::wstring& text)
 {
@@ -68,6 +84,495 @@ std::wstring FromUtf8(const char* text)
     std::string narrow(text);
     return std::wstring(narrow.begin(), narrow.end());
 #endif
+}
+
+std::wstring SerializeImportValue(const SCValue& value)
+{
+    std::wstringstream ss;
+    ss << static_cast<int>(value.GetKind()) << L'\n';
+    switch (value.GetKind())
+    {
+    case ValueKind::Null:
+        break;
+    case ValueKind::Int64:
+    {
+        std::int64_t v = 0;
+        value.AsInt64(&v);
+        ss << v;
+        break;
+    }
+    case ValueKind::Double:
+    {
+        double v = 0.0;
+        value.AsDouble(&v);
+        ss << std::setprecision(17) << v;
+        break;
+    }
+    case ValueKind::Bool:
+    {
+        bool v = false;
+        value.AsBool(&v);
+        ss << (v ? L'1' : L'0');
+        break;
+    }
+    case ValueKind::String:
+    {
+        std::wstring v;
+        value.AsStringCopy(&v);
+        ss << v;
+        break;
+    }
+    case ValueKind::RecordId:
+    {
+        RecordId v = 0;
+        value.AsRecordId(&v);
+        ss << v;
+        break;
+    }
+    case ValueKind::Enum:
+    {
+        std::wstring v;
+        value.AsEnumCopy(&v);
+        ss << v;
+        break;
+    }
+    }
+    return ss.str();
+}
+
+bool AppendToken(std::wstring* out, const std::wstring& token)
+{
+    if (out == nullptr)
+    {
+        return false;
+    }
+
+    *out += std::to_wstring(token.size());
+    *out += L':';
+    *out += token;
+    return true;
+}
+
+bool ReadToken(const std::wstring& payload, std::size_t* cursor, std::wstring* outToken)
+{
+    if (cursor == nullptr || outToken == nullptr)
+    {
+        return false;
+    }
+    if (*cursor >= payload.size())
+    {
+        return false;
+    }
+
+    const std::size_t colon = payload.find(L':', *cursor);
+    if (colon == std::wstring::npos)
+    {
+        return false;
+    }
+
+    const std::wstring lengthText = payload.substr(*cursor, colon - *cursor);
+    std::size_t length = 0;
+    try
+    {
+        length = static_cast<std::size_t>(std::stoull(lengthText));
+    }
+    catch (...)
+    {
+        return false;
+    }
+
+    const std::size_t start = colon + 1;
+    if (start + length > payload.size())
+    {
+        return false;
+    }
+
+    *outToken = payload.substr(start, length);
+    *cursor = start + length;
+    return true;
+}
+
+std::wstring SerializeImportSessionPayload(const SCImportStagingArea& session)
+{
+    std::wstring payload;
+    AppendToken(&payload, L"SCIMPORT1");
+    AppendToken(&payload, std::to_wstring(session.sessionId));
+    AppendToken(&payload, session.sessionName);
+    AppendToken(&payload, std::to_wstring(session.baseVersion));
+    AppendToken(&payload, std::to_wstring(session.chunkSize));
+    AppendToken(&payload, std::to_wstring(static_cast<int>(session.state)));
+    AppendToken(&payload, std::to_wstring(session.chunks.size()));
+    for (const auto& chunk : session.chunks)
+    {
+        AppendToken(&payload, std::to_wstring(chunk.chunkId));
+        AppendToken(&payload, std::to_wstring(chunk.requests.size()));
+        for (const auto& request : chunk.requests)
+        {
+            AppendToken(&payload, request.tableName);
+            AppendToken(&payload, std::to_wstring(request.creates.size()));
+            for (const auto& create : request.creates)
+            {
+                AppendToken(&payload, std::to_wstring(create.values.size()));
+                for (const auto& assignment : create.values)
+                {
+                    AppendToken(&payload, assignment.fieldName);
+                    AppendToken(&payload, SerializeImportValue(assignment.SCValue));
+                }
+            }
+
+            AppendToken(&payload, std::to_wstring(request.updates.size()));
+            for (const auto& update : request.updates)
+            {
+                AppendToken(&payload, std::to_wstring(update.recordId));
+                AppendToken(&payload, std::to_wstring(update.values.size()));
+                for (const auto& assignment : update.values)
+                {
+                    AppendToken(&payload, assignment.fieldName);
+                    AppendToken(&payload, SerializeImportValue(assignment.SCValue));
+                }
+            }
+
+            AppendToken(&payload, std::to_wstring(request.deletes.size()));
+            for (RecordId recordId : request.deletes)
+            {
+                AppendToken(&payload, std::to_wstring(recordId));
+            }
+        }
+    }
+    return payload;
+}
+
+bool DeserializeImportValue(const std::wstring& token, SCValue* outValue)
+{
+    if (outValue == nullptr)
+    {
+        return false;
+    }
+
+    const std::size_t separator = token.find(L'\n');
+    const std::wstring kindText = (separator == std::wstring::npos) ? token : token.substr(0, separator);
+    const std::wstring payload = (separator == std::wstring::npos) ? std::wstring{} : token.substr(separator + 1);
+
+    int kind = 0;
+    try
+    {
+        kind = std::stoi(kindText);
+    }
+    catch (...)
+    {
+        return false;
+    }
+
+    switch (static_cast<ValueKind>(kind))
+    {
+    case ValueKind::Null:
+        *outValue = SCValue::Null();
+        return true;
+    case ValueKind::Int64:
+        try
+        {
+            *outValue = SCValue::FromInt64(std::stoll(payload));
+            return true;
+        }
+        catch (...)
+        {
+            return false;
+        }
+    case ValueKind::Double:
+        try
+        {
+            *outValue = SCValue::FromDouble(std::stod(payload));
+            return true;
+        }
+        catch (...)
+        {
+            return false;
+        }
+    case ValueKind::Bool:
+        *outValue = SCValue::FromBool(payload == L"1");
+        return true;
+    case ValueKind::String:
+        *outValue = SCValue::FromString(payload);
+        return true;
+    case ValueKind::RecordId:
+        try
+        {
+            *outValue = SCValue::FromRecordId(static_cast<RecordId>(std::stoll(payload)));
+            return true;
+        }
+        catch (...)
+        {
+            return false;
+        }
+    case ValueKind::Enum:
+        *outValue = SCValue::FromEnum(payload);
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool DeserializeImportSessionPayload(const std::wstring& payload, SCImportStagingArea* outSession)
+{
+    if (outSession == nullptr)
+    {
+        return false;
+    }
+
+    std::size_t cursor = 0;
+    std::wstring token;
+    if (!ReadToken(payload, &cursor, &token) || token != L"SCIMPORT1")
+    {
+        return false;
+    }
+
+    SCImportStagingArea session;
+    if (!ReadToken(payload, &cursor, &token))
+    {
+        return false;
+    }
+    try
+    {
+        session.sessionId = static_cast<SCImportSessionId>(std::stoull(token));
+    }
+    catch (...)
+    {
+        return false;
+    }
+
+    if (!ReadToken(payload, &cursor, &session.sessionName))
+    {
+        return false;
+    }
+    if (!ReadToken(payload, &cursor, &token))
+    {
+        return false;
+    }
+    try
+    {
+        session.baseVersion = static_cast<VersionId>(std::stoull(token));
+    }
+    catch (...)
+    {
+        return false;
+    }
+    if (!ReadToken(payload, &cursor, &token))
+    {
+        return false;
+    }
+    try
+    {
+        session.chunkSize = static_cast<std::size_t>(std::stoull(token));
+    }
+    catch (...)
+    {
+        return false;
+    }
+    if (!ReadToken(payload, &cursor, &token))
+    {
+        return false;
+    }
+    try
+    {
+        session.state = static_cast<SCImportSessionState>(std::stoi(token));
+    }
+    catch (...)
+    {
+        return false;
+    }
+    if (!ReadToken(payload, &cursor, &token))
+    {
+        return false;
+    }
+    std::size_t chunkCount = 0;
+    try
+    {
+        chunkCount = static_cast<std::size_t>(std::stoull(token));
+    }
+    catch (...)
+    {
+        return false;
+    }
+
+    for (std::size_t chunkIndex = 0; chunkIndex < chunkCount; ++chunkIndex)
+    {
+        SCImportChunk chunk;
+        if (!ReadToken(payload, &cursor, &token))
+        {
+            return false;
+        }
+        try
+        {
+            chunk.chunkId = static_cast<SCImportChunkId>(std::stoull(token));
+        }
+        catch (...)
+        {
+            return false;
+        }
+
+        if (!ReadToken(payload, &cursor, &token))
+        {
+            return false;
+        }
+        std::size_t requestCount = 0;
+        try
+        {
+            requestCount = static_cast<std::size_t>(std::stoull(token));
+        }
+        catch (...)
+        {
+            return false;
+        }
+
+        for (std::size_t requestIndex = 0; requestIndex < requestCount; ++requestIndex)
+        {
+            SCBatchTableRequest request;
+            if (!ReadToken(payload, &cursor, &request.tableName))
+            {
+                return false;
+            }
+
+            if (!ReadToken(payload, &cursor, &token))
+            {
+                return false;
+            }
+            std::size_t createCount = 0;
+            try
+            {
+                createCount = static_cast<std::size_t>(std::stoull(token));
+            }
+            catch (...)
+            {
+                return false;
+            }
+            for (std::size_t createIndex = 0; createIndex < createCount; ++createIndex)
+            {
+                SCBatchCreateRecordRequest create;
+                if (!ReadToken(payload, &cursor, &token))
+                {
+                    return false;
+                }
+                std::size_t valueCount = 0;
+                try
+                {
+                    valueCount = static_cast<std::size_t>(std::stoull(token));
+                }
+                catch (...)
+                {
+                    return false;
+                }
+                for (std::size_t valueIndex = 0; valueIndex < valueCount; ++valueIndex)
+                {
+                    SCFieldValueAssignment assignment;
+                    std::wstring valueToken;
+                    if (!ReadToken(payload, &cursor, &assignment.fieldName) || !ReadToken(payload, &cursor, &valueToken))
+                    {
+                        return false;
+                    }
+                    if (!DeserializeImportValue(valueToken, &assignment.SCValue))
+                    {
+                        return false;
+                    }
+                    create.values.push_back(std::move(assignment));
+                }
+                request.creates.push_back(std::move(create));
+            }
+
+            if (!ReadToken(payload, &cursor, &token))
+            {
+                return false;
+            }
+            std::size_t updateCount = 0;
+            try
+            {
+                updateCount = static_cast<std::size_t>(std::stoull(token));
+            }
+            catch (...)
+            {
+                return false;
+            }
+            for (std::size_t updateIndex = 0; updateIndex < updateCount; ++updateIndex)
+            {
+                SCBatchUpdateRecordRequest update;
+                if (!ReadToken(payload, &cursor, &token))
+                {
+                    return false;
+                }
+                try
+                {
+                    update.recordId = static_cast<RecordId>(std::stoll(token));
+                }
+                catch (...)
+                {
+                    return false;
+                }
+                if (!ReadToken(payload, &cursor, &token))
+                {
+                    return false;
+                }
+                std::size_t valueCount = 0;
+                try
+                {
+                    valueCount = static_cast<std::size_t>(std::stoull(token));
+                }
+                catch (...)
+                {
+                    return false;
+                }
+                for (std::size_t valueIndex = 0; valueIndex < valueCount; ++valueIndex)
+                {
+                    SCFieldValueAssignment assignment;
+                    std::wstring valueToken;
+                    if (!ReadToken(payload, &cursor, &assignment.fieldName) || !ReadToken(payload, &cursor, &valueToken))
+                    {
+                        return false;
+                    }
+                    if (!DeserializeImportValue(valueToken, &assignment.SCValue))
+                    {
+                        return false;
+                    }
+                    update.values.push_back(std::move(assignment));
+                }
+                request.updates.push_back(std::move(update));
+            }
+
+            if (!ReadToken(payload, &cursor, &token))
+            {
+                return false;
+            }
+            std::size_t deleteCount = 0;
+            try
+            {
+                deleteCount = static_cast<std::size_t>(std::stoull(token));
+            }
+            catch (...)
+            {
+                return false;
+            }
+            for (std::size_t deleteIndex = 0; deleteIndex < deleteCount; ++deleteIndex)
+            {
+                if (!ReadToken(payload, &cursor, &token))
+                {
+                    return false;
+                }
+                try
+                {
+                    request.deletes.push_back(static_cast<RecordId>(std::stoll(token)));
+                }
+                catch (...)
+                {
+                    return false;
+                }
+            }
+
+            chunk.requests.push_back(std::move(request));
+        }
+
+        session.chunks.push_back(std::move(chunk));
+    }
+
+    *outSession = std::move(session);
+    return true;
 }
 
 ErrorCode MapSqliteError(int code)
@@ -180,13 +685,13 @@ private:
 class SqliteDb
 {
 public:
-    explicit SqliteDb(const std::wstring& path)
+    explicit SqliteDb(const std::wstring& path, bool readOnly)
     {
         const std::string utf8 = ToUtf8(path);
         const int rc = sqlite3_open_v2(
             utf8.c_str(),
             &db_,
-            SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX,
+            (readOnly ? SQLITE_OPEN_READONLY : (SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE)) | SQLITE_OPEN_FULLMUTEX,
             nullptr);
         if (rc != SQLITE_OK)
         {
@@ -655,10 +1160,11 @@ private:
     std::unordered_map<RecordId, std::shared_ptr<SqliteRecordData>> records_;
 };
 
-class SqliteDatabase final : public ISCDatabase, public ISCDatabaseDiagnosticsProvider, public SCRefCountedObject
+class SqliteDatabase final : public ISCDatabase, public ISCDatabaseDiagnosticsProvider, public IReferenceIndexProvider, public SCRefCountedObject
 {
 public:
     explicit SqliteDatabase(const std::wstring& path);
+    explicit SqliteDatabase(const std::wstring& path, bool readOnly);
     ~SqliteDatabase() override;
 
     ErrorCode BeginEdit(const wchar_t* name, SCEditPtr& outEdit) override;
@@ -672,8 +1178,28 @@ public:
     ErrorCode CreateTable(const wchar_t* name, SCTablePtr& outTable) override;
     ErrorCode AddObserver(ISCDatabaseObserver* observer) override;
     ErrorCode RemoveObserver(ISCDatabaseObserver* observer) override;
+    ErrorCode ExecuteUpgradePlan(const SCUpgradePlan& plan, bool confirmed, SCUpgradeResult* outResult) override;
+    ErrorCode BeginImportSession(const SCImportSessionOptions& options, SCImportStagingArea* outSession) override;
+    ErrorCode AppendImportChunk(
+        SCImportStagingArea* session,
+        const SCImportChunk& chunk,
+        SCImportCheckpoint* outCheckpoint) override;
+    ErrorCode LoadImportRecoveryState(std::uint64_t sessionId, SCImportRecoveryState* outState) override;
+    ErrorCode FinalizeImportSession(const SCImportFinalizeCommit& commit, SCImportRecoveryState* outState) override;
+    ErrorCode AbortImportSession(std::uint64_t sessionId) override;
     VersionId GetCurrentVersion() const noexcept override { return version_; }
+    std::int32_t GetSchemaVersion() const noexcept override { return schemaVersion_; }
     ErrorCode CollectDiagnostics(SCStorageHealthReport* outReport) const override;
+    ErrorCode GetReferencesBySource(
+        const std::wstring& sourceTable,
+        RecordId sourceRecordId,
+        std::vector<ReferenceRecord>* outRecords) const override;
+    ErrorCode GetReferencesByTarget(
+        const std::wstring& targetTable,
+        RecordId targetRecordId,
+        std::vector<ReverseReferenceRecord>* outRecords) const override;
+    ErrorCode CheckReferenceIndex(ReferenceIndexCheckResult* outResult) const override;
+    ErrorCode GetAllReferencesDiagnosticOnly(ReferenceIndex* outIndex) const override;
 
     bool HasActiveEdit() const noexcept { return static_cast<bool>(activeEdit_); }
     RecordId AllocateRecordId() noexcept { return nextRecordId_++; }
@@ -696,13 +1222,13 @@ private:
     void SaveMetadataKey(const wchar_t* key, const std::wstring& value);
     void LoadTables();
     void LoadJournalStacks();
-    void EnsureMigrationAndRecovery();
-    void ApplyMigrationPlan();
     void MaterializeIndexes();
+    ErrorCode EnsureImportSessionStore();
     void EnsureColumnIndex(std::int64_t tableRowId, const std::wstring& columnName);
     void RunStartupIntegrityCheck();
     void LogStartupDiagnostic(SCDiagnosticSeverity severity, const std::wstring& category, const std::wstring& message);
     void SetCleanShutdownFlag(bool cleanShutdown);
+    ErrorCode EnsureWritable() const;
     ErrorCode ValidateActiveEdit(ISCEditSession* edit) const;
     ErrorCode ValidateWrite(SqliteTable* table, const std::shared_ptr<SqliteRecordData>& data, const std::wstring& fieldName, const SCValue& value);
     bool IsRecordReferenced(const std::wstring& tableName, RecordId recordId) const;
@@ -723,15 +1249,19 @@ private:
     void DeleteRedoJournalRows();
     void UpdateJournalTransactionStack(std::int64_t txId, int stackKind, int stackOrder);
     void DeleteJournalTransaction(std::int64_t txId);
+    std::wstring SerializeImportSession(const SCImportStagingArea& session) const;
+    ErrorCode DeserializeImportSession(const std::wstring& payload, SCImportStagingArea* outSession) const;
 
     std::wstring path_;
     SqliteDb db_;
+    bool readOnly_{false};
     VersionId version_{0};
     RecordId nextRecordId_{1};
     std::int32_t schemaVersion_{0};
     bool cleanShutdown_{true};
     bool dirtyStartupDetected_{false};
     bool corruptionDetected_{false};
+    bool importSessionStoreReady_{false};
     std::vector<SCDiagnosticEntry> startupDiagnostics_;
     std::map<std::wstring, SCTablePtr> tables_;
     std::vector<ISCDatabaseObserver*> observers_;
@@ -996,54 +1526,83 @@ ErrorCode SqliteTable::EnumerateRecords(SCRecordCursorPtr& outCursor)
 
 ErrorCode SqliteTable::FindRecords(const SCQueryCondition& condition, SCRecordCursorPtr& outCursor)
 {
-    const SCColumnDef* column = Schema()->FindColumnDef(condition.fieldName);
-    if (column == nullptr)
+    QueryPlan legacyPlan;
+    const ErrorCode bridgeRc = SCQueryBridge::BuildPlanFromLegacyFindRecords(name_, condition, &legacyPlan);
+    if (Failed(bridgeRc))
     {
-        return SC_E_COLUMN_NOT_FOUND;
+        return bridgeRc;
     }
 
-    std::vector<SCRecordPtr> matched;
-    for (const auto& [_, data] : records_)
+    auto planner = CreateDefaultQueryPlanner();
+    if (!planner)
     {
-        if (data->state == RecordState::Deleted)
-        {
-            continue;
-        }
-
-        SCValue actual = column->defaultValue;
-        const auto it = data->values.find(condition.fieldName);
-        if (it != data->values.end())
-        {
-            actual = it->second;
-        }
-        if (actual == condition.expectedValue)
-        {
-            matched.push_back(MakeRecord(data));
-        }
+        return SC_E_NOTIMPL;
     }
 
-    outCursor = SCMakeRef<SqliteRecordCursor>(std::move(matched));
-    return SC_OK;
+    QueryPlan executablePlan;
+    const ErrorCode planRc = planner->BuildPlan(
+        legacyPlan.target,
+        legacyPlan.conditionGroups,
+        legacyPlan.conditionGroupLogic,
+        legacyPlan.orderBy,
+        legacyPlan.page,
+        legacyPlan.hints,
+        legacyPlan.constraints,
+        &executablePlan);
+    if (Failed(planRc))
+    {
+        return planRc;
+    }
+
+    QueryExecutionContext context;
+    context.backendKind = QueryBackendKind::SQLite;
+    context.database = db_;
+    context.backendHandle = db_;
+    context.resultCursor = &outCursor;
+
+    QueryExecutionResult executionResult;
+    return ExecuteQueryPlan(executablePlan, context, &executionResult);
 }
 
 SqliteDatabase::SqliteDatabase(const std::wstring& path)
-    : path_(path)
-    , db_(path)
+    : SqliteDatabase(path, false)
 {
-    InitializeSchema();
+}
+
+SqliteDatabase::SqliteDatabase(const std::wstring& path, bool readOnly)
+    : path_(path)
+    , db_(path, readOnly)
+    , readOnly_(readOnly)
+{
+    if (!readOnly_)
+    {
+        InitializeSchema();
+    }
+
     LoadMetadata();
-    EnsureMigrationAndRecovery();
+
     LoadTables();
-    MaterializeIndexes();
+
+    if (!readOnly_)
+    {
+        if (schemaVersion_ <= 0)
+        {
+            schemaVersion_ = GetLatestSupportedSchemaVersion();
+            SaveMetadata();
+        }
+    }
+
     LoadJournalStacks();
-    SetCleanShutdownFlag(false);
 }
 
 SqliteDatabase::~SqliteDatabase()
 {
     try
     {
-        SetCleanShutdownFlag(true);
+        if (!readOnly_)
+        {
+            SetCleanShutdownFlag(true);
+        }
     }
     catch (...)
     {
@@ -1248,59 +1807,144 @@ void SqliteDatabase::LoadJournalStacks()
     }
 }
 
-void SqliteDatabase::EnsureMigrationAndRecovery()
+ErrorCode SqliteDatabase::ExecuteUpgradePlan(const SCUpgradePlan& plan, bool confirmed, SCUpgradeResult* outResult)
 {
-    if (schemaVersion_ <= 0)
+    if (outResult == nullptr)
     {
-        schemaVersion_ = 1;
+        return SC_E_POINTER;
     }
 
-    dirtyStartupDetected_ = !cleanShutdown_;
-    if (dirtyStartupDetected_)
+    SCUpgradeResult result;
+    result.sourceVersion = schemaVersion_;
+    result.targetVersion = plan.targetVersion;
+
+    const auto finish = [&](ErrorCode rc)
     {
-        LogStartupDiagnostic(SCDiagnosticSeverity::Warning, L"startup", L"Detected previous unclean shutdown. Running integrity check.");
-        RunStartupIntegrityCheck();
+        *outResult = result;
+        return rc;
+    };
+
+    if (readOnly_)
+    {
+        result.status = SCUpgradeStatus::Unsupported;
+        result.failureReason = L"Database is opened read-only.";
+        return finish(SC_E_READ_ONLY_DATABASE);
     }
 
-    if (schemaVersion_ < kSqliteSchemaVersion)
+    if (!cleanShutdown_)
     {
-        ApplyMigrationPlan();
+        result.status = SCUpgradeStatus::Unsupported;
+        result.failureReason = L"Upgrade is not allowed after an unclean shutdown.";
+        return finish(SC_E_WRITE_CONFLICT);
     }
 
-    SaveMetadata();
-}
-
-void SqliteDatabase::ApplyMigrationPlan()
-{
-    std::vector<SCMigrationStep> steps;
-    steps.push_back(SCMigrationStep{
-        1,
-        2,
-        L"sqlite-schema-v2",
-        L"Add startup diagnostics table and field-SCValue record lookup index.",
-    });
-
-    SCMigrationPlan plan;
-    const ErrorCode planRc = BuildMigrationPlan(schemaVersion_, kSqliteSchemaVersion, steps, &plan);
-    if (Failed(planRc))
+    if (!confirmed)
     {
-        throw std::runtime_error("failed to build sqlite migration plan");
+        result.status = SCUpgradeStatus::Failed;
+        result.failureReason = L"Upgrade confirmation was not provided.";
+        return finish(SC_E_INVALIDARG);
     }
 
-    for (const SCMigrationStep& step : plan.orderedSteps)
+    if (plan.currentVersion != schemaVersion_)
     {
-        if (step.fromVersion == 1 && step.toVersion == 2)
+        result.status = SCUpgradeStatus::Failed;
+        result.failureReason = L"Upgrade plan does not match the current schema version.";
+        return finish(SC_E_INVALIDARG);
+    }
+
+    if (plan.targetVersion <= plan.currentVersion)
+    {
+        result.status = SCUpgradeStatus::NotRequired;
+        result.failureReason = L"Upgrade is not required for the current schema version.";
+        return finish(SC_OK);
+    }
+
+    if (plan.orderedSteps.empty())
+    {
+        result.status = SCUpgradeStatus::Unsupported;
+        result.failureReason = L"Upgrade plan does not contain executable steps.";
+        return finish(SC_E_NOTIMPL);
+    }
+
+    const std::int32_t originalSchemaVersion = schemaVersion_;
+
+    try
+    {
+        SqliteTxn txn(db_);
+        for (const SCMigrationStep& step : plan.orderedSteps)
         {
-            db_.Execute(
-                "CREATE TABLE IF NOT EXISTS startup_diagnostics ("
-                "diag_id INTEGER PRIMARY KEY AUTOINCREMENT, severity INTEGER NOT NULL, category TEXT NOT NULL, message TEXT NOT NULL);");
-            db_.Execute("CREATE INDEX IF NOT EXISTS idx_field_values_record ON field_values(table_id, record_id, column_name);");
+            if (step.fromVersion != schemaVersion_)
+            {
+                schemaVersion_ = originalSchemaVersion;
+                result.status = SCUpgradeStatus::Failed;
+                result.failureReason = L"Upgrade step chain does not match the current schema version.";
+                return finish(SC_E_INVALIDARG);
+            }
+
+            if (step.fromVersion == 1 && step.toVersion == 2)
+            {
+                const ErrorCode diagnosticsRc = db_.Execute(
+                    "CREATE TABLE IF NOT EXISTS startup_diagnostics ("
+                    "diag_id INTEGER PRIMARY KEY AUTOINCREMENT, severity INTEGER NOT NULL, category TEXT NOT NULL, message TEXT NOT NULL);");
+                if (Failed(diagnosticsRc))
+                {
+                    schemaVersion_ = originalSchemaVersion;
+                    result.status = SCUpgradeStatus::RolledBack;
+                    result.rolledBack = true;
+                    result.failureReason = L"Failed to create upgrade-required diagnostic storage.";
+                    return finish(diagnosticsRc);
+                }
+
+                const ErrorCode indexRc = db_.Execute("CREATE INDEX IF NOT EXISTS idx_field_values_record ON field_values(table_id, record_id, column_name);");
+                if (Failed(indexRc))
+                {
+                    schemaVersion_ = originalSchemaVersion;
+                    result.status = SCUpgradeStatus::RolledBack;
+                    result.rolledBack = true;
+                    result.failureReason = L"Failed to create upgrade-required lookup index.";
+                    return finish(indexRc);
+                }
+            }
+            else
+            {
+                schemaVersion_ = originalSchemaVersion;
+                result.status = SCUpgradeStatus::Unsupported;
+                result.failureReason = L"Unsupported upgrade step.";
+                return finish(SC_E_NOTIMPL);
+            }
+
+            schemaVersion_ = step.toVersion;
+            std::wstringstream message;
+            message << L"Applied upgrade step " << step.name << L" to schema version " << schemaVersion_ << L".";
+            LogStartupDiagnostic(SCDiagnosticSeverity::Info, L"upgrade", message.str());
         }
-        schemaVersion_ = step.toVersion;
-        std::wstringstream message;
-        message << L"Applied migration " << step.name << L" to schema version " << schemaVersion_ << L".";
-        LogStartupDiagnostic(SCDiagnosticSeverity::Info, L"migration", message.str());
+
+        SaveMetadata();
+        const ErrorCode commitRc = txn.Commit();
+        if (Failed(commitRc))
+        {
+            schemaVersion_ = originalSchemaVersion;
+            result.status = SCUpgradeStatus::RolledBack;
+            result.rolledBack = true;
+            result.failureReason = L"Failed to commit the upgrade transaction.";
+            return finish(commitRc);
+        }
     }
+    catch (...)
+    {
+        schemaVersion_ = originalSchemaVersion;
+        result.status = SCUpgradeStatus::RolledBack;
+        result.rolledBack = true;
+        result.failureReason = L"Upgrade transaction failed and was rolled back.";
+        return finish(SC_E_FAIL);
+    }
+
+    result.status = SCUpgradeStatus::Success;
+    result.rolledBack = false;
+    result.sourceVersion = originalSchemaVersion;
+    result.targetVersion = schemaVersion_;
+    result.failureReason.clear();
+    return finish(SC_OK);
 }
 
 void SqliteDatabase::MaterializeIndexes()
@@ -1383,6 +2027,292 @@ void SqliteDatabase::SetCleanShutdownFlag(bool cleanShutdown)
     SaveMetadataKey(L"clean_shutdown", cleanShutdown_ ? L"1" : L"0");
 }
 
+ErrorCode SqliteDatabase::EnsureImportSessionStore()
+{
+    if (importSessionStoreReady_ || readOnly_)
+    {
+        return SC_OK;
+    }
+
+    const ErrorCode rc = db_.Execute(
+        "CREATE TABLE IF NOT EXISTS import_sessions ("
+        "session_id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "session_name TEXT NOT NULL, state INTEGER NOT NULL, base_version INTEGER NOT NULL, chunk_size INTEGER NOT NULL, "
+        "checkpoint_chunk_id INTEGER NOT NULL, checkpoint_count INTEGER NOT NULL, payload TEXT NOT NULL);");
+    if (Succeeded(rc))
+    {
+        importSessionStoreReady_ = true;
+    }
+    return rc;
+}
+
+std::wstring SqliteDatabase::SerializeImportSession(const SCImportStagingArea& session) const
+{
+    return SerializeImportSessionPayload(session);
+}
+
+ErrorCode SqliteDatabase::DeserializeImportSession(const std::wstring& payload, SCImportStagingArea* outSession) const
+{
+    if (outSession == nullptr)
+    {
+        return SC_E_POINTER;
+    }
+    return DeserializeImportSessionPayload(payload, outSession) ? SC_OK : SC_E_FAIL;
+}
+
+ErrorCode SqliteDatabase::BeginImportSession(const SCImportSessionOptions& options, SCImportStagingArea* outSession)
+{
+    const ErrorCode writableRc = EnsureWritable();
+    if (Failed(writableRc))
+    {
+        return writableRc;
+    }
+    if (outSession == nullptr)
+    {
+        return SC_E_POINTER;
+    }
+
+    const ErrorCode storeRc = EnsureImportSessionStore();
+    if (Failed(storeRc))
+    {
+        return storeRc;
+    }
+
+    SCImportStagingArea session;
+    session.sessionName = options.sessionName.empty() ? L"Import" : options.sessionName;
+    session.baseVersion = version_;
+    session.chunkSize = options.chunkSize == 0 ? 1 : options.chunkSize;
+    session.state = SCImportSessionState::Staging;
+
+    SqliteStmt stmt = db_.Prepare(
+        "INSERT INTO import_sessions(session_name, state, base_version, chunk_size, checkpoint_chunk_id, checkpoint_count, payload)"
+        " VALUES(?, ?, ?, ?, ?, ?, ?);");
+    stmt.BindText(1, session.sessionName);
+    stmt.BindInt(2, static_cast<int>(SCImportSessionState::Staging));
+    stmt.BindInt64(3, static_cast<std::int64_t>(version_));
+    stmt.BindInt64(4, static_cast<std::int64_t>(session.chunkSize));
+    stmt.BindInt64(5, 0);
+    stmt.BindInt64(6, 0);
+    stmt.BindText(7, L"");
+    const ErrorCode rc = stmt.Step();
+    if (Failed(rc))
+    {
+        return rc;
+    }
+
+    session.sessionId = static_cast<SCImportSessionId>(db_.LastInsertRowId());
+    const std::wstring payload = SerializeImportSessionPayload(session);
+    SqliteStmt updateStmt = db_.Prepare(
+        "UPDATE import_sessions SET payload = ?, checkpoint_chunk_id = ?, checkpoint_count = ?, state = ? WHERE session_id = ?;");
+    updateStmt.BindText(1, payload);
+    updateStmt.BindInt64(2, 0);
+    updateStmt.BindInt64(3, 0);
+    updateStmt.BindInt(4, static_cast<int>(SCImportSessionState::Staging));
+    updateStmt.BindInt64(5, static_cast<std::int64_t>(session.sessionId));
+    const ErrorCode updateRc = updateStmt.Step();
+    if (Failed(updateRc))
+    {
+        return updateRc;
+    }
+    *outSession = session;
+    return SC_OK;
+}
+
+ErrorCode SqliteDatabase::AppendImportChunk(
+    SCImportStagingArea* session,
+    const SCImportChunk& chunk,
+    SCImportCheckpoint* outCheckpoint)
+{
+    const ErrorCode writableRc = EnsureWritable();
+    if (Failed(writableRc))
+    {
+        return writableRc;
+    }
+    if (session == nullptr)
+    {
+        return SC_E_POINTER;
+    }
+
+    const ErrorCode storeRc = EnsureImportSessionStore();
+    if (Failed(storeRc))
+    {
+        return storeRc;
+    }
+
+    session->chunks.push_back(chunk);
+    session->state = SCImportSessionState::Checkpointed;
+
+    SqliteStmt loadStmt = db_.Prepare(
+        "SELECT session_id FROM import_sessions WHERE session_id = ?;");
+    loadStmt.BindInt64(1, static_cast<std::int64_t>(session->sessionId));
+    bool hasRow = false;
+    if (Failed(loadStmt.Step(&hasRow)) || !hasRow)
+    {
+        return SC_E_RECORD_NOT_FOUND;
+    }
+
+    const std::wstring payload = SerializeImportSessionPayload(*session);
+    SqliteStmt updateStmt = db_.Prepare(
+        "UPDATE import_sessions SET state = ?, checkpoint_chunk_id = ?, checkpoint_count = ?, payload = ? WHERE session_id = ?;");
+    updateStmt.BindInt(1, static_cast<int>(SCImportSessionState::Checkpointed));
+    updateStmt.BindInt64(2, static_cast<std::int64_t>(chunk.chunkId));
+    updateStmt.BindInt64(3, static_cast<std::int64_t>(session->chunks.size()));
+    updateStmt.BindText(4, payload);
+    updateStmt.BindInt64(5, static_cast<std::int64_t>(session->sessionId));
+    const ErrorCode rc = updateStmt.Step();
+    if (Failed(rc))
+    {
+        return rc;
+    }
+
+    if (outCheckpoint != nullptr)
+    {
+        outCheckpoint->sessionId = session->sessionId;
+        outCheckpoint->lastChunkId = chunk.chunkId;
+        outCheckpoint->chunkCount = session->chunks.size();
+        outCheckpoint->baseVersion = session->baseVersion;
+        outCheckpoint->persisted = true;
+    }
+    return SC_OK;
+}
+
+ErrorCode SqliteDatabase::LoadImportRecoveryState(std::uint64_t sessionId, SCImportRecoveryState* outState)
+{
+    if (outState == nullptr)
+    {
+        return SC_E_POINTER;
+    }
+
+    const ErrorCode storeRc = EnsureImportSessionStore();
+    if (Failed(storeRc))
+    {
+        return storeRc;
+    }
+
+    SqliteStmt stmt = db_.Prepare(
+        "SELECT session_name, state, base_version, chunk_size, checkpoint_chunk_id, checkpoint_count, payload"
+        " FROM import_sessions WHERE session_id = ?;");
+    stmt.BindInt64(1, static_cast<std::int64_t>(sessionId));
+
+    bool hasRow = false;
+    const ErrorCode stepRc = stmt.Step(&hasRow);
+    if (Failed(stepRc))
+    {
+        return stepRc;
+    }
+    if (!hasRow)
+    {
+        return SC_E_RECORD_NOT_FOUND;
+    }
+
+    SCImportRecoveryState state;
+    state.sessionId = sessionId;
+    state.state = static_cast<SCImportSessionState>(stmt.ColumnInt(1));
+    state.checkpoint.sessionId = sessionId;
+    state.checkpoint.lastChunkId = static_cast<SCImportChunkId>(stmt.ColumnInt64(4));
+    state.checkpoint.chunkCount = static_cast<std::size_t>(stmt.ColumnInt64(5));
+    state.checkpoint.baseVersion = static_cast<VersionId>(stmt.ColumnInt64(2));
+    state.checkpoint.persisted = true;
+    state.checkpointPersisted = true;
+
+    const std::wstring payload = stmt.ColumnText(6);
+    if (!payload.empty())
+    {
+        if (!DeserializeImportSessionPayload(payload, &state.stagingArea))
+        {
+            return SC_E_FAIL;
+        }
+    }
+    else
+    {
+        state.stagingArea.sessionId = sessionId;
+        state.stagingArea.sessionName = stmt.ColumnText(0);
+        state.stagingArea.baseVersion = static_cast<VersionId>(stmt.ColumnInt64(2));
+        state.stagingArea.chunkSize = static_cast<std::size_t>(stmt.ColumnInt64(3));
+        state.stagingArea.state = state.state;
+    }
+
+    state.stagingArea.sessionId = sessionId;
+    state.stagingArea.sessionName = stmt.ColumnText(0);
+    state.stagingArea.baseVersion = static_cast<VersionId>(stmt.ColumnInt64(2));
+    state.stagingArea.chunkSize = static_cast<std::size_t>(stmt.ColumnInt64(3));
+    state.stagingArea.state = state.state;
+    state.canResume = state.state != SCImportSessionState::Finalized && state.state != SCImportSessionState::Aborted;
+    state.canFinalize = state.state == SCImportSessionState::Checkpointed || state.state == SCImportSessionState::ReadyToFinalize;
+    state.reason = state.canResume ? L"Import session recoverable from checkpoint." : L"Import session is no longer recoverable.";
+
+    *outState = std::move(state);
+    return SC_OK;
+}
+
+ErrorCode SqliteDatabase::FinalizeImportSession(const SCImportFinalizeCommit& commit, SCImportRecoveryState* outState)
+{
+    const ErrorCode writableRc = EnsureWritable();
+    if (Failed(writableRc))
+    {
+        return writableRc;
+    }
+    if (!commit.confirmed)
+    {
+        return SC_E_INVALIDARG;
+    }
+
+    const ErrorCode storeRc = EnsureImportSessionStore();
+    if (Failed(storeRc))
+    {
+        return storeRc;
+    }
+
+    SCImportRecoveryState recoveryState;
+    const ErrorCode loadRc = LoadImportRecoveryState(commit.sessionId, &recoveryState);
+    if (Failed(loadRc))
+    {
+        return loadRc;
+    }
+
+    SqliteStmt deleteStmt = db_.Prepare("DELETE FROM import_sessions WHERE session_id = ?;");
+    deleteStmt.BindInt64(1, static_cast<std::int64_t>(commit.sessionId));
+    const ErrorCode deleteRc = deleteStmt.Step();
+    if (Failed(deleteRc))
+    {
+        return deleteRc;
+    }
+
+    recoveryState.state = SCImportSessionState::Finalized;
+    recoveryState.canResume = false;
+    recoveryState.canFinalize = false;
+    recoveryState.reason = L"Import session finalized and checkpoint cleared.";
+    if (outState != nullptr)
+    {
+        *outState = std::move(recoveryState);
+    }
+    return SC_OK;
+}
+
+ErrorCode SqliteDatabase::AbortImportSession(std::uint64_t sessionId)
+{
+    const ErrorCode writableRc = EnsureWritable();
+    if (Failed(writableRc))
+    {
+        return writableRc;
+    }
+
+    const ErrorCode storeRc = EnsureImportSessionStore();
+    if (Failed(storeRc))
+    {
+        return storeRc;
+    }
+
+    SqliteStmt deleteStmt = db_.Prepare("DELETE FROM import_sessions WHERE session_id = ?;");
+    deleteStmt.BindInt64(1, static_cast<std::int64_t>(sessionId));
+    return deleteStmt.Step();
+}
+
+ErrorCode SqliteDatabase::EnsureWritable() const
+{
+    return readOnly_ ? SC_E_READ_ONLY_DATABASE : SC_OK;
+}
+
 ErrorCode SqliteDatabase::CollectDiagnostics(SCStorageHealthReport* outReport) const
 {
     if (outReport == nullptr)
@@ -1412,6 +2342,11 @@ ErrorCode SqliteDatabase::CollectDiagnostics(SCStorageHealthReport* outReport) c
 
 ErrorCode SqliteDatabase::BeginEdit(const wchar_t* name, SCEditPtr& outEdit)
 {
+    const ErrorCode writableRc = EnsureWritable();
+    if (Failed(writableRc))
+    {
+        return writableRc;
+    }
     if (activeEdit_)
     {
         return SC_E_WRITE_CONFLICT;
@@ -1425,6 +2360,11 @@ ErrorCode SqliteDatabase::BeginEdit(const wchar_t* name, SCEditPtr& outEdit)
 
 ErrorCode SqliteDatabase::Commit(ISCEditSession* edit)
 {
+    const ErrorCode writableRc = EnsureWritable();
+    if (Failed(writableRc))
+    {
+        return writableRc;
+    }
     const ErrorCode validate = ValidateActiveEdit(edit);
     if (Failed(validate))
     {
@@ -1471,6 +2411,11 @@ ErrorCode SqliteDatabase::Commit(ISCEditSession* edit)
 
 ErrorCode SqliteDatabase::Rollback(ISCEditSession* edit)
 {
+    const ErrorCode writableRc = EnsureWritable();
+    if (Failed(writableRc))
+    {
+        return writableRc;
+    }
     const ErrorCode validate = ValidateActiveEdit(edit);
     if (Failed(validate))
     {
@@ -1489,6 +2434,11 @@ ErrorCode SqliteDatabase::Rollback(ISCEditSession* edit)
 
 ErrorCode SqliteDatabase::Undo()
 {
+    const ErrorCode writableRc = EnsureWritable();
+    if (Failed(writableRc))
+    {
+        return writableRc;
+    }
     if (activeEdit_)
     {
         return SC_E_WRITE_CONFLICT;
@@ -1528,6 +2478,11 @@ ErrorCode SqliteDatabase::Undo()
 
 ErrorCode SqliteDatabase::Redo()
 {
+    const ErrorCode writableRc = EnsureWritable();
+    if (Failed(writableRc))
+    {
+        return writableRc;
+    }
     if (activeEdit_)
     {
         return SC_E_WRITE_CONFLICT;
@@ -1610,6 +2565,11 @@ ErrorCode SqliteDatabase::GetTableName(std::int32_t index, std::wstring* outName
 
 ErrorCode SqliteDatabase::CreateTable(const wchar_t* name, SCTablePtr& outTable)
 {
+    const ErrorCode writableRc = EnsureWritable();
+    if (Failed(writableRc))
+    {
+        return writableRc;
+    }
     if (name == nullptr || *name == L'\0')
     {
         return SC_E_INVALIDARG;
@@ -1792,6 +2752,11 @@ void SqliteDatabase::RemoveAllJournalEntriesForRecord(const std::wstring& tableN
 
 ErrorCode SqliteDatabase::WriteValue(SqliteTable* table, const std::shared_ptr<SqliteRecordData>& data, const std::wstring& fieldName, const SCValue& value)
 {
+    const ErrorCode writableRc = EnsureWritable();
+    if (Failed(writableRc))
+    {
+        return writableRc;
+    }
     const ErrorCode validate = ValidateWrite(table, data, fieldName, value);
     if (Failed(validate))
     {
@@ -1827,6 +2792,11 @@ ErrorCode SqliteDatabase::WriteValue(SqliteTable* table, const std::shared_ptr<S
 
 ErrorCode SqliteDatabase::DeleteRecord(SqliteTable* table, const std::shared_ptr<SqliteRecordData>& data)
 {
+    const ErrorCode writableRc = EnsureWritable();
+    if (Failed(writableRc))
+    {
+        return writableRc;
+    }
     if (!activeEdit_)
     {
         return SC_E_NO_ACTIVE_EDIT;
@@ -1859,8 +2829,264 @@ ErrorCode SqliteDatabase::DeleteRecord(SqliteTable* table, const std::shared_ptr
     return SC_OK;
 }
 
+ErrorCode SqliteDatabase::GetReferencesBySource(
+    const std::wstring& sourceTable,
+    RecordId sourceRecordId,
+    std::vector<ReferenceRecord>* outRecords) const
+{
+    if (outRecords == nullptr)
+    {
+        return SC_E_POINTER;
+    }
+    outRecords->clear();
+
+    const auto tableIt = tables_.find(sourceTable);
+    if (tableIt == tables_.end())
+    {
+        return SC_OK;
+    }
+
+    auto* table = static_cast<SqliteTable*>(tableIt->second.Get());
+    if (table == nullptr)
+    {
+        return SC_OK;
+    }
+
+    const auto recordIt = table->Records().find(sourceRecordId);
+    if (recordIt == table->Records().end() || recordIt->second == nullptr || recordIt->second->state == RecordState::Deleted)
+    {
+        return SC_OK;
+    }
+
+    SCSchemaPtr schema;
+    const ErrorCode schemaRc = table->GetSchema(schema);
+    if (Failed(schemaRc) || !schema)
+    {
+        return schemaRc;
+    }
+
+    std::int32_t columnCount = 0;
+    const ErrorCode countRc = schema->GetColumnCount(&columnCount);
+    if (Failed(countRc))
+    {
+        return countRc;
+    }
+
+    for (std::int32_t columnIndex = 0; columnIndex < columnCount; ++columnIndex)
+    {
+        SCColumnDef column;
+        if (Failed(schema->GetColumn(columnIndex, &column)))
+        {
+            continue;
+        }
+        if (column.columnKind != ColumnKind::Relation)
+        {
+            continue;
+        }
+
+        const auto valueIt = recordIt->second->values.find(column.name);
+        if (valueIt == recordIt->second->values.end())
+        {
+            continue;
+        }
+
+        RecordId targetRecordId = 0;
+        if (Failed(valueIt->second.AsRecordId(&targetRecordId)))
+        {
+            continue;
+        }
+
+        outRecords->push_back(ReferenceRecord{
+            sourceTable,
+            sourceRecordId,
+            column.name,
+            column.referenceTable,
+            targetRecordId,
+            version_,
+            0,
+            std::nullopt});
+    }
+
+    return SC_OK;
+}
+
+ErrorCode SqliteDatabase::GetReferencesByTarget(
+    const std::wstring& targetTable,
+    RecordId targetRecordId,
+    std::vector<ReverseReferenceRecord>* outRecords) const
+{
+    if (outRecords == nullptr)
+    {
+        return SC_E_POINTER;
+    }
+    outRecords->clear();
+
+    for (const auto& [_, tableRef] : tables_)
+    {
+        auto* table = static_cast<SqliteTable*>(tableRef.Get());
+        if (table == nullptr)
+        {
+            continue;
+        }
+
+        SCSchemaPtr schema;
+        if (Failed(table->GetSchema(schema)) || !schema)
+        {
+            continue;
+        }
+
+        std::int32_t columnCount = 0;
+        if (Failed(schema->GetColumnCount(&columnCount)))
+        {
+            continue;
+        }
+
+        for (std::int32_t columnIndex = 0; columnIndex < columnCount; ++columnIndex)
+        {
+            SCColumnDef column;
+            if (Failed(schema->GetColumn(columnIndex, &column)))
+            {
+                continue;
+            }
+            if (column.columnKind != ColumnKind::Relation || column.referenceTable != targetTable)
+            {
+                continue;
+            }
+
+            for (const auto& [candidateId, candidateData] : table->Records())
+            {
+                if (candidateData == nullptr || candidateData->state == RecordState::Deleted)
+                {
+                    continue;
+                }
+
+                const auto valueIt = candidateData->values.find(column.name);
+                if (valueIt == candidateData->values.end())
+                {
+                    continue;
+                }
+
+                RecordId referencedId = 0;
+                if (Succeeded(valueIt->second.AsRecordId(&referencedId)) && referencedId == targetRecordId)
+                {
+                    outRecords->push_back(ReverseReferenceRecord{
+                        targetTable,
+                        targetRecordId,
+                        table->Name(),
+                        candidateId,
+                        column.name,
+                        version_,
+                        0,
+                        std::nullopt});
+                }
+            }
+        }
+    }
+
+    return SC_OK;
+}
+
+ErrorCode SqliteDatabase::CheckReferenceIndex(ReferenceIndexCheckResult* outResult) const
+{
+    if (outResult == nullptr)
+    {
+        return SC_E_POINTER;
+    }
+
+    outResult->state = ReferenceIndexHealthState::Missing;
+    outResult->indexVersion = 0;
+    outResult->expectedVersion = 1;
+    outResult->message = L"reference-index-read-only-scan-provider";
+    return SC_OK;
+}
+
+ErrorCode SqliteDatabase::GetAllReferencesDiagnosticOnly(ReferenceIndex* outIndex) const
+{
+    if (outIndex == nullptr)
+    {
+        return SC_E_POINTER;
+    }
+
+    outIndex->records.clear();
+    for (const auto& [_, tableRef] : tables_)
+    {
+        auto* table = static_cast<SqliteTable*>(tableRef.Get());
+        if (table == nullptr)
+        {
+            continue;
+        }
+
+        SCSchemaPtr schema;
+        if (Failed(table->GetSchema(schema)) || !schema)
+        {
+            continue;
+        }
+
+        std::int32_t columnCount = 0;
+        if (Failed(schema->GetColumnCount(&columnCount)))
+        {
+            continue;
+        }
+
+        for (const auto& [recordId, recordData] : table->Records())
+        {
+            if (recordData == nullptr || recordData->state == RecordState::Deleted)
+            {
+                continue;
+            }
+
+            for (std::int32_t columnIndex = 0; columnIndex < columnCount; ++columnIndex)
+            {
+                SCColumnDef column;
+                if (Failed(schema->GetColumn(columnIndex, &column)))
+                {
+                    continue;
+                }
+                if (column.columnKind != ColumnKind::Relation)
+                {
+                    continue;
+                }
+
+                const auto valueIt = recordData->values.find(column.name);
+                if (valueIt == recordData->values.end())
+                {
+                    continue;
+                }
+
+                RecordId targetId = 0;
+                if (Failed(valueIt->second.AsRecordId(&targetId)))
+                {
+                    continue;
+                }
+
+                outIndex->records.push_back(ReferenceRecord{
+                    table->Name(),
+                    recordId,
+                    column.name,
+                    column.referenceTable,
+                    targetId,
+                    version_,
+                    0,
+                    std::nullopt});
+            }
+        }
+    }
+
+    return SC_OK;
+}
+
 bool SqliteDatabase::IsRecordReferenced(const std::wstring& tableName, RecordId recordId) const
 {
+    ReferenceIndexCheckResult check;
+    if (Succeeded(CheckReferenceIndex(&check)) && check.state == ReferenceIndexHealthState::Healthy)
+    {
+        std::vector<ReverseReferenceRecord> refs;
+        if (Succeeded(GetReferencesByTarget(tableName, recordId, &refs)))
+        {
+            return !refs.empty();
+        }
+    }
+
     for (const auto& [_, tableRef] : tables_)
     {
         auto* table = static_cast<SqliteTable*>(tableRef.Get());
@@ -1925,6 +3151,11 @@ void SqliteDatabase::RecordCreate(SqliteTable* table, const std::shared_ptr<Sqli
 
 ErrorCode SqliteDatabase::PersistAddedColumn(SqliteSchema* schema, const SCColumnDef& def)
 {
+    const ErrorCode writableRc = EnsureWritable();
+    if (Failed(writableRc))
+    {
+        return writableRc;
+    }
     if (schema == nullptr)
     {
         return SC_E_POINTER;
@@ -2283,6 +3514,27 @@ ErrorCode CreateSqliteDatabase(const wchar_t* path, SCDbPtr& outDatabase)
     try
     {
         outDatabase = SCMakeRef<SqliteDatabase>(std::wstring{path});
+        EnsureSqliteQueryDispatchRegistered(outDatabase.Get());
+        return SC_OK;
+    }
+    catch (...)
+    {
+        outDatabase.Reset();
+        return SC_E_FAIL;
+    }
+}
+
+ErrorCode CreateSqliteDatabase(const wchar_t* path, bool readOnly, SCDbPtr& outDatabase)
+{
+    if (path == nullptr)
+    {
+        return SC_E_POINTER;
+    }
+
+    try
+    {
+        outDatabase = SCMakeRef<SqliteDatabase>(std::wstring{path}, readOnly);
+        EnsureSqliteQueryDispatchRegistered(outDatabase.Get());
         return SC_OK;
     }
     catch (...)

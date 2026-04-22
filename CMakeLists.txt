@@ -82,8 +82,14 @@ add_library(${SCSTORAGE_TARGET} SHARED
     Src/Computed/SCComputedRuntime.cpp
     Src/Computed/SCTableView.cpp
     Src/Diagnostics/SCDiagnostics.cpp
+    Src/Diagnostics/SCDebugPackage.cpp
     Src/Migration/SCMigration.cpp
     Src/Memory/SCMemoryDatabase.cpp
+    Src/Query/SCQueryBridge.cpp
+    Src/Query/SCQueryExecutor.cpp
+    Src/Query/SCQueryMemoryExecutor.cpp
+    Src/Query/SCQuerySqliteExecutor.cpp
+    Src/Query/SCQueryPlanner.cpp
     Src/Sqlite/SCSqliteAdapter.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../ThirdParty/Sqlite/sqlite3.c
 )
@@ -94,6 +100,8 @@ target_include_directories(${SCSTORAGE_TARGET}
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/Include>
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../ThirdParty/Sqlite>
         $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/Src/Query
 )
 
 target_compile_features(${SCSTORAGE_TARGET} PUBLIC cxx_std_20)
@@ -142,12 +150,15 @@ endif()
 
 set(SCSTORAGE_PUBLIC_HEADERS
     Include/SCBatch.h
+    Include/ISCDebugPackage.h
     Include/ISCComputed.h
     Include/ISCDiagnostics.h
+    Include/ISCQuery.h
     Include/SCErrors.h
     Include/SCFactory.h
     Include/ISCInterfaces.h
     Include/SCMigration.h
+    Include/SCQuery.h
     Include/SCRefCounted.h
     Include/ISCRefPtr.h
     Include/SCStorage.h
@@ -180,6 +191,9 @@ if (SCSTORAGE_BUILD_TESTS)
         Tests/M1Tests.cpp
         Tests/M2SqliteTests.cpp
         Tests/M3Tests.cpp
+        Tests/QueryPlannerBridgeTests.cpp
+        Tests/QueryMemoryExecutorTests.cpp
+        Tests/QuerySqliteExecutorTests.cpp
         Tests/PerformanceSmokeTests.cpp
         Tests/TableViewTests.cpp
     )
@@ -196,7 +210,7 @@ if (SCSTORAGE_BUILD_TESTS)
     )
 
     include(GoogleTest)
-    gtest_discover_tests(${SCSTORAGE_TESTS_TARGET})
+    gtest_discover_tests(${SCSTORAGE_TESTS_TARGET} DISCOVERY_MODE PRE_TEST)
 
     if (SCSTORAGE_BUILD_DB_EDITOR)
         add_executable(${SCSTORAGE_DB_EDITOR_TESTS_TARGET}
@@ -224,7 +238,7 @@ if (SCSTORAGE_BUILD_TESTS)
 
         target_compile_features(${SCSTORAGE_DB_EDITOR_TESTS_TARGET} PRIVATE cxx_std_20)
         include(GoogleTest)
-        gtest_discover_tests(${SCSTORAGE_DB_EDITOR_TESTS_TARGET})
+        gtest_discover_tests(${SCSTORAGE_DB_EDITOR_TESTS_TARGET} DISCOVERY_MODE PRE_TEST)
     endif()
 endif()
 
