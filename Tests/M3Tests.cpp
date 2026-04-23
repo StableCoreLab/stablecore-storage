@@ -289,7 +289,7 @@ TEST(StorageM3, MemoryReferenceIndexReadOnlyAccess)
 
     sc::ReferenceIndexCheckResult check;
     EXPECT_EQ(provider->CheckReferenceIndex(&check), sc::SC_OK);
-    EXPECT_EQ(check.state, sc::ReferenceIndexHealthState::Missing);
+    EXPECT_EQ(check.state, sc::ReferenceIndexHealthState::Healthy);
 
     std::vector<sc::ReverseReferenceRecord> reverseRefs;
     EXPECT_EQ(provider->GetReferencesByTarget(L"Floor", fixture.floor2Id, &reverseRefs), sc::SC_OK);
@@ -318,11 +318,127 @@ TEST(StorageM3, SqliteReferenceIndexReadOnlyAccess)
 
     sc::ReferenceIndexCheckResult check;
     EXPECT_EQ(provider->CheckReferenceIndex(&check), sc::SC_OK);
-    EXPECT_EQ(check.state, sc::ReferenceIndexHealthState::Missing);
+    EXPECT_EQ(check.state, sc::ReferenceIndexHealthState::Healthy);
 
     std::vector<sc::ReverseReferenceRecord> reverseRefs;
     EXPECT_EQ(provider->GetReferencesByTarget(L"Floor", fixture.floor2Id, &reverseRefs), sc::SC_OK);
     EXPECT_EQ(reverseRefs.size(), 2u);
+
+    std::vector<sc::ReferenceRecord> forwardRefs;
+    EXPECT_EQ(provider->GetReferencesBySource(L"Beam", fixture.beamAId, &forwardRefs), sc::SC_OK);
+    ASSERT_EQ(forwardRefs.size(), 1u);
+    EXPECT_EQ(forwardRefs.front().sourceTable, L"Beam");
+    EXPECT_EQ(forwardRefs.front().targetTable, L"Floor");
+}
+
+TEST(StorageM3, MemoryReferenceIndexCanBeRebuilt)
+{
+    const auto fixture = CreateRelationProviderFixture([]()
+    {
+        sc::SCDbPtr db;
+        EXPECT_EQ(sc::CreateInMemoryDatabase(db), sc::SC_OK);
+        return db;
+    });
+
+    const auto* provider = dynamic_cast<const sc::IReferenceIndexProvider*>(fixture.db.Get());
+    ASSERT_NE(provider, nullptr);
+
+    auto* maintainer = dynamic_cast<sc::IReferenceIndexMaintainer*>(fixture.db.Get());
+    ASSERT_NE(maintainer, nullptr);
+
+    sc::ReferenceIndexCheckResult check;
+    EXPECT_EQ(provider->CheckReferenceIndex(&check), sc::SC_OK);
+    EXPECT_EQ(check.state, sc::ReferenceIndexHealthState::Healthy);
+
+    sc::SCTablePtr floorTable;
+    ASSERT_EQ(fixture.db->GetTable(L"Floor", floorTable), sc::SC_OK);
+
+    sc::SCRecordCursorPtr floorCursor;
+    ASSERT_EQ(floorTable->FindRecords({L"Title", sc::SCValue::FromString(L"3F")}, floorCursor), sc::SC_OK);
+    bool hasRow = false;
+    ASSERT_EQ(floorCursor->MoveNext(&hasRow), sc::SC_OK);
+    ASSERT_TRUE(hasRow);
+
+    sc::SCRecordPtr floor3;
+    ASSERT_EQ(floorCursor->GetCurrent(floor3), sc::SC_OK);
+
+    sc::SCTablePtr beamTable;
+    ASSERT_EQ(fixture.db->GetTable(L"Beam", beamTable), sc::SC_OK);
+
+    sc::SCEditPtr edit;
+    ASSERT_EQ(fixture.db->BeginEdit(L"dirty reference index", edit), sc::SC_OK);
+
+    sc::SCRecordPtr beamA;
+    ASSERT_EQ(beamTable->GetRecord(fixture.beamAId, beamA), sc::SC_OK);
+    ASSERT_EQ(beamA->SetRef(L"FloorRef", floor3->GetId()), sc::SC_OK);
+
+    EXPECT_EQ(provider->CheckReferenceIndex(&check), sc::SC_OK);
+    EXPECT_EQ(check.state, sc::ReferenceIndexHealthState::OutOfDate);
+    EXPECT_EQ(maintainer->RebuildReferenceIndexes(), sc::SC_OK);
+    EXPECT_EQ(provider->CheckReferenceIndex(&check), sc::SC_OK);
+    EXPECT_EQ(check.state, sc::ReferenceIndexHealthState::Healthy);
+    EXPECT_EQ(check.indexVersion, static_cast<std::int32_t>(fixture.db->GetCurrentVersion()));
+    EXPECT_EQ(check.expectedVersion, static_cast<std::int32_t>(fixture.db->GetCurrentVersion()));
+
+    EXPECT_EQ(fixture.db->Rollback(edit.Get()), sc::SC_OK);
+
+    std::vector<sc::ReverseReferenceRecord> reverseRefs;
+    EXPECT_EQ(provider->GetReferencesByTarget(L"Floor", fixture.floor2Id, &reverseRefs), sc::SC_OK);
+    EXPECT_EQ(reverseRefs.size(), 2u);
+}
+
+TEST(StorageM3, SqliteReferenceIndexCanBeRebuilt)
+{
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_M3_ReferenceIndexRebuild.sqlite");
+
+    const auto fixture = CreateRelationProviderFixture([&dbPath]()
+    {
+        sc::SCDbPtr db;
+        EXPECT_EQ(sc::CreateSqliteDatabase(dbPath.c_str(), db), sc::SC_OK);
+        return db;
+    });
+
+    const auto* provider = dynamic_cast<const sc::IReferenceIndexProvider*>(fixture.db.Get());
+    ASSERT_NE(provider, nullptr);
+
+    auto* maintainer = dynamic_cast<sc::IReferenceIndexMaintainer*>(fixture.db.Get());
+    ASSERT_NE(maintainer, nullptr);
+
+    sc::ReferenceIndexCheckResult check;
+    EXPECT_EQ(provider->CheckReferenceIndex(&check), sc::SC_OK);
+    EXPECT_EQ(check.state, sc::ReferenceIndexHealthState::Healthy);
+
+    sc::SCTablePtr floorTable;
+    ASSERT_EQ(fixture.db->GetTable(L"Floor", floorTable), sc::SC_OK);
+
+    sc::SCRecordCursorPtr floorCursor;
+    ASSERT_EQ(floorTable->FindRecords({L"Title", sc::SCValue::FromString(L"3F")}, floorCursor), sc::SC_OK);
+    bool hasRow = false;
+    ASSERT_EQ(floorCursor->MoveNext(&hasRow), sc::SC_OK);
+    ASSERT_TRUE(hasRow);
+
+    sc::SCRecordPtr floor3;
+    ASSERT_EQ(floorCursor->GetCurrent(floor3), sc::SC_OK);
+
+    sc::SCTablePtr beamTable;
+    ASSERT_EQ(fixture.db->GetTable(L"Beam", beamTable), sc::SC_OK);
+
+    sc::SCEditPtr edit;
+    ASSERT_EQ(fixture.db->BeginEdit(L"dirty reference index", edit), sc::SC_OK);
+
+    sc::SCRecordPtr beamA;
+    ASSERT_EQ(beamTable->GetRecord(fixture.beamAId, beamA), sc::SC_OK);
+    ASSERT_EQ(beamA->SetRef(L"FloorRef", floor3->GetId()), sc::SC_OK);
+
+    EXPECT_EQ(provider->CheckReferenceIndex(&check), sc::SC_OK);
+    EXPECT_EQ(check.state, sc::ReferenceIndexHealthState::OutOfDate);
+    EXPECT_EQ(maintainer->RebuildReferenceIndexes(), sc::SC_OK);
+    EXPECT_EQ(provider->CheckReferenceIndex(&check), sc::SC_OK);
+    EXPECT_EQ(check.state, sc::ReferenceIndexHealthState::Healthy);
+    EXPECT_EQ(check.indexVersion, static_cast<std::int32_t>(fixture.db->GetCurrentVersion()));
+    EXPECT_EQ(check.expectedVersion, static_cast<std::int32_t>(fixture.db->GetCurrentVersion()));
+
+    EXPECT_EQ(fixture.db->Rollback(edit.Get()), sc::SC_OK);
 
     std::vector<sc::ReferenceRecord> forwardRefs;
     EXPECT_EQ(provider->GetReferencesBySource(L"Beam", fixture.beamAId, &forwardRefs), sc::SC_OK);

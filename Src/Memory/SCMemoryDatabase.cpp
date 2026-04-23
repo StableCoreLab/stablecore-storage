@@ -151,6 +151,31 @@ public:
         return SC_OK;
     }
 
+    ErrorCode RemoveColumn(const wchar_t* name) override
+    {
+        if (name == nullptr)
+        {
+            return SC_E_INVALIDARG;
+        }
+
+        const auto it = columnsByName_.find(name);
+        if (it == columnsByName_.end())
+        {
+            return SC_E_COLUMN_NOT_FOUND;
+        }
+
+        columnsByName_.erase(it);
+        const auto vecIt = std::find_if(columns_.begin(), columns_.end(), [name](const SCColumnDef& def)
+        {
+            return def.name == name;
+        });
+        if (vecIt != columns_.end())
+        {
+            columns_.erase(vecIt);
+        }
+        return SC_OK;
+    }
+
     const SCColumnDef* FindColumnDef(const std::wstring& name) const noexcept
     {
         const auto it = columnsByName_.find(name);
@@ -338,7 +363,10 @@ private:
     std::unordered_map<RecordId, std::shared_ptr<MemoryRecordData>> records_;
 };
 
-class MemoryDatabase final : public ISCDatabase, public IReferenceIndexProvider, public SCRefCountedObject
+class MemoryDatabase final : public ISCDatabase,
+                             public IReferenceIndexProvider,
+                             public IReferenceIndexMaintainer,
+                             public SCRefCountedObject
 {
 public:
     ErrorCode BeginEdit(const wchar_t* name, SCEditPtr& outEdit) override;
@@ -375,6 +403,9 @@ public:
         std::vector<ReverseReferenceRecord>* outRecords) const override;
     ErrorCode CheckReferenceIndex(ReferenceIndexCheckResult* outResult) const override;
     ErrorCode GetAllReferencesDiagnosticOnly(ReferenceIndex* outIndex) const override;
+    ErrorCode RebuildReferenceIndexes() override;
+    ErrorCode CommitReferenceDelta(const ReferenceIndex& forwardDelta,
+                                   const ReverseReferenceIndex& reverseDelta) override;
 
     VersionId GetCurrentVersion() const noexcept override
     {
@@ -410,6 +441,8 @@ private:
     ErrorCode ValidateActiveEdit(ISCEditSession* edit) const;
     ErrorCode ValidateWrite(MemoryTable* table, const std::shared_ptr<MemoryRecordData>& data, const std::wstring& fieldName, const SCValue& value);
     bool IsRecordReferenced(const std::wstring& tableName, RecordId recordId) const;
+    void MarkReferenceIndexDirty() noexcept;
+    void RefreshReferenceIndexState();
     JournalLookup LookupRecordJournalState(const std::wstring& tableName, RecordId recordId) const;
     void RemoveFieldJournalEntries(const std::wstring& tableName, RecordId recordId);
     void RemoveAllJournalEntriesForRecord(const std::wstring& tableName, RecordId recordId);
@@ -440,6 +473,9 @@ private:
     JournalTransaction activeJournal_;
     std::vector<JournalTransaction> undoStack_;
     std::vector<JournalTransaction> redoStack_;
+    bool referenceIndexDirty_{true};
+    bool referenceIndexBuilt_{false};
+    VersionId referenceIndexVersion_{0};
 };
 
 ErrorCode MemoryDatabase::BeginEdit(const wchar_t* name, SCEditPtr& outEdit)
@@ -477,6 +513,7 @@ ErrorCode MemoryDatabase::Commit(ISCEditSession* edit)
     UpdateTouchedVersions(activeJournal_, version_);
     undoStack_.push_back(activeJournal_);
     redoStack_.clear();
+    RefreshReferenceIndexState();
 
     SCChangeSet SCChangeSet = BuildChangeSet(activeJournal_, ChangeSource::UserEdit, version_);
     activeEdit_.Reset();
@@ -497,6 +534,7 @@ ErrorCode MemoryDatabase::Rollback(ISCEditSession* edit)
     {
         ApplyJournalReverse(activeJournal_);
     }
+    RefreshReferenceIndexState();
 
     activeEdit_->SetState(EditState::RolledBack);
     activeEdit_.Reset();
@@ -521,6 +559,7 @@ ErrorCode MemoryDatabase::Undo()
     ++version_;
     UpdateTouchedVersions(tx, version_);
     redoStack_.push_back(tx);
+    RefreshReferenceIndexState();
     NotifyObservers(BuildChangeSet(tx, ChangeSource::Undo, version_));
     return SC_OK;
 }
@@ -542,6 +581,7 @@ ErrorCode MemoryDatabase::Redo()
     ++version_;
     UpdateTouchedVersions(tx, version_);
     undoStack_.push_back(tx);
+    RefreshReferenceIndexState();
     NotifyObservers(BuildChangeSet(tx, ChangeSource::Redo, version_));
     return SC_OK;
 }
@@ -608,6 +648,7 @@ ErrorCode MemoryDatabase::CreateTable(const wchar_t* name, SCTablePtr& outTable)
     SCTablePtr table = SCMakeRef<MemoryTable>(this, std::wstring{name});
     tables_.emplace(name, table);
     outTable = std::move(table);
+    MarkReferenceIndexDirty();
     return SC_OK;
 }
 
@@ -920,6 +961,7 @@ ErrorCode MemoryDatabase::WriteValue(
         ? JournalOp::SetRelation
         : JournalOp::SetValue;
     RecordJournal(table->Name(), data->id, fieldName, oldValue, value, false, false, op);
+    MarkReferenceIndexDirty();
     return SC_OK;
 }
 
@@ -950,11 +992,13 @@ ErrorCode MemoryDatabase::DeleteRecord(MemoryTable* table, const std::shared_ptr
     {
         RemoveAllJournalEntriesForRecord(table->Name(), data->id);
         data->values.clear();
+        MarkReferenceIndexDirty();
         return SC_OK;
     }
 
     RemoveFieldJournalEntries(table->Name(), data->id);
     RecordJournal(table->Name(), data->id, L"", SCValue::Null(), SCValue::Null(), false, true, JournalOp::DeleteRecord);
+    MarkReferenceIndexDirty();
     return SC_OK;
 }
 
@@ -1122,10 +1166,23 @@ ErrorCode MemoryDatabase::CheckReferenceIndex(ReferenceIndexCheckResult* outResu
         return SC_E_POINTER;
     }
 
-    outResult->state = ReferenceIndexHealthState::Missing;
-    outResult->indexVersion = 0;
-    outResult->expectedVersion = 1;
-    outResult->message = L"reference-index-read-only-scan-provider";
+    if (!referenceIndexBuilt_)
+    {
+        outResult->state = ReferenceIndexHealthState::Missing;
+        outResult->message = L"reference-index-not-built";
+    }
+    else if (referenceIndexDirty_)
+    {
+        outResult->state = ReferenceIndexHealthState::OutOfDate;
+        outResult->message = L"reference-index-rebuild-required";
+    }
+    else
+    {
+        outResult->state = ReferenceIndexHealthState::Healthy;
+        outResult->message = L"reference-index-current";
+    }
+    outResult->indexVersion = static_cast<std::int32_t>(referenceIndexVersion_);
+    outResult->expectedVersion = static_cast<std::int32_t>(version_);
     return SC_OK;
 }
 
@@ -1275,6 +1332,7 @@ bool MemoryDatabase::IsRecordReferenced(const std::wstring& tableName, RecordId 
 void MemoryDatabase::RecordCreate(MemoryTable* table, const std::shared_ptr<MemoryRecordData>& data)
 {
     RecordJournal(table->Name(), data->id, L"", SCValue::Null(), SCValue::Null(), true, false, JournalOp::CreateRecord);
+    MarkReferenceIndexDirty();
 }
 
 void MemoryDatabase::RecordJournal(
@@ -1697,6 +1755,46 @@ ErrorCode CreateInMemoryDatabase(SCDbPtr& outDatabase)
     outDatabase = SCMakeRef<MemoryDatabase>();
     RegisterQueryExecutionContextDispatch(QueryBackendKind::Memory, &ExecuteMemoryQueryDispatch);
     return SC_OK;
+}
+
+ErrorCode MemoryDatabase::RebuildReferenceIndexes()
+{
+    ReferenceIndex index;
+    const ErrorCode rc = GetAllReferencesDiagnosticOnly(&index);
+    if (Failed(rc))
+    {
+        return rc;
+    }
+
+    referenceIndexBuilt_ = true;
+    referenceIndexDirty_ = false;
+    referenceIndexVersion_ = version_;
+    return SC_OK;
+}
+
+ErrorCode MemoryDatabase::CommitReferenceDelta(const ReferenceIndex& forwardDelta, const ReverseReferenceIndex& reverseDelta)
+{
+    if (forwardDelta.records.size() != reverseDelta.records.size())
+    {
+        return SC_E_INVALIDARG;
+    }
+
+    return RebuildReferenceIndexes();
+}
+
+void MemoryDatabase::MarkReferenceIndexDirty() noexcept
+{
+    referenceIndexDirty_ = true;
+}
+
+void MemoryDatabase::RefreshReferenceIndexState()
+{
+    const ErrorCode rc = RebuildReferenceIndexes();
+    if (Failed(rc))
+    {
+        referenceIndexBuilt_ = false;
+        referenceIndexVersion_ = 0;
+    }
 }
 
 }  // namespace StableCore::Storage

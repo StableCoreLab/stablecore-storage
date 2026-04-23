@@ -34,7 +34,7 @@ public:
         QueryExecutionResult* outResult) = 0;
 };
 
-// Query index inspection and rebuild are distinct from reference index inspection and rebuild.
+// Query index inspection/rebuild is for query execution observability and maintenance.
 class IQueryIndexProvider
 {
 public:

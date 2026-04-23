@@ -168,3 +168,110 @@ TEST(StorageTableView, AggregateColumnTracksRelatedRecords)
     ASSERT_EQ(cell.AsInt64(&count), sc::SC_OK);
     EXPECT_EQ(count, 3);
 }
+
+TEST(StorageTableView, RejectsInvalidComputedColumnDefinitions)
+{
+    sc::SCDbPtr db;
+    ASSERT_EQ(sc::CreateInMemoryDatabase(db), sc::SC_OK);
+
+    sc::SCTablePtr floorTable = CreateFloorTable(db);
+    sc::SCTablePtr beamTable = CreateBeamTable(db);
+
+    sc::SCComputedTableViewPtr view;
+    ASSERT_EQ(sc::CreateComputedTableView(db.Get(), L"Beam", nullptr, view), sc::SC_OK);
+
+    sc::SCComputedColumnDef invalidExpression;
+    invalidExpression.name = L"InvalidExpression";
+    invalidExpression.valueKind = sc::ValueKind::Double;
+    invalidExpression.kind = sc::ComputedFieldKind::Expression;
+    invalidExpression.dependencies.factFields = {{L"Beam", L"Length"}};
+    EXPECT_EQ(view->AddComputedColumn(invalidExpression), sc::SC_E_INVALIDARG);
+
+    sc::SCComputedColumnDef invalidRule;
+    invalidRule.name = L"InvalidRule";
+    invalidRule.valueKind = sc::ValueKind::Double;
+    invalidRule.kind = sc::ComputedFieldKind::Rule;
+    invalidRule.dependencies.factFields = {{L"Beam", L"Length"}};
+    EXPECT_EQ(view->AddComputedColumn(invalidRule), sc::SC_E_INVALIDARG);
+
+    sc::SCComputedColumnDef invalidAggregate;
+    invalidAggregate.name = L"InvalidAggregate";
+    invalidAggregate.valueKind = sc::ValueKind::Int64;
+    invalidAggregate.kind = sc::ComputedFieldKind::Aggregate;
+    invalidAggregate.aggregateKind = sc::SCAggregateKind::Count;
+    invalidAggregate.aggregateField = L"FloorRef";
+    invalidAggregate.dependencies.relationFields = {{L"Beam", L"FloorRef"}};
+    EXPECT_EQ(view->AddComputedColumn(invalidAggregate), sc::SC_E_INVALIDARG);
+
+    sc::SCComputedColumnDef validAggregate;
+    validAggregate.name = L"BeamCount";
+    validAggregate.valueKind = sc::ValueKind::Int64;
+    validAggregate.kind = sc::ComputedFieldKind::Aggregate;
+    validAggregate.aggregateKind = sc::SCAggregateKind::Count;
+    validAggregate.aggregateRelation = L"Beam.FloorRef";
+    validAggregate.aggregateField = L"FloorRef";
+    validAggregate.dependencies.relationFields = {{L"Beam", L"FloorRef"}};
+    EXPECT_EQ(view->AddComputedColumn(validAggregate), sc::SC_OK);
+    EXPECT_EQ(view->AddComputedColumn(validAggregate), sc::SC_E_COLUMN_EXISTS);
+}
+
+TEST(StorageTableView, ComputedColumnTracksEditUndoRedo)
+{
+    sc::SCDbPtr db;
+    ASSERT_EQ(sc::CreateInMemoryDatabase(db), sc::SC_OK);
+
+    sc::SCTablePtr floorTable = CreateFloorTable(db);
+    sc::SCTablePtr beamTable = CreateBeamTable(db);
+
+    sc::SCEditPtr seedEdit;
+    ASSERT_EQ(db->BeginEdit(L"seed", seedEdit), sc::SC_OK);
+
+    sc::SCRecordPtr floor;
+    ASSERT_EQ(floorTable->CreateRecord(floor), sc::SC_OK);
+    ASSERT_EQ(floor->SetString(L"Name", L"2F"), sc::SC_OK);
+
+    sc::SCRecordPtr beam;
+    ASSERT_EQ(beamTable->CreateRecord(beam), sc::SC_OK);
+    ASSERT_EQ(beam->SetDouble(L"Length", 4.0), sc::SC_OK);
+    ASSERT_EQ(beam->SetDouble(L"Width", 0.5), sc::SC_OK);
+    ASSERT_EQ(beam->SetDouble(L"Height", 1.0), sc::SC_OK);
+    ASSERT_EQ(beam->SetRef(L"FloorRef", floor->GetId()), sc::SC_OK);
+    ASSERT_EQ(db->Commit(seedEdit.Get()), sc::SC_OK);
+
+    sc::SCComputedTableViewPtr view;
+    ASSERT_EQ(sc::CreateComputedTableView(db.Get(), L"Beam", nullptr, view), sc::SC_OK);
+
+    sc::SCComputedColumnDef doubledWidth;
+    doubledWidth.name = L"DoubledWidth";
+    doubledWidth.displayName = L"DoubledWidth";
+    doubledWidth.valueKind = sc::ValueKind::Double;
+    doubledWidth.kind = sc::ComputedFieldKind::Expression;
+    doubledWidth.expression = L"Width * 2";
+    doubledWidth.dependencies.factFields = {{L"Beam", L"Width"}};
+    ASSERT_EQ(view->AddComputedColumn(doubledWidth), sc::SC_OK);
+
+    sc::SCValue cell;
+    ASSERT_EQ(view->GetCellValue(beam->GetId(), L"DoubledWidth", &cell), sc::SC_OK);
+    double doubled = 0.0;
+    ASSERT_EQ(cell.AsDouble(&doubled), sc::SC_OK);
+    EXPECT_DOUBLE_EQ(doubled, 1.0);
+
+    sc::SCEditPtr edit;
+    ASSERT_EQ(db->BeginEdit(L"modify beam width", edit), sc::SC_OK);
+    ASSERT_EQ(beam->SetDouble(L"Width", 1.5), sc::SC_OK);
+    ASSERT_EQ(db->Commit(edit.Get()), sc::SC_OK);
+
+    ASSERT_EQ(view->GetCellValue(beam->GetId(), L"DoubledWidth", &cell), sc::SC_OK);
+    ASSERT_EQ(cell.AsDouble(&doubled), sc::SC_OK);
+    EXPECT_DOUBLE_EQ(doubled, 3.0);
+
+    ASSERT_EQ(db->Undo(), sc::SC_OK);
+    ASSERT_EQ(view->GetCellValue(beam->GetId(), L"DoubledWidth", &cell), sc::SC_OK);
+    ASSERT_EQ(cell.AsDouble(&doubled), sc::SC_OK);
+    EXPECT_DOUBLE_EQ(doubled, 1.0);
+
+    ASSERT_EQ(db->Redo(), sc::SC_OK);
+    ASSERT_EQ(view->GetCellValue(beam->GetId(), L"DoubledWidth", &cell), sc::SC_OK);
+    ASSERT_EQ(cell.AsDouble(&doubled), sc::SC_OK);
+    EXPECT_DOUBLE_EQ(doubled, 3.0);
+}

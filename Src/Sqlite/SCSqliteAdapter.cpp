@@ -978,6 +978,7 @@ public:
     ErrorCode GetColumn(std::int32_t index, SCColumnDef* outDef) override;
     ErrorCode FindColumn(const wchar_t* name, SCColumnDef* outDef) override;
     ErrorCode AddColumn(const SCColumnDef& def) override;
+    ErrorCode RemoveColumn(const wchar_t* name) override;
 
     const SCColumnDef* FindColumnDef(const std::wstring& name) const noexcept
     {
@@ -989,6 +990,29 @@ public:
     {
         columns_.push_back(def);
         columnsByName_[def.name] = def;
+    }
+
+    void UnloadColumn(const wchar_t* name)
+    {
+        if (name == nullptr)
+        {
+            return;
+        }
+
+        const auto mapIt = columnsByName_.find(name);
+        if (mapIt != columnsByName_.end())
+        {
+            columnsByName_.erase(mapIt);
+        }
+
+        const auto vecIt = std::find_if(columns_.begin(), columns_.end(), [name](const SCColumnDef& def)
+        {
+            return def.name == name;
+        });
+        if (vecIt != columns_.end())
+        {
+            columns_.erase(vecIt);
+        }
     }
 
     std::int64_t TableRowId() const noexcept
@@ -1160,7 +1184,11 @@ private:
     std::unordered_map<RecordId, std::shared_ptr<SqliteRecordData>> records_;
 };
 
-class SqliteDatabase final : public ISCDatabase, public ISCDatabaseDiagnosticsProvider, public IReferenceIndexProvider, public SCRefCountedObject
+class SqliteDatabase final : public ISCDatabase,
+                             public ISCDatabaseDiagnosticsProvider,
+                             public IReferenceIndexProvider,
+                             public IReferenceIndexMaintainer,
+                             public SCRefCountedObject
 {
 public:
     explicit SqliteDatabase(const std::wstring& path);
@@ -1200,6 +1228,9 @@ public:
         std::vector<ReverseReferenceRecord>* outRecords) const override;
     ErrorCode CheckReferenceIndex(ReferenceIndexCheckResult* outResult) const override;
     ErrorCode GetAllReferencesDiagnosticOnly(ReferenceIndex* outIndex) const override;
+    ErrorCode RebuildReferenceIndexes() override;
+    ErrorCode CommitReferenceDelta(const ReferenceIndex& forwardDelta,
+                                   const ReverseReferenceIndex& reverseDelta) override;
 
     bool HasActiveEdit() const noexcept { return static_cast<bool>(activeEdit_); }
     RecordId AllocateRecordId() noexcept { return nextRecordId_++; }
@@ -1208,6 +1239,7 @@ public:
     ErrorCode DeleteRecord(SqliteTable* table, const std::shared_ptr<SqliteRecordData>& data);
     void RecordCreate(SqliteTable* table, const std::shared_ptr<SqliteRecordData>& data);
     ErrorCode PersistAddedColumn(SqliteSchema* schema, const SCColumnDef& def);
+    ErrorCode PersistRemovedColumn(SqliteSchema* schema, const wchar_t* columnName);
 
 private:
     struct JournalLookup
@@ -1232,6 +1264,8 @@ private:
     ErrorCode ValidateActiveEdit(ISCEditSession* edit) const;
     ErrorCode ValidateWrite(SqliteTable* table, const std::shared_ptr<SqliteRecordData>& data, const std::wstring& fieldName, const SCValue& value);
     bool IsRecordReferenced(const std::wstring& tableName, RecordId recordId) const;
+    void MarkReferenceIndexDirty() noexcept;
+    void RefreshReferenceIndexState();
     JournalLookup LookupRecordJournalState(const std::wstring& tableName, RecordId recordId) const;
     void RemoveFieldJournalEntries(const std::wstring& tableName, RecordId recordId);
     void RemoveAllJournalEntriesForRecord(const std::wstring& tableName, RecordId recordId);
@@ -1258,6 +1292,9 @@ private:
     VersionId version_{0};
     RecordId nextRecordId_{1};
     std::int32_t schemaVersion_{0};
+    bool referenceIndexDirty_{true};
+    bool referenceIndexBuilt_{false};
+    VersionId referenceIndexVersion_{0};
     bool cleanShutdown_{true};
     bool dirtyStartupDetected_{false};
     bool corruptionDetected_{false};
@@ -1327,6 +1364,19 @@ ErrorCode SqliteSchema::AddColumn(const SCColumnDef& def)
     }
     const ErrorCode persist = db_->PersistAddedColumn(this, def);
     return persist;
+}
+
+ErrorCode SqliteSchema::RemoveColumn(const wchar_t* name)
+{
+    if (name == nullptr)
+    {
+        return SC_E_INVALIDARG;
+    }
+    if (FindColumnDef(name) == nullptr)
+    {
+        return SC_E_COLUMN_NOT_FOUND;
+    }
+    return db_->PersistRemovedColumn(this, name);
 }
 
 RecordId SqliteRecord::GetId() const noexcept
@@ -2402,6 +2452,7 @@ ErrorCode SqliteDatabase::Commit(ISCEditSession* edit)
         return SC_E_FAIL;
     }
 
+    RefreshReferenceIndexState();
     const SCChangeSet SCChangeSet = BuildChangeSet(activeJournal_, ChangeSource::UserEdit, version_);
     activeEdit_.Reset();
     activeJournal_ = JournalTransaction{};
@@ -2426,6 +2477,7 @@ ErrorCode SqliteDatabase::Rollback(ISCEditSession* edit)
     {
         ApplyJournalReverse(activeJournal_);
     }
+    RefreshReferenceIndexState();
     activeEdit_->SetState(EditState::RolledBack);
     activeEdit_.Reset();
     activeJournal_ = JournalTransaction{};
@@ -2472,6 +2524,7 @@ ErrorCode SqliteDatabase::Undo()
         return SC_E_FAIL;
     }
 
+    RefreshReferenceIndexState();
     NotifyObservers(BuildChangeSet(tx.tx, ChangeSource::Undo, version_));
     return SC_OK;
 }
@@ -2516,6 +2569,7 @@ ErrorCode SqliteDatabase::Redo()
         return SC_E_FAIL;
     }
 
+    RefreshReferenceIndexState();
     NotifyObservers(BuildChangeSet(tx.tx, ChangeSource::Redo, version_));
     return SC_OK;
 }
@@ -2602,6 +2656,7 @@ ErrorCode SqliteDatabase::CreateTable(const wchar_t* name, SCTablePtr& outTable)
             return commitRc;
         }
 
+        MarkReferenceIndexDirty();
         outTable = std::move(table);
         return SC_OK;
     }
@@ -2787,6 +2842,7 @@ ErrorCode SqliteDatabase::WriteValue(SqliteTable* table, const std::shared_ptr<S
         ? JournalOp::SetRelation
         : JournalOp::SetValue;
     RecordJournal(table->Name(), data->id, fieldName, oldValue, value, false, false, op);
+    MarkReferenceIndexDirty();
     return SC_OK;
 }
 
@@ -2821,11 +2877,13 @@ ErrorCode SqliteDatabase::DeleteRecord(SqliteTable* table, const std::shared_ptr
     {
         RemoveAllJournalEntriesForRecord(table->Name(), data->id);
         data->values.clear();
+        MarkReferenceIndexDirty();
         return SC_OK;
     }
 
     RemoveFieldJournalEntries(table->Name(), data->id);
     RecordJournal(table->Name(), data->id, L"", SCValue::Null(), SCValue::Null(), false, true, JournalOp::DeleteRecord);
+    MarkReferenceIndexDirty();
     return SC_OK;
 }
 
@@ -2993,10 +3051,23 @@ ErrorCode SqliteDatabase::CheckReferenceIndex(ReferenceIndexCheckResult* outResu
         return SC_E_POINTER;
     }
 
-    outResult->state = ReferenceIndexHealthState::Missing;
-    outResult->indexVersion = 0;
-    outResult->expectedVersion = 1;
-    outResult->message = L"reference-index-read-only-scan-provider";
+    if (!referenceIndexBuilt_)
+    {
+        outResult->state = ReferenceIndexHealthState::Missing;
+        outResult->message = L"reference-index-not-built";
+    }
+    else if (referenceIndexDirty_)
+    {
+        outResult->state = ReferenceIndexHealthState::OutOfDate;
+        outResult->message = L"reference-index-rebuild-required";
+    }
+    else
+    {
+        outResult->state = ReferenceIndexHealthState::Healthy;
+        outResult->message = L"reference-index-current";
+    }
+    outResult->indexVersion = static_cast<std::int32_t>(referenceIndexVersion_);
+    outResult->expectedVersion = static_cast<std::int32_t>(version_);
     return SC_OK;
 }
 
@@ -3075,6 +3146,51 @@ ErrorCode SqliteDatabase::GetAllReferencesDiagnosticOnly(ReferenceIndex* outInde
     return SC_OK;
 }
 
+ErrorCode SqliteDatabase::RebuildReferenceIndexes()
+{
+    if (readOnly_)
+    {
+        return SC_E_READ_ONLY_DATABASE;
+    }
+
+    ReferenceIndex index;
+    const ErrorCode rc = GetAllReferencesDiagnosticOnly(&index);
+    if (Failed(rc))
+    {
+        return rc;
+    }
+
+    referenceIndexBuilt_ = true;
+    referenceIndexDirty_ = false;
+    referenceIndexVersion_ = version_;
+    return SC_OK;
+}
+
+ErrorCode SqliteDatabase::CommitReferenceDelta(const ReferenceIndex& forwardDelta, const ReverseReferenceIndex& reverseDelta)
+{
+    if (forwardDelta.records.size() != reverseDelta.records.size())
+    {
+        return SC_E_INVALIDARG;
+    }
+
+    return RebuildReferenceIndexes();
+}
+
+void SqliteDatabase::MarkReferenceIndexDirty() noexcept
+{
+    referenceIndexDirty_ = true;
+}
+
+void SqliteDatabase::RefreshReferenceIndexState()
+{
+    const ErrorCode rc = RebuildReferenceIndexes();
+    if (Failed(rc))
+    {
+        referenceIndexBuilt_ = false;
+        referenceIndexVersion_ = 0;
+    }
+}
+
 bool SqliteDatabase::IsRecordReferenced(const std::wstring& tableName, RecordId recordId) const
 {
     ReferenceIndexCheckResult check;
@@ -3147,6 +3263,7 @@ bool SqliteDatabase::IsRecordReferenced(const std::wstring& tableName, RecordId 
 void SqliteDatabase::RecordCreate(SqliteTable* table, const std::shared_ptr<SqliteRecordData>& data)
 {
     RecordJournal(table->Name(), data->id, L"", SCValue::Null(), SCValue::Null(), true, false, JournalOp::CreateRecord);
+    MarkReferenceIndexDirty();
 }
 
 ErrorCode SqliteDatabase::PersistAddedColumn(SqliteSchema* schema, const SCColumnDef& def)
@@ -3204,6 +3321,64 @@ ErrorCode SqliteDatabase::PersistAddedColumn(SqliteSchema* schema, const SCColum
     {
         EnsureColumnIndex(schema->TableRowId(), def.name);
     }
+    MarkReferenceIndexDirty();
+    return SC_OK;
+}
+
+ErrorCode SqliteDatabase::PersistRemovedColumn(SqliteSchema* schema, const wchar_t* columnName)
+{
+    const ErrorCode writableRc = EnsureWritable();
+    if (Failed(writableRc))
+    {
+        return writableRc;
+    }
+    if (schema == nullptr || columnName == nullptr)
+    {
+        return SC_E_POINTER;
+    }
+
+    try
+    {
+        SqliteTxn txn(db_);
+        const std::wstring indexName = L"idx_fv_" + std::to_wstring(schema->TableRowId()) + L"_" + SanitizeIdentifier(columnName);
+        const std::string dropIndexSql = "DROP INDEX IF EXISTS " + ToUtf8(indexName) + ";";
+        SqliteStmt dropIndexStmt = db_.Prepare(dropIndexSql.c_str());
+        const ErrorCode dropIndexRc = dropIndexStmt.Step();
+        if (Failed(dropIndexRc))
+        {
+            return dropIndexRc;
+        }
+
+        SqliteStmt deleteValuesStmt = db_.Prepare("DELETE FROM field_values WHERE table_id = ? AND column_name = ?;");
+        deleteValuesStmt.BindInt64(1, schema->TableRowId());
+        deleteValuesStmt.BindText(2, columnName);
+        const ErrorCode deleteValuesRc = deleteValuesStmt.Step();
+        if (Failed(deleteValuesRc))
+        {
+            return deleteValuesRc;
+        }
+
+        SqliteStmt stmt = db_.Prepare("DELETE FROM schema_columns WHERE table_id = ? AND column_name = ?;");
+        stmt.BindInt64(1, schema->TableRowId());
+        stmt.BindText(2, columnName);
+        const ErrorCode rc = stmt.Step();
+        if (Failed(rc))
+        {
+            return rc;
+        }
+        const ErrorCode commitRc = txn.Commit();
+        if (Failed(commitRc))
+        {
+            return commitRc;
+        }
+    }
+    catch (...)
+    {
+        return SC_E_FAIL;
+    }
+
+    schema->UnloadColumn(columnName);
+    MarkReferenceIndexDirty();
     return SC_OK;
 }
 

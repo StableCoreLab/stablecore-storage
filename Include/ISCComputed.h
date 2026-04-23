@@ -49,8 +49,7 @@ struct SCComputedCacheKey
     bool operator==(const SCComputedCacheKey& other) const noexcept
     {
         return recordId == other.recordId
-            && columnName == other.columnName
-            && version == other.version;
+            && columnName == other.columnName;
     }
 };
 

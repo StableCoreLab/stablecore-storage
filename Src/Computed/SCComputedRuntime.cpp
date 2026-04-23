@@ -480,8 +480,7 @@ struct CacheKeyHash
     std::size_t operator()(const SCComputedCacheKey& key) const noexcept
     {
         return static_cast<std::size_t>(key.recordId)
-            ^ (std::hash<std::wstring>{}(key.columnName) << 1)
-            ^ (static_cast<std::size_t>(key.version) << 2);
+            ^ (std::hash<std::wstring>{}(key.columnName) << 1);
     }
 };
 

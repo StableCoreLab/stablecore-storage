@@ -13,9 +13,22 @@ namespace StableCore::Storage::Editor
 namespace
 {
 
-std::vector<sc::SCFieldDependency> ParseDependencies(const QString& text, const QString& currentTableName)
+bool ParseDependencies(
+    const QString& text,
+    const QString& currentTableName,
+    std::vector<sc::SCFieldDependency>* outDependencies,
+    QString* outError)
 {
-    std::vector<sc::SCFieldDependency> result;
+    if (outDependencies == nullptr)
+    {
+        if (outError != nullptr)
+        {
+            *outError = QStringLiteral("Output dependency container is null.");
+        }
+        return false;
+    }
+
+    outDependencies->clear();
     const QStringList parts = text.split(',', Qt::SkipEmptyParts);
     for (const QString& rawPart : parts)
     {
@@ -28,17 +41,26 @@ std::vector<sc::SCFieldDependency> ParseDependencies(const QString& text, const 
         const int dot = token.indexOf('.');
         if (dot >= 0)
         {
-            result.push_back(sc::SCFieldDependency{
-                token.left(dot).trimmed().toStdWString(),
-                token.mid(dot + 1).trimmed().toStdWString()});
+            const QString tableName = token.left(dot).trimmed();
+            const QString fieldName = token.mid(dot + 1).trimmed();
+            if (tableName.isEmpty() || fieldName.isEmpty() || token.indexOf('.', dot + 1) >= 0)
+            {
+                if (outError != nullptr)
+                {
+                    *outError = QStringLiteral("Dependencies must use Table.Field format.");
+                }
+                return false;
+            }
+
+            outDependencies->push_back(sc::SCFieldDependency{tableName.toStdWString(), fieldName.toStdWString()});
             continue;
         }
 
-        result.push_back(sc::SCFieldDependency{
+        outDependencies->push_back(sc::SCFieldDependency{
             currentTableName.toStdWString(),
             token.toStdWString()});
     }
-    return result;
+    return true;
 }
 
 QString JoinDependencies(
@@ -257,8 +279,24 @@ bool SCComputedColumnDialog::BuildDefinition(sc::SCComputedColumnDef* outColumn,
         }
     }
 
-    column.dependencies.factFields = ParseDependencies(factDepsEdit_->text(), currentTableName_);
-    column.dependencies.relationFields = ParseDependencies(relationDepsEdit_->text(), currentTableName_);
+    if (!ParseDependencies(factDepsEdit_->text(), currentTableName_, &column.dependencies.factFields, outError))
+    {
+        return false;
+    }
+    if (!ParseDependencies(relationDepsEdit_->text(), currentTableName_, &column.dependencies.relationFields, outError))
+    {
+        return false;
+    }
+
+    if (column.dependencies.factFields.empty() && column.dependencies.relationFields.empty())
+    {
+        if (outError != nullptr)
+        {
+            *outError = QStringLiteral("At least one dependency is required.");
+        }
+        return false;
+    }
+
     *outColumn = column;
     return true;
 }

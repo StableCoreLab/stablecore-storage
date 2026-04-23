@@ -912,6 +912,11 @@ ErrorCode DispatchSqliteQuery(
         return SC_E_INVALIDARG;
     }
 
+    if (!plan.orderBy.empty())
+    {
+        SortMatchedRecords(&matchedRecords, plan);
+    }
+
     const ErrorCode cursorRc = MaterializeCursor(
         matchedRecords,
         plan,

@@ -18,6 +18,27 @@ QString ToQString(const std::wstring& text)
     return QString::fromStdWString(text);
 }
 
+bool HasComputedColumnNameConflict(
+    const QHash<QString, QVector<sc::SCComputedColumnDef>>& computedColumnsByTable,
+    const QString& tableName,
+    const QString& columnName)
+{
+    const auto it = computedColumnsByTable.constFind(tableName);
+    if (it == computedColumnsByTable.constEnd())
+    {
+        return false;
+    }
+
+    for (const sc::SCComputedColumnDef& existing : it.value())
+    {
+        if (ToQString(existing.name).compare(columnName, Qt::CaseInsensitive) == 0)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 QString ValueToDisplayString(const sc::SCValue& SCValue)
 {
     switch (SCValue.GetKind())
@@ -344,6 +365,25 @@ bool SCDatabaseSession::AddColumn(const sc::SCColumnDef& column, QString* outErr
         return false;
     }
 
+    const QString requestedName = ToQString(column.name).trimmed();
+    if (requestedName.isEmpty())
+    {
+        if (outError != nullptr)
+        {
+            *outError = QStringLiteral("Column name is required.");
+        }
+        return false;
+    }
+
+    if (HasComputedColumnNameConflict(sessionComputedColumnsByTable_, currentTableName_, requestedName))
+    {
+        if (outError != nullptr)
+        {
+            *outError = QStringLiteral("A computed column with the same name already exists.");
+        }
+        return false;
+    }
+
     sc::SCSchemaPtr schema;
     sc::ErrorCode rc = currentTable_->GetSchema(schema);
     if (sc::Failed(rc))
@@ -363,6 +403,26 @@ bool SCDatabaseSession::AddColumn(const sc::SCColumnDef& column, QString* outErr
             *outError = ErrorToString(rc);
         }
         return false;
+    }
+
+    const sc::SCComputedTableViewPtr previousTableView = currentTableView_;
+    if (currentTableView_)
+    {
+        if (!RebuildCurrentTableView(outError))
+        {
+            const sc::ErrorCode rollbackRc = schema->RemoveColumn(column.name.c_str());
+            if (sc::Succeeded(rollbackRc))
+            {
+                currentTableView_ = previousTableView;
+            }
+            else if (outError != nullptr)
+            {
+                *outError = ErrorToString(rollbackRc);
+            }
+            emit CurrentTableChanged();
+            emit RecordsChanged();
+            return false;
+        }
     }
 
     emit CurrentTableChanged();
@@ -395,6 +455,11 @@ bool SCDatabaseSession::AddRecord(QString* outError)
         emit RecordsChanged();
     }
     return ok;
+}
+
+void SCDatabaseSession::SetForceRebuildCurrentTableViewFailureForTest(bool enabled)
+{
+    forceRebuildCurrentTableViewFailureForTest_ = enabled;
 }
 
 bool SCDatabaseSession::DeleteRecord(sc::RecordId recordId, QString* outError)
@@ -767,6 +832,15 @@ bool SCDatabaseSession::AddSessionComputedColumn(const sc::SCComputedColumnDef& 
         }
     }
 
+    if (column.dependencies.factFields.empty() && column.dependencies.relationFields.empty())
+    {
+        if (outError != nullptr)
+        {
+            *outError = QStringLiteral("At least one dependency is required.");
+        }
+        return false;
+    }
+
     columns->push_back(column);
     if (!RebuildCurrentTableView(outError))
     {
@@ -801,6 +875,15 @@ bool SCDatabaseSession::UpdateSessionComputedColumn(
         if (outError != nullptr)
         {
             *outError = QStringLiteral("Computed column name is required.");
+        }
+        return false;
+    }
+
+    if (column.dependencies.factFields.empty() && column.dependencies.relationFields.empty())
+    {
+        if (outError != nullptr)
+        {
+            *outError = QStringLiteral("At least one dependency is required.");
         }
         return false;
     }
@@ -1120,6 +1203,15 @@ bool SCDatabaseSession::LoadTableNames(QString* outError)
 
 bool SCDatabaseSession::RebuildCurrentTableView(QString* outError)
 {
+    if (forceRebuildCurrentTableViewFailureForTest_)
+    {
+        if (outError != nullptr)
+        {
+            *outError = QStringLiteral("Forced rebuild failure for test.");
+        }
+        return false;
+    }
+
     currentTableView_.Reset();
 
     sc::SCComputedTableViewPtr view;

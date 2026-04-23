@@ -32,6 +32,118 @@ std::vector<std::wstring> SplitParts(const std::wstring& text, wchar_t separator
     return parts;
 }
 
+bool IsBlank(const std::wstring& text)
+{
+    return std::all_of(
+        text.begin(),
+        text.end(),
+        [](wchar_t ch)
+        {
+            return std::iswspace(ch) != 0;
+        });
+}
+
+ErrorCode ValidateComputedColumnDefinition(const SCComputedColumnDef& column)
+{
+    if (column.name.empty() || IsBlank(column.name))
+    {
+        return SC_E_INVALIDARG;
+    }
+    if (column.valueKind == ValueKind::Null)
+    {
+        return SC_E_INVALIDARG;
+    }
+    if (column.editable)
+    {
+        return SC_E_INVALIDARG;
+    }
+
+    switch (column.kind)
+    {
+    case ComputedFieldKind::Expression:
+        if (column.expression.empty() || IsBlank(column.expression))
+        {
+            return SC_E_INVALIDARG;
+        }
+        if (!column.ruleId.empty() || !column.aggregateRelation.empty() || !column.aggregateField.empty())
+        {
+            return SC_E_INVALIDARG;
+        }
+        if (column.dependencies.factFields.empty() && column.dependencies.relationFields.empty())
+        {
+            return SC_E_INVALIDARG;
+        }
+        return SC_OK;
+
+    case ComputedFieldKind::Rule:
+        if (column.ruleId.empty() || IsBlank(column.ruleId))
+        {
+            return SC_E_INVALIDARG;
+        }
+        if (!column.expression.empty() || !column.aggregateRelation.empty() || !column.aggregateField.empty())
+        {
+            return SC_E_INVALIDARG;
+        }
+        if (column.dependencies.factFields.empty() && column.dependencies.relationFields.empty())
+        {
+            return SC_E_INVALIDARG;
+        }
+        return SC_OK;
+
+    case ComputedFieldKind::Aggregate:
+    {
+        if (!column.expression.empty() || !column.ruleId.empty())
+        {
+            return SC_E_INVALIDARG;
+        }
+        if (column.aggregateRelation.empty())
+        {
+            return SC_E_INVALIDARG;
+        }
+        const std::vector<std::wstring> parts = SplitParts(column.aggregateRelation, L'.');
+        if (parts.size() != 2 || parts[0].empty() || parts[1].empty())
+        {
+            return SC_E_INVALIDARG;
+        }
+        if (column.aggregateRelation != parts[0] + L"." + parts[1])
+        {
+            return SC_E_INVALIDARG;
+        }
+        if (column.dependencies.factFields.empty() && column.dependencies.relationFields.empty())
+        {
+            return SC_E_INVALIDARG;
+        }
+        switch (column.aggregateKind)
+        {
+        case SCAggregateKind::Count:
+            if (column.valueKind != ValueKind::Int64)
+            {
+                return SC_E_INVALIDARG;
+            }
+            break;
+        case SCAggregateKind::Sum:
+        case SCAggregateKind::Min:
+        case SCAggregateKind::Max:
+            if (column.aggregateField.empty() || IsBlank(column.aggregateField))
+            {
+                return SC_E_INVALIDARG;
+            }
+            if (column.valueKind != ValueKind::Double)
+            {
+                return SC_E_INVALIDARG;
+            }
+            break;
+        default:
+            return SC_E_INVALIDARG;
+        }
+        return SC_OK;
+    }
+
+    default:
+        return SC_E_INVALIDARG;
+    }
+}
+
 class TableViewRecordContext final : public ISCComputedContext, public SCRefCountedObject
 {
 public:
@@ -303,9 +415,10 @@ public:
 
     ErrorCode AddComputedColumn(const SCComputedColumnDef& column) override
     {
-        if (column.name.empty())
+        const ErrorCode validate = ValidateComputedColumnDefinition(column);
+        if (Failed(validate))
         {
-            return SC_E_INVALIDARG;
+            return validate;
         }
         const auto duplicate = std::find_if(
             computedColumns_.begin(),
@@ -361,6 +474,7 @@ public:
         }
 
         const SCComputedColumnDef& column = *computedIt;
+        // Cache identity is scoped to record + computed column; version is retained only as metadata.
         const SCComputedCacheKey cacheKey{recordId, column.name, database_->GetCurrentVersion()};
         if (column.cacheable)
         {

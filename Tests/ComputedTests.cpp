@@ -144,3 +144,26 @@ TEST(StorageComputed, CacheInvalidatesOnDependencyChanges)
     sc::SCValue cached;
     EXPECT_EQ(cache->TryGet(entry.key, &cached), sc::SC_FALSE_RESULT);
 }
+
+TEST(StorageComputed, CacheHitsAcrossVersionChanges)
+{
+    sc::SCComputedCachePtr cache;
+    EXPECT_EQ(sc::CreateComputedCache(cache), sc::SC_OK);
+
+    sc::SCComputedCacheEntry entry;
+    entry.key.recordId = 1001;
+    entry.key.columnName = L"Volume";
+    entry.key.version = 8;
+    entry.dependencies.factFields = {{L"Beam", L"Length"}};
+    entry.SCValue = sc::SCValue::FromDouble(9.0);
+    EXPECT_EQ(cache->Put(entry), sc::SC_OK);
+
+    sc::SCValue cached;
+    sc::SCComputedCacheKey lookupKey = entry.key;
+    lookupKey.version = 42;
+    EXPECT_EQ(cache->TryGet(lookupKey, &cached), sc::SC_OK);
+
+    double result = 0.0;
+    EXPECT_EQ(cached.AsDouble(&result), sc::SC_OK);
+    EXPECT_DOUBLE_EQ(result, 9.0);
+}

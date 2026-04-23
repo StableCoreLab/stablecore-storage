@@ -309,8 +309,9 @@ void SCDatabaseEditorMainWindow::AddColumn()
         return;
     }
 
+    const sc::SCColumnDef column = dialog.BuildColumnDef();
     QString error;
-    if (!session_->AddColumn(dialog.BuildColumnDef(), &error))
+    if (!session_->AddColumn(column, &error))
     {
         ShowError(QStringLiteral("Add Column Failed"), error);
         return;
@@ -318,6 +319,7 @@ void SCDatabaseEditorMainWindow::AddColumn()
 
     UpdateSchemaInspector();
     recordModel_->Refresh();
+    SetStatusMessage(QStringLiteral("Column added: ") + ToQString(column.name));
 }
 
 void SCDatabaseEditorMainWindow::AddSessionComputedColumn()
@@ -351,6 +353,7 @@ void SCDatabaseEditorMainWindow::AddSessionComputedColumn()
     recordModel_->Refresh();
     UpdateComputedColumnsPanel();
     SelectComputedColumnByName(ToQString(definition.name));
+    SetStatusMessage(QStringLiteral("Computed column added: ") + ToQString(definition.name));
 }
 
 void SCDatabaseEditorMainWindow::EditSelectedComputedColumn()
@@ -452,7 +455,10 @@ void SCDatabaseEditorMainWindow::AddRecord()
     if (!session_->AddRecord(&error))
     {
         ShowError(QStringLiteral("Add Record Failed"), error);
+        return;
     }
+
+    SetStatusMessage(QStringLiteral("Record added."));
 }
 
 void SCDatabaseEditorMainWindow::DeleteSelectedRecord()
@@ -482,7 +488,10 @@ void SCDatabaseEditorMainWindow::DeleteSelectedRecord()
     if (!session_->DeleteRecord(recordId, &error))
     {
         ShowError(QStringLiteral("Delete Record Failed"), error);
+        return;
     }
+
+    SetStatusMessage(QStringLiteral("Record deleted: ") + QString::number(recordId));
 }
 
 void SCDatabaseEditorMainWindow::EditSelectedRelation()
@@ -537,6 +546,7 @@ void SCDatabaseEditorMainWindow::EditSelectedRelation()
     }
 
     recordModel_->Refresh();
+    SetStatusMessage(QStringLiteral("Relation updated."));
 }
 
 void SCDatabaseEditorMainWindow::UndoLastAction()

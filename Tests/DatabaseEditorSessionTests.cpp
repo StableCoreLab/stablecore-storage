@@ -111,3 +111,146 @@ TEST(DatabaseEditorSession, TableSelectionAndSchemaRemainAlignedAcrossCreateAndR
         EXPECT_EQ(CollectColumnNames(columColumns), (std::vector<std::wstring>{L"ColumnId"}));
     }
 }
+
+TEST(DatabaseEditorSession, ComputedColumnWorkflowKeepsViewAndSessionAligned)
+{
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_DbEditor_ComputedWorkflow.sqlite");
+
+    editor::SCDatabaseSession session;
+    QString error;
+
+    ASSERT_TRUE(session.CreateDatabase(QString::fromStdWString(dbPath.wstring()), &error)) << error.toStdString();
+    ASSERT_TRUE(session.CreateTable(QStringLiteral("Beam"), &error)) << error.toStdString();
+
+    ASSERT_TRUE(session.AddColumn(MakeIntColumn(L"Width"), &error)) << error.toStdString();
+    ASSERT_TRUE(session.CurrentTableView() != nullptr);
+
+    std::int32_t columnCount = 0;
+    ASSERT_EQ(session.CurrentTableView()->GetColumnCount(&columnCount), sc::SC_OK);
+    EXPECT_EQ(columnCount, 1);
+
+    ASSERT_TRUE(session.AddColumn(MakeIntColumn(L"Height"), &error)) << error.toStdString();
+    ASSERT_EQ(session.CurrentTableView()->GetColumnCount(&columnCount), sc::SC_OK);
+    EXPECT_EQ(columnCount, 2);
+
+    sc::SCComputedColumnDef computed;
+    computed.name = L"ScaledWidth";
+    computed.displayName = L"ScaledWidth";
+    computed.valueKind = sc::ValueKind::Double;
+    computed.kind = sc::ComputedFieldKind::Expression;
+    computed.expression = L"Width * 2";
+    computed.dependencies.factFields = {{L"Beam", L"Width"}};
+
+    ASSERT_TRUE(session.AddSessionComputedColumn(computed, &error)) << error.toStdString();
+    ASSERT_EQ(session.CurrentSessionComputedColumns().size(), 1u);
+    ASSERT_EQ(session.CurrentTableView()->GetColumnCount(&columnCount), sc::SC_OK);
+    EXPECT_EQ(columnCount, 3);
+
+    sc::SCComputedColumnDef loaded;
+    ASSERT_TRUE(session.GetSessionComputedColumn(QStringLiteral("ScaledWidth"), &loaded, &error)) << error.toStdString();
+    EXPECT_EQ(loaded.name, L"ScaledWidth");
+    EXPECT_EQ(loaded.expression, L"Width * 2");
+
+    ASSERT_TRUE(session.RemoveSessionComputedColumn(QStringLiteral("ScaledWidth"), &error)) << error.toStdString();
+    EXPECT_TRUE(session.CurrentSessionComputedColumns().isEmpty());
+    ASSERT_EQ(session.CurrentTableView()->GetColumnCount(&columnCount), sc::SC_OK);
+    EXPECT_EQ(columnCount, 2);
+}
+
+TEST(DatabaseEditorSession, RejectsFactColumnsThatConflictWithComputedColumns)
+{
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_DbEditor_ColumnConflict.sqlite");
+
+    editor::SCDatabaseSession session;
+    QString error;
+
+    ASSERT_TRUE(session.CreateDatabase(QString::fromStdWString(dbPath.wstring()), &error)) << error.toStdString();
+    ASSERT_TRUE(session.CreateTable(QStringLiteral("Beam"), &error)) << error.toStdString();
+    ASSERT_TRUE(session.AddColumn(MakeIntColumn(L"Width"), &error)) << error.toStdString();
+
+    sc::SCComputedColumnDef computed;
+    computed.name = L"ScaledWidth";
+    computed.displayName = L"ScaledWidth";
+    computed.valueKind = sc::ValueKind::Double;
+    computed.kind = sc::ComputedFieldKind::Expression;
+    computed.expression = L"Width * 2";
+    computed.dependencies.factFields = {{L"Beam", L"Width"}};
+
+    ASSERT_TRUE(session.AddSessionComputedColumn(computed, &error)) << error.toStdString();
+    ASSERT_TRUE(session.CurrentTableView() != nullptr);
+
+    QVector<sc::SCColumnDef> beforeColumns;
+    ASSERT_TRUE(session.BuildSchemaSnapshot(&beforeColumns, &error)) << error.toStdString();
+    EXPECT_EQ(CollectColumnNames(beforeColumns), (std::vector<std::wstring>{L"Width"}));
+
+    EXPECT_FALSE(session.AddColumn(MakeIntColumn(L"ScaledWidth"), &error));
+    EXPECT_EQ(error, QStringLiteral("A computed column with the same name already exists."));
+
+    QVector<sc::SCColumnDef> afterColumns;
+    ASSERT_TRUE(session.BuildSchemaSnapshot(&afterColumns, &error)) << error.toStdString();
+    EXPECT_EQ(CollectColumnNames(afterColumns), (std::vector<std::wstring>{L"Width"}));
+
+    std::int32_t columnCount = 0;
+    ASSERT_EQ(session.CurrentTableView()->GetColumnCount(&columnCount), sc::SC_OK);
+    EXPECT_EQ(columnCount, 2);
+}
+
+TEST(DatabaseEditorSession, RejectsComputedColumnsWithoutDependencies)
+{
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_DbEditor_ComputedValidation.sqlite");
+
+    editor::SCDatabaseSession session;
+    QString error;
+
+    ASSERT_TRUE(session.CreateDatabase(QString::fromStdWString(dbPath.wstring()), &error)) << error.toStdString();
+    ASSERT_TRUE(session.CreateTable(QStringLiteral("Beam"), &error)) << error.toStdString();
+    ASSERT_TRUE(session.AddColumn(MakeIntColumn(L"Width"), &error)) << error.toStdString();
+
+    sc::SCComputedColumnDef computed;
+    computed.name = L"Broken";
+    computed.valueKind = sc::ValueKind::Double;
+    computed.kind = sc::ComputedFieldKind::Expression;
+    computed.expression = L"Width * 2";
+
+    EXPECT_FALSE(session.AddSessionComputedColumn(computed, &error));
+    EXPECT_EQ(error, QStringLiteral("At least one dependency is required."));
+
+    computed.dependencies.factFields = {{L"Beam", L"Width"}};
+    ASSERT_TRUE(session.AddSessionComputedColumn(computed, &error)) << error.toStdString();
+
+    sc::SCComputedColumnDef updated = computed;
+    updated.name = L"BrokenUpdated";
+    updated.dependencies.factFields.clear();
+    EXPECT_FALSE(session.UpdateSessionComputedColumn(QStringLiteral("Broken"), updated, &error));
+    EXPECT_EQ(error, QStringLiteral("At least one dependency is required."));
+}
+
+TEST(DatabaseEditorSession, AddColumnRollsBackSchemaOnViewRebuildFailure)
+{
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_DbEditor_AddColumnRollback.sqlite");
+
+    editor::SCDatabaseSession session;
+    QString error;
+
+    ASSERT_TRUE(session.CreateDatabase(QString::fromStdWString(dbPath.wstring()), &error)) << error.toStdString();
+    ASSERT_TRUE(session.CreateTable(QStringLiteral("Beam"), &error)) << error.toStdString();
+    ASSERT_TRUE(session.AddColumn(MakeIntColumn(L"Width"), &error)) << error.toStdString();
+
+    QVector<sc::SCColumnDef> beforeColumns;
+    ASSERT_TRUE(session.BuildSchemaSnapshot(&beforeColumns, &error)) << error.toStdString();
+    EXPECT_EQ(CollectColumnNames(beforeColumns), (std::vector<std::wstring>{L"Width"}));
+
+    session.SetForceRebuildCurrentTableViewFailureForTest(true);
+    EXPECT_FALSE(session.AddColumn(MakeIntColumn(L"Height"), &error));
+    EXPECT_EQ(error, QStringLiteral("Forced rebuild failure for test."));
+    session.SetForceRebuildCurrentTableViewFailureForTest(false);
+
+    QVector<sc::SCColumnDef> afterColumns;
+    ASSERT_TRUE(session.BuildSchemaSnapshot(&afterColumns, &error)) << error.toStdString();
+    EXPECT_EQ(CollectColumnNames(afterColumns), (std::vector<std::wstring>{L"Width"}));
+
+    ASSERT_TRUE(session.CurrentTableView() != nullptr);
+    std::int32_t columnCount = 0;
+    ASSERT_EQ(session.CurrentTableView()->GetColumnCount(&columnCount), sc::SC_OK);
+    EXPECT_EQ(columnCount, 1);
+}

@@ -85,6 +85,7 @@ public:
         StableCore::Storage::RecordId recordId,
         QVector<QPair<QString, QString>>* outFields,
         QString* outError) const;
+    void SetForceRebuildCurrentTableViewFailureForTest(bool enabled);
 
 signals:
     void DatabaseOpened();
@@ -116,6 +117,7 @@ private:
     QString currentTableName_;
     QStringList tableNames_;
     QHash<QString, QVector<StableCore::Storage::SCComputedColumnDef>> sessionComputedColumnsByTable_;
+    bool forceRebuildCurrentTableViewFailureForTest_{false};
 };
 
 }  // namespace StableCore::Storage::Editor

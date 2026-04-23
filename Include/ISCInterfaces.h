@@ -64,6 +64,8 @@ public:
     virtual ErrorCode FindColumn(const wchar_t* name, SCColumnDef* outDef) = 0;
     // Registers a new schema column. Unknown columns cannot be written before registration.
     virtual ErrorCode AddColumn(const SCColumnDef& def) = 0;
+    // Removes a schema column by name. Used by editors to compensate failed schema/view updates.
+    virtual ErrorCode RemoveColumn(const wchar_t* name) = 0;
 };
 
 class ISCRecord : public virtual ISCRefObject

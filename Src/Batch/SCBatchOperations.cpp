@@ -172,26 +172,26 @@ ErrorCode ExecuteBatchEdit(
         return rc;
     }
 
+    auto rollbackActiveEdit = [&]() -> ErrorCode
+    {
+        const ErrorCode rollbackRc = database->Rollback(edit.Get());
+        return Failed(rollbackRc) ? rollbackRc : SC_OK;
+    };
+
     SCBatchExecutionResult result;
     rc = ApplyBatchRequests(database, requests, &result);
 
     if (Failed(rc))
     {
-        if (options.rollbackOnError)
-        {
-            database->Rollback(edit.Get());
-        }
-        return rc;
+        const ErrorCode cleanupRc = rollbackActiveEdit();
+        return Failed(cleanupRc) ? cleanupRc : rc;
     }
 
     rc = database->Commit(edit.Get());
     if (Failed(rc))
     {
-        if (options.rollbackOnError)
-        {
-            database->Rollback(edit.Get());
-        }
-        return rc;
+        const ErrorCode cleanupRc = rollbackActiveEdit();
+        return Failed(cleanupRc) ? cleanupRc : rc;
     }
 
     result.committedVersion = database->GetCurrentVersion();
@@ -297,9 +297,21 @@ ErrorCode FinalizeImportSession(
         return SC_E_INVALIDARG;
     }
 
+    ErrorCode rc = SC_OK;
+    SCImportRecoveryState recoveryState;
+    rc = database->LoadImportRecoveryState(session.sessionId, &recoveryState);
+    if (Failed(rc))
+    {
+        return rc;
+    }
+    if (!recoveryState.canFinalize)
+    {
+        return SC_E_INVALIDARG;
+    }
+
     SCEditPtr edit;
     const std::wstring editName = commit.commitName.empty() ? session.sessionName : commit.commitName;
-    ErrorCode rc = database->BeginEdit(editName.c_str(), edit);
+    rc = database->BeginEdit(editName.c_str(), edit);
     if (Failed(rc))
     {
         return rc;
@@ -319,11 +331,10 @@ ErrorCode FinalizeImportSession(
     rc = database->Commit(edit.Get());
     if (Failed(rc))
     {
-        database->Rollback(edit.Get());
-        return rc;
+        const ErrorCode rollbackRc = database->Rollback(edit.Get());
+        return Failed(rollbackRc) ? rollbackRc : rc;
     }
 
-    SCImportRecoveryState recoveryState;
     rc = database->FinalizeImportSession(commit, &recoveryState);
     if (Failed(rc))
     {
