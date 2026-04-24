@@ -5,8 +5,8 @@
 namespace StableCore::Storage
 {
 
+ErrorCode CreateInMemoryDatabase(const SCOpenDatabaseOptions& options, SCDbPtr& outDatabase);
 ErrorCode CreateInMemoryDatabase(SCDbPtr& outDatabase);
-ErrorCode CreateSqliteDatabase(const wchar_t* path, SCDbPtr& outDatabase);
-ErrorCode CreateSqliteDatabase(const wchar_t* path, bool readOnly, SCDbPtr& outDatabase);
+ErrorCode CreateFileDatabase(const wchar_t* path, const SCOpenDatabaseOptions& options, SCDbPtr& outDatabase);
 
 }  // namespace StableCore::Storage

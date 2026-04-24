@@ -1193,6 +1193,7 @@ class SqliteDatabase final : public ISCDatabase,
 public:
     explicit SqliteDatabase(const std::wstring& path);
     explicit SqliteDatabase(const std::wstring& path, bool readOnly);
+    explicit SqliteDatabase(const std::wstring& path, const SCOpenDatabaseOptions& options);
     ~SqliteDatabase() override;
 
     ErrorCode BeginEdit(const wchar_t* name, SCEditPtr& outEdit) override;
@@ -1215,6 +1216,13 @@ public:
     ErrorCode LoadImportRecoveryState(std::uint64_t sessionId, SCImportRecoveryState* outState) override;
     ErrorCode FinalizeImportSession(const SCImportFinalizeCommit& commit, SCImportRecoveryState* outState) override;
     ErrorCode AbortImportSession(std::uint64_t sessionId) override;
+    ErrorCode CreateBackupCopy(
+        const wchar_t* targetPath,
+        const SCBackupOptions& options,
+        SCBackupResult* outResult) override;
+    ErrorCode ResetHistoryBaseline(SCBackupResult* outResult = nullptr) override;
+    ErrorCode GetEditLogState(SCEditLogState* outState) const override;
+    ErrorCode GetEditingState(SCEditingDatabaseState* outState) const override;
     VersionId GetCurrentVersion() const noexcept override { return version_; }
     std::int32_t GetSchemaVersion() const noexcept override { return schemaVersion_; }
     ErrorCode CollectDiagnostics(SCStorageHealthReport* outReport) const override;
@@ -1288,6 +1296,8 @@ private:
 
     std::wstring path_;
     SqliteDb db_;
+    SCDatabaseOpenMode openMode_{SCDatabaseOpenMode::Normal};
+    VersionId baselineVersion_{0};
     bool readOnly_{false};
     VersionId version_{0};
     RecordId nextRecordId_{1};
@@ -1622,6 +1632,7 @@ SqliteDatabase::SqliteDatabase(const std::wstring& path)
 SqliteDatabase::SqliteDatabase(const std::wstring& path, bool readOnly)
     : path_(path)
     , db_(path, readOnly)
+    , openMode_(readOnly ? SCDatabaseOpenMode::ReadOnly : SCDatabaseOpenMode::Normal)
     , readOnly_(readOnly)
 {
     if (!readOnly_)
@@ -1640,6 +1651,29 @@ SqliteDatabase::SqliteDatabase(const std::wstring& path, bool readOnly)
             schemaVersion_ = GetLatestSupportedSchemaVersion();
             SaveMetadata();
         }
+    }
+
+    LoadJournalStacks();
+}
+
+SqliteDatabase::SqliteDatabase(const std::wstring& path, const SCOpenDatabaseOptions& options)
+    : path_(path)
+    , db_(path, options.openMode == SCDatabaseOpenMode::ReadOnly)
+    , openMode_(options.openMode)
+    , readOnly_(options.openMode == SCDatabaseOpenMode::ReadOnly)
+{
+    if (!readOnly_)
+    {
+        InitializeSchema();
+    }
+
+    LoadMetadata();
+    LoadTables();
+
+    if (!readOnly_ && schemaVersion_ <= 0)
+    {
+        schemaVersion_ = GetLatestSupportedSchemaVersion();
+        SaveMetadata();
     }
 
     LoadJournalStacks();
@@ -1687,7 +1721,8 @@ void SqliteDatabase::InitializeSchema()
     db_.Execute("CREATE INDEX IF NOT EXISTS idx_field_values_record ON field_values(table_id, record_id, column_name);");
     db_.Execute(
         "CREATE TABLE IF NOT EXISTS journal_transactions ("
-        "tx_id INTEGER PRIMARY KEY AUTOINCREMENT, action_name TEXT NOT NULL, stack_kind INTEGER NOT NULL, stack_order INTEGER NOT NULL);");
+        "tx_id INTEGER PRIMARY KEY AUTOINCREMENT, action_name TEXT NOT NULL, committed_version INTEGER NOT NULL,"
+        " stack_kind INTEGER NOT NULL, stack_order INTEGER NOT NULL);");
     db_.Execute(
         "CREATE TABLE IF NOT EXISTS journal_entries ("
         "tx_id INTEGER NOT NULL, sequence_index INTEGER NOT NULL, op INTEGER NOT NULL, table_name TEXT NOT NULL,"
@@ -1700,9 +1735,11 @@ void SqliteDatabase::InitializeSchema()
 void SqliteDatabase::LoadMetadata()
 {
     version_ = 0;
+    baselineVersion_ = 0;
     nextRecordId_ = 1;
     schemaVersion_ = 0;
     cleanShutdown_ = true;
+    bool hasBaselineVersion = false;
 
     SqliteStmt stmt = db_.Prepare("SELECT key, value FROM metadata;");
     bool hasRow = false;
@@ -1713,6 +1750,11 @@ void SqliteDatabase::LoadMetadata()
         if (key == L"version")
         {
             version_ = static_cast<VersionId>(std::stoull(SCValue));
+        }
+        else if (key == L"baseline_version")
+        {
+            baselineVersion_ = static_cast<VersionId>(std::stoull(SCValue));
+            hasBaselineVersion = true;
         }
         else if (key == L"schema_version")
         {
@@ -1727,11 +1769,17 @@ void SqliteDatabase::LoadMetadata()
             nextRecordId_ = static_cast<RecordId>(std::stoll(SCValue));
         }
     }
+
+    if (!hasBaselineVersion)
+    {
+        baselineVersion_ = version_;
+    }
 }
 
 void SqliteDatabase::SaveMetadata()
 {
     SaveMetadataKey(L"version", std::to_wstring(version_));
+    SaveMetadataKey(L"baseline_version", std::to_wstring(baselineVersion_));
     SaveMetadataKey(L"next_record_id", std::to_wstring(nextRecordId_));
     SaveMetadataKey(L"schema_version", std::to_wstring(schemaVersion_));
     SaveMetadataKey(L"clean_shutdown", cleanShutdown_ ? L"1" : L"0");
@@ -1817,14 +1865,17 @@ void SqliteDatabase::LoadTables()
 
 void SqliteDatabase::LoadJournalStacks()
 {
-    SqliteStmt txStmt = db_.Prepare("SELECT tx_id, action_name, stack_kind FROM journal_transactions ORDER BY stack_kind, stack_order;");
+    SqliteStmt txStmt = db_.Prepare(
+        "SELECT tx_id, action_name, committed_version, stack_kind FROM journal_transactions ORDER BY stack_kind, stack_order;");
     bool hasTx = false;
     while (txStmt.Step(&hasTx) == SC_OK && hasTx)
     {
         SqlitePersistedJournalTransaction persisted;
         persisted.txId = txStmt.ColumnInt64(0);
         persisted.tx.actionName = txStmt.ColumnText(1);
-        const int stackKind = txStmt.ColumnInt(2);
+        persisted.tx.commitId = static_cast<CommitId>(persisted.txId);
+        persisted.tx.committedVersion = static_cast<VersionId>(txStmt.ColumnInt64(2));
+        const int stackKind = txStmt.ColumnInt(3);
 
         SqliteStmt entryStmt = db_.Prepare(
             "SELECT op, table_name, record_id, field_name, old_kind, old_int64, old_double, old_bool, old_text,"
@@ -2436,7 +2487,9 @@ ErrorCode SqliteDatabase::Commit(ISCEditSession* edit)
         UpdateTouchedVersions(activeJournal_, version_);
         PersistTouchedRecords(activeJournal_);
         DeleteRedoJournalRows();
+        activeJournal_.committedVersion = version_;
         const std::int64_t txId = InsertJournalTransaction(activeJournal_, kStackUndo, static_cast<int>(undoStack_.size()));
+        activeJournal_.commitId = static_cast<CommitId>(txId);
         PersistJournalEntries(txId, activeJournal_);
         undoStack_.push_back(SqlitePersistedJournalTransaction{txId, activeJournal_});
         redoStack_.clear();
@@ -2679,6 +2732,203 @@ ErrorCode SqliteDatabase::AddObserver(ISCDatabaseObserver* observer)
 ErrorCode SqliteDatabase::RemoveObserver(ISCDatabaseObserver* observer)
 {
     observers_.erase(std::remove(observers_.begin(), observers_.end(), observer), observers_.end());
+    return SC_OK;
+}
+
+ErrorCode SqliteDatabase::CreateBackupCopy(
+    const wchar_t* targetPath,
+    const SCBackupOptions& options,
+    SCBackupResult* outResult)
+{
+    if (targetPath == nullptr || *targetPath == L'\0')
+    {
+        return SC_E_INVALIDARG;
+    }
+
+    const std::string targetUtf8 = ToUtf8(targetPath);
+    sqlite3* targetDb = nullptr;
+    const int openRc = sqlite3_open_v2(
+        targetUtf8.c_str(),
+        &targetDb,
+        SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX,
+        nullptr);
+    if (openRc != SQLITE_OK)
+    {
+        if (targetDb != nullptr)
+        {
+            sqlite3_close(targetDb);
+        }
+        return SC_E_FAIL;
+    }
+
+    ErrorCode resultRc = SC_OK;
+    sqlite3_backup* backup = sqlite3_backup_init(targetDb, "main", db_.Raw(), "main");
+    if (backup == nullptr)
+    {
+        sqlite3_close(targetDb);
+        return SC_E_FAIL;
+    }
+
+    const int stepRc = sqlite3_backup_step(backup, -1);
+    if (stepRc != SQLITE_DONE)
+    {
+        resultRc = MapSqliteError(stepRc);
+    }
+    sqlite3_backup_finish(backup);
+
+    if (resultRc == SC_OK && (!options.preserveHistory || !options.preserveRecoveryLog))
+    {
+        char* error = nullptr;
+        const int execRc = sqlite3_exec(
+            targetDb,
+            "DELETE FROM journal_entries; DELETE FROM journal_transactions;",
+            nullptr,
+            nullptr,
+            &error);
+        if (error != nullptr)
+        {
+            sqlite3_free(error);
+        }
+        resultRc = MapSqliteError(execRc);
+    }
+
+    if (resultRc == SC_OK)
+    {
+        if (outResult != nullptr)
+        {
+            outResult->sourcePath = path_;
+            outResult->targetPath = targetPath;
+            outResult->sourceVersion = version_;
+            outResult->targetVersion = version_;
+            outResult->replacedAtomically = false;
+            outResult->historyReset = false;
+            outResult->trimmedUndoCount = (!options.preserveHistory || !options.preserveRecoveryLog) ? undoStack_.size() : 0;
+            outResult->trimmedRedoCount = (!options.preserveHistory || !options.preserveRecoveryLog) ? redoStack_.size() : 0;
+            outResult->trimmedRecoveryLogCount = (!options.preserveHistory || !options.preserveRecoveryLog)
+                ? (undoStack_.size() + redoStack_.size())
+                : 0;
+        }
+    }
+
+    sqlite3_close(targetDb);
+    return resultRc;
+}
+
+ErrorCode SqliteDatabase::ResetHistoryBaseline(SCBackupResult* outResult)
+{
+    if (readOnly_)
+    {
+        return SC_E_READ_ONLY_DATABASE;
+    }
+    if (activeEdit_)
+    {
+        return SC_E_WRITE_CONFLICT;
+    }
+
+    const std::size_t trimmedUndoCount = undoStack_.size();
+    const std::size_t trimmedRedoCount = redoStack_.size();
+
+    try
+    {
+        SqliteTxn txn(db_);
+        const ErrorCode clearEntriesRc = db_.Execute("DELETE FROM journal_entries;");
+        if (Failed(clearEntriesRc))
+        {
+            return clearEntriesRc;
+        }
+        const ErrorCode clearTransactionsRc = db_.Execute("DELETE FROM journal_transactions;");
+        if (Failed(clearTransactionsRc))
+        {
+            return clearTransactionsRc;
+        }
+        baselineVersion_ = version_;
+        undoStack_.clear();
+        redoStack_.clear();
+        SaveMetadata();
+        const ErrorCode commitRc = txn.Commit();
+        if (Failed(commitRc))
+        {
+            return commitRc;
+        }
+    }
+    catch (...)
+    {
+        return SC_E_FAIL;
+    }
+
+    if (outResult != nullptr)
+    {
+        outResult->sourcePath = path_;
+        outResult->targetPath = path_;
+        outResult->sourceVersion = version_;
+        outResult->targetVersion = version_;
+        outResult->replacedAtomically = false;
+        outResult->historyReset = true;
+        outResult->trimmedUndoCount = trimmedUndoCount;
+        outResult->trimmedRedoCount = trimmedRedoCount;
+        outResult->trimmedRecoveryLogCount = trimmedUndoCount + trimmedRedoCount;
+    }
+
+    return SC_OK;
+}
+
+ErrorCode SqliteDatabase::GetEditLogState(SCEditLogState* outState) const
+{
+    if (outState == nullptr)
+    {
+        return SC_E_POINTER;
+    }
+
+    outState->baselineVersion = baselineVersion_;
+    outState->undoItems.clear();
+    outState->redoItems.clear();
+
+    if (openMode_ == SCDatabaseOpenMode::NoHistory)
+    {
+        return SC_OK;
+    }
+
+    outState->undoItems.reserve(undoStack_.size());
+    for (const auto& tx : undoStack_)
+    {
+        outState->undoItems.push_back(SCEditLogEntry{
+            tx.tx.commitId,
+            tx.tx.committedVersion,
+            SCEditLogActionKind::Commit,
+            tx.tx.actionName,
+            L"",
+            0});
+    }
+
+    outState->redoItems.reserve(redoStack_.size());
+    for (const auto& tx : redoStack_)
+    {
+        outState->redoItems.push_back(SCEditLogEntry{
+            tx.tx.commitId,
+            tx.tx.committedVersion,
+            SCEditLogActionKind::Commit,
+            tx.tx.actionName,
+            L"",
+            0});
+    }
+
+    return SC_OK;
+}
+
+ErrorCode SqliteDatabase::GetEditingState(SCEditingDatabaseState* outState) const
+{
+    if (outState == nullptr)
+    {
+        return SC_E_POINTER;
+    }
+
+    outState->open = true;
+    outState->dirty = static_cast<bool>(activeEdit_) || !undoStack_.empty();
+    outState->openMode = openMode_;
+    outState->currentVersion = version_;
+    outState->baselineVersion = baselineVersion_;
+    outState->undoCount = openMode_ == SCDatabaseOpenMode::NoHistory ? 0 : undoStack_.size();
+    outState->redoCount = openMode_ == SCDatabaseOpenMode::NoHistory ? 0 : redoStack_.size();
     return SC_OK;
 }
 
@@ -3618,10 +3868,12 @@ void SqliteDatabase::PersistTouchedRecords(const JournalTransaction& tx)
 
 std::int64_t SqliteDatabase::InsertJournalTransaction(const JournalTransaction& tx, int stackKind, int stackOrder)
 {
-    SqliteStmt stmt = db_.Prepare("INSERT INTO journal_transactions(action_name, stack_kind, stack_order) VALUES(?, ?, ?);");
+    SqliteStmt stmt = db_.Prepare(
+        "INSERT INTO journal_transactions(action_name, committed_version, stack_kind, stack_order) VALUES(?, ?, ?, ?);");
     stmt.BindText(1, tx.actionName);
-    stmt.BindInt(2, stackKind);
-    stmt.BindInt(3, stackOrder);
+    stmt.BindInt64(2, static_cast<std::int64_t>(tx.committedVersion));
+    stmt.BindInt(3, stackKind);
+    stmt.BindInt(4, stackOrder);
     stmt.Step();
     return db_.LastInsertRowId();
 }
@@ -3679,7 +3931,7 @@ void SqliteDatabase::DeleteJournalTransaction(std::int64_t txId)
 
 }  // namespace
 
-ErrorCode CreateSqliteDatabase(const wchar_t* path, SCDbPtr& outDatabase)
+ErrorCode CreateFileDatabase(const wchar_t* path, const SCOpenDatabaseOptions& options, SCDbPtr& outDatabase)
 {
     if (path == nullptr)
     {
@@ -3688,27 +3940,7 @@ ErrorCode CreateSqliteDatabase(const wchar_t* path, SCDbPtr& outDatabase)
 
     try
     {
-        outDatabase = SCMakeRef<SqliteDatabase>(std::wstring{path});
-        EnsureSqliteQueryDispatchRegistered(outDatabase.Get());
-        return SC_OK;
-    }
-    catch (...)
-    {
-        outDatabase.Reset();
-        return SC_E_FAIL;
-    }
-}
-
-ErrorCode CreateSqliteDatabase(const wchar_t* path, bool readOnly, SCDbPtr& outDatabase)
-{
-    if (path == nullptr)
-    {
-        return SC_E_POINTER;
-    }
-
-    try
-    {
-        outDatabase = SCMakeRef<SqliteDatabase>(std::wstring{path}, readOnly);
+        outDatabase = SCMakeRef<SqliteDatabase>(std::wstring{path}, options);
         EnsureSqliteQueryDispatchRegistered(outDatabase.Get());
         return SC_OK;
     }

@@ -1,4 +1,4 @@
-#include <filesystem>
+﻿#include <filesystem>
 
 #include <gtest/gtest.h>
 
@@ -17,6 +17,11 @@ fs::path MakeTempDbPath(const wchar_t* fileName)
     std::error_code ec;
     fs::remove(path, ec);
     return path;
+}
+
+sc::ErrorCode CreateFileDb(const wchar_t* path, sc::SCDbPtr& db)
+{
+    return sc::CreateFileDatabase(path, sc::SCOpenDatabaseOptions{}, db);
 }
 
 sc::SCTablePtr CreateQueryableBeamTable(sc::SCDbPtr& db)
@@ -74,7 +79,7 @@ TEST(QuerySqliteExecutorTests, LegacyFindRecordsRoutesThroughExecutor)
     const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_QuerySqlite_Legacy.sqlite");
 
     sc::SCDbPtr db;
-    EXPECT_EQ(sc::CreateSqliteDatabase(dbPath.c_str(), db), sc::SC_OK);
+    EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
 
     sc::SCTablePtr table = CreateQueryableBeamTable(db);
     SeedQueryableBeamRows(table, db);
@@ -99,7 +104,7 @@ TEST(QuerySqliteExecutorTests, SqliteExecutorReportsDirectAndPartialModes)
     const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_QuerySqlite_Result.sqlite");
 
     sc::SCDbPtr db;
-    EXPECT_EQ(sc::CreateSqliteDatabase(dbPath.c_str(), db), sc::SC_OK);
+    EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
 
     sc::SCTablePtr table = CreateQueryableBeamTable(db);
     SeedQueryableBeamRows(table, db);
@@ -170,7 +175,7 @@ TEST(QuerySqliteExecutorTests, ExecutorRejectsRequireIndexOnPartialPlans)
     const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_QuerySqlite_Unsupported.sqlite");
 
     sc::SCDbPtr db;
-    EXPECT_EQ(sc::CreateSqliteDatabase(dbPath.c_str(), db), sc::SC_OK);
+    EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
 
     sc::SCTablePtr table = CreateQueryableBeamTable(db);
     SeedQueryableBeamRows(table, db);
@@ -206,7 +211,7 @@ TEST(QuerySqliteExecutorTests, SqliteExecutorRunsControlledFallbackScan)
     const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_QuerySqlite_Fallback.sqlite");
 
     sc::SCDbPtr db;
-    EXPECT_EQ(sc::CreateSqliteDatabase(dbPath.c_str(), db), sc::SC_OK);
+    EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
 
     sc::SCTablePtr table = CreateQueryableBeamTable(db);
     SeedQueryableBeamRows(table, db);
@@ -246,3 +251,4 @@ TEST(QuerySqliteExecutorTests, SqliteExecutorRunsControlledFallbackScan)
     EXPECT_EQ(result.returnedRows, 2u);
     EXPECT_NE(result.executionNote.find(L"planner-fallback"), std::wstring::npos);
 }
+

@@ -43,6 +43,7 @@ private slots:
     void RedoLastAction();
     void RefreshCurrentView();
     void ShowHealthSummary();
+    void ShowEditLogSummary();
     void ExportDebugPackage();
     void OnTableSelectionChanged();
     void OnGridSelectionChanged();
@@ -51,6 +52,8 @@ private slots:
     void UpdateRecordInspector();
     void UpdateComputedColumnsPanel();
     void UpdateGridSummary();
+    void UpdateEditLogPanel();
+    void RefreshOverviewPanels();
 
 private:
     QModelIndex CurrentSourceIndex() const;
@@ -72,6 +75,9 @@ private:
     QTreeWidget* schemaTree_{nullptr};
     QTreeWidget* recordTree_{nullptr};
     QTreeWidget* computedColumnsTree_{nullptr};
+    QDockWidget* editLogDock_{nullptr};
+    QPlainTextEdit* editStateText_{nullptr};
+    QTreeWidget* editLogTree_{nullptr};
     QPlainTextEdit* diagnosticsText_{nullptr};
     QLabel* statusLabel_{nullptr};
 };

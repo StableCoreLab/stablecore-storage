@@ -254,3 +254,26 @@ TEST(DatabaseEditorSession, AddColumnRollsBackSchemaOnViewRebuildFailure)
     ASSERT_EQ(session.CurrentTableView()->GetColumnCount(&columnCount), sc::SC_OK);
     EXPECT_EQ(columnCount, 1);
 }
+
+TEST(DatabaseEditorSession, EditingStateAndEditLogAreExposedAfterEdits)
+{
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_DbEditor_StateSummary.sqlite");
+
+    editor::SCDatabaseSession session;
+    QString error;
+
+    ASSERT_TRUE(session.CreateDatabase(QString::fromStdWString(dbPath.wstring()), &error)) << error.toStdString();
+    ASSERT_TRUE(session.CreateTable(QStringLiteral("Beam"), &error)) << error.toStdString();
+    ASSERT_TRUE(session.AddColumn(MakeIntColumn(L"Width"), &error)) << error.toStdString();
+    ASSERT_TRUE(session.AddRecord(&error)) << error.toStdString();
+
+    sc::SCEditingDatabaseState editingState;
+    ASSERT_TRUE(session.GetEditingState(&editingState, &error)) << error.toStdString();
+    EXPECT_TRUE(editingState.open);
+    EXPECT_EQ(editingState.openMode, sc::SCDatabaseOpenMode::Normal);
+    EXPECT_GE(editingState.undoCount, 1u);
+
+    sc::SCEditLogState logState;
+    ASSERT_TRUE(session.GetEditLogState(&logState, &error)) << error.toStdString();
+    EXPECT_FALSE(logState.undoItems.empty());
+}

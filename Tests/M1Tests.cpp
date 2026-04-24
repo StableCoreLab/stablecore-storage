@@ -309,3 +309,64 @@ TEST(StorageM1, WriteRequiresActiveEditAndEmptyQueryIsNotError)
     sc::SCRecordPtr current;
     EXPECT_EQ(cursor->GetCurrent(current), sc::SC_FALSE_RESULT);
 }
+
+TEST(StorageM1, ReadOnlyOpenModeRejectsMemoryEdits)
+{
+    sc::SCOpenDatabaseOptions options;
+    options.openMode = sc::SCDatabaseOpenMode::ReadOnly;
+
+    sc::SCDbPtr db;
+    EXPECT_EQ(sc::CreateInMemoryDatabase(options, db), sc::SC_OK);
+
+    sc::SCEditPtr edit;
+    EXPECT_EQ(db->BeginEdit(L"readonly", edit), sc::SC_E_READ_ONLY_DATABASE);
+}
+
+TEST(StorageM1, EditLogCommitIdentityAndVersionStayStableAcrossUndoRedo)
+{
+    sc::SCDbPtr db;
+    EXPECT_EQ(sc::CreateInMemoryDatabase(db), sc::SC_OK);
+
+    sc::SCTablePtr beamTable = CreateBeamTable(db);
+
+    sc::SCEditPtr edit;
+    EXPECT_EQ(db->BeginEdit(L"seed", edit), sc::SC_OK);
+
+    sc::SCRecordPtr beam;
+    EXPECT_EQ(beamTable->CreateRecord(beam), sc::SC_OK);
+    EXPECT_EQ(beam->SetInt64(L"Width", 300), sc::SC_OK);
+    EXPECT_EQ(db->Commit(edit.Get()), sc::SC_OK);
+
+    sc::SCEditLogState logState;
+    EXPECT_EQ(db->GetEditLogState(&logState), sc::SC_OK);
+    ASSERT_EQ(logState.undoItems.size(), 1u);
+    const sc::CommitId commitId = logState.undoItems.front().commitId;
+    const sc::VersionId committedVersion = logState.undoItems.front().version;
+    EXPECT_NE(commitId, 0u);
+    EXPECT_EQ(committedVersion, 1u);
+
+    EXPECT_EQ(db->Undo(), sc::SC_OK);
+    EXPECT_EQ(db->GetEditLogState(&logState), sc::SC_OK);
+    ASSERT_EQ(logState.redoItems.size(), 1u);
+    EXPECT_EQ(logState.redoItems.front().commitId, commitId);
+    EXPECT_EQ(logState.redoItems.front().version, committedVersion);
+    EXPECT_EQ(logState.redoItems.front().kind, sc::SCEditLogActionKind::Commit);
+
+    EXPECT_EQ(db->Redo(), sc::SC_OK);
+    EXPECT_EQ(db->GetEditLogState(&logState), sc::SC_OK);
+    ASSERT_EQ(logState.undoItems.size(), 1u);
+    EXPECT_EQ(logState.undoItems.front().commitId, commitId);
+    EXPECT_EQ(logState.undoItems.front().version, committedVersion);
+    EXPECT_EQ(logState.undoItems.front().kind, sc::SCEditLogActionKind::Commit);
+}
+
+TEST(StorageM1, CreateBackupCopyIsNotSupportedOnMemoryDatabase)
+{
+    sc::SCDbPtr db;
+    EXPECT_EQ(sc::CreateInMemoryDatabase(db), sc::SC_OK);
+
+    sc::SCBackupOptions options;
+    sc::SCBackupResult result;
+
+    EXPECT_EQ(db->CreateBackupCopy(L"StableCoreStorage_M1_BackupCopy.sqlite", options, &result), sc::SC_E_NOTIMPL);
+}

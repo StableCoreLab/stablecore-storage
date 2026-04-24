@@ -1,4 +1,4 @@
-#include <algorithm>
+﻿#include <algorithm>
 #include <filesystem>
 #include <functional>
 #include <string>
@@ -39,6 +39,11 @@ fs::path MakeTempDbPath(const wchar_t* fileName)
     std::error_code ec;
     fs::remove(path, ec);
     return path;
+}
+
+sc::ErrorCode CreateFileDb(const wchar_t* path, sc::SCDbPtr& db)
+{
+    return sc::CreateFileDatabase(path, sc::SCOpenDatabaseOptions{}, db);
 }
 
 sc::SCTablePtr CreateFloorTable(sc::SCDbPtr& db)
@@ -244,12 +249,12 @@ TEST(StorageM3, SqliteRelationBaseline)
     RunM3RelationBaseline([&dbPath]()
     {
         sc::SCDbPtr db;
-        EXPECT_EQ(sc::CreateSqliteDatabase(dbPath.c_str(), db), sc::SC_OK);
+        EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
         return db;
     });
 
     sc::SCDbPtr reopened;
-    ASSERT_EQ(sc::CreateSqliteDatabase(dbPath.c_str(), reopened), sc::SC_OK);
+    ASSERT_EQ(CreateFileDb(dbPath.c_str(), reopened), sc::SC_OK);
 
     sc::SCTablePtr floorTable;
     ASSERT_EQ(reopened->GetTable(L"Floor", floorTable), sc::SC_OK);
@@ -309,7 +314,7 @@ TEST(StorageM3, SqliteReferenceIndexReadOnlyAccess)
     const auto fixture = CreateRelationProviderFixture([&dbPath]()
     {
         sc::SCDbPtr db;
-        EXPECT_EQ(sc::CreateSqliteDatabase(dbPath.c_str(), db), sc::SC_OK);
+        EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
         return db;
     });
 
@@ -394,7 +399,7 @@ TEST(StorageM3, SqliteReferenceIndexCanBeRebuilt)
     const auto fixture = CreateRelationProviderFixture([&dbPath]()
     {
         sc::SCDbPtr db;
-        EXPECT_EQ(sc::CreateSqliteDatabase(dbPath.c_str(), db), sc::SC_OK);
+        EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
         return db;
     });
 
@@ -446,3 +451,4 @@ TEST(StorageM3, SqliteReferenceIndexCanBeRebuilt)
     EXPECT_EQ(forwardRefs.front().sourceTable, L"Beam");
     EXPECT_EQ(forwardRefs.front().targetTable, L"Floor");
 }
+

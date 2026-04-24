@@ -1,6 +1,7 @@
 #include "SCDatabaseEditorMainWindow.h"
 
 #include <QAction>
+#include <QDateTime>
 #include <QFileDialog>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -17,6 +18,8 @@
 #include <QToolBar>
 #include <QVBoxLayout>
 #include <QWidget>
+
+#include <vector>
 
 namespace sc = StableCore::Storage;
 
@@ -50,6 +53,42 @@ QString ValueKindToText(sc::ValueKind kind)
     }
 }
 
+QString OpenModeToText(sc::SCDatabaseOpenMode mode)
+{
+    switch (mode)
+    {
+    case sc::SCDatabaseOpenMode::Normal: return QStringLiteral("Normal");
+    case sc::SCDatabaseOpenMode::NoHistory: return QStringLiteral("NoHistory");
+    case sc::SCDatabaseOpenMode::ReadOnly: return QStringLiteral("ReadOnly");
+    default: return QStringLiteral("Unknown");
+    }
+}
+
+QString EditLogActionKindToText(sc::SCEditLogActionKind kind)
+{
+    switch (kind)
+    {
+    case sc::SCEditLogActionKind::Commit: return QStringLiteral("Commit");
+    case sc::SCEditLogActionKind::Undo: return QStringLiteral("Undo");
+    case sc::SCEditLogActionKind::Redo: return QStringLiteral("Redo");
+    case sc::SCEditLogActionKind::Import: return QStringLiteral("Import");
+    case sc::SCEditLogActionKind::RuleWriteback: return QStringLiteral("RuleWriteback");
+    case sc::SCEditLogActionKind::SaveBaseline: return QStringLiteral("SaveBaseline");
+    default: return QStringLiteral("Unknown");
+    }
+}
+
+QString FormatUtcTimestamp(std::uint64_t timestampUtcMs)
+{
+    if (timestampUtcMs == 0)
+    {
+        return QStringLiteral("-");
+    }
+
+    const QDateTime dateTime = QDateTime::fromMSecsSinceEpoch(static_cast<qint64>(timestampUtcMs), Qt::UTC);
+    return dateTime.toString(Qt::ISODate);
+}
+
 }  // namespace
 
 SCDatabaseEditorMainWindow::SCDatabaseEditorMainWindow(QWidget* parent)
@@ -76,7 +115,7 @@ SCDatabaseEditorMainWindow::SCDatabaseEditorMainWindow(QWidget* parent)
                 tablesList_->setCurrentItem(matches.front());
             }
         }
-        diagnosticsText_->setPlainText(session_->BuildHealthSummary());
+        RefreshOverviewPanels();
         UpdateGridSummary();
         SetStatusMessage(QStringLiteral("Database opened."));
     });
@@ -94,6 +133,7 @@ SCDatabaseEditorMainWindow::SCDatabaseEditorMainWindow(QWidget* parent)
                 tablesList_->setCurrentItem(matches.front());
             }
         }
+        RefreshOverviewPanels();
     });
     connect(session_, &SCDatabaseSession::CurrentTableChanged, this, [this]()
     {
@@ -110,13 +150,14 @@ SCDatabaseEditorMainWindow::SCDatabaseEditorMainWindow(QWidget* parent)
         UpdateSchemaInspector();
         UpdateRecordInspector();
         UpdateComputedColumnsPanel();
-        diagnosticsText_->setPlainText(session_->BuildHealthSummary());
+        RefreshOverviewPanels();
         dataTable_->resizeColumnsToContents();
         UpdateGridSummary();
         SetStatusMessage(QStringLiteral("Table selected: ") + session_->CurrentTableName());
     });
     connect(recordModel_, &QAbstractItemModel::modelReset, this, &SCDatabaseEditorMainWindow::UpdateGridSummary);
     connect(dataTable_->selectionModel(), &QItemSelectionModel::selectionChanged, this, &SCDatabaseEditorMainWindow::OnGridSelectionChanged);
+    connect(session_, &SCDatabaseSession::RecordsChanged, this, &SCDatabaseEditorMainWindow::RefreshOverviewPanels);
 }
 
 void SCDatabaseEditorMainWindow::BuildUi()
@@ -202,6 +243,30 @@ void SCDatabaseEditorMainWindow::BuildUi()
     diagnosticsText_->setReadOnly(true);
     diagnosticsDock->setWidget(diagnosticsText_);
     addDockWidget(Qt::BottomDockWidgetArea, diagnosticsDock);
+    diagnosticsText_->setPlainText(QStringLiteral("No database opened."));
+
+    editLogDock_ = new QDockWidget(QStringLiteral("Edit Log / State Summary"), this);
+    auto* editLogWidget = new QWidget(editLogDock_);
+    auto* editLogLayout = new QVBoxLayout(editLogWidget);
+
+    editStateText_ = new QPlainTextEdit(editLogWidget);
+    editStateText_->setReadOnly(true);
+    editStateText_->setMinimumHeight(110);
+    editLogLayout->addWidget(new QLabel(QStringLiteral("State Summary"), editLogWidget));
+    editLogLayout->addWidget(editStateText_);
+
+    editLogTree_ = new QTreeWidget(editLogWidget);
+    editLogTree_->setHeaderLabels(
+        {QStringLiteral("Side"), QStringLiteral("Version"), QStringLiteral("Action"), QStringLiteral("Commit"),
+         QStringLiteral("Timestamp"), QStringLiteral("Text"), QStringLiteral("Detail")});
+    editLogLayout->addWidget(new QLabel(QStringLiteral("Edit Log Items"), editLogWidget));
+    editLogLayout->addWidget(editLogTree_, 1);
+
+    editLogDock_->setWidget(editLogWidget);
+    addDockWidget(Qt::BottomDockWidgetArea, editLogDock_);
+    tabifyDockWidget(diagnosticsDock, editLogDock_);
+    editLogDock_->raise();
+    editStateText_->setPlainText(QStringLiteral("No database opened."));
 
     statusLabel_ = new QLabel(QStringLiteral("No database opened."), this);
     statusBar()->addPermanentWidget(statusLabel_, 1);
@@ -229,6 +294,7 @@ void SCDatabaseEditorMainWindow::BuildMenus()
 
     auto* toolsMenu = menuBar()->addMenu(QStringLiteral("&Tools"));
     toolsMenu->addAction(QStringLiteral("Show Health Summary"), this, &SCDatabaseEditorMainWindow::ShowHealthSummary);
+    toolsMenu->addAction(QStringLiteral("Show Edit Log / State Summary"), this, &SCDatabaseEditorMainWindow::ShowEditLogSummary);
     toolsMenu->addAction(QStringLiteral("Export Debug Package..."), this, &SCDatabaseEditorMainWindow::ExportDebugPackage);
 
     auto* toolbar = addToolBar(QStringLiteral("Main"));
@@ -319,6 +385,7 @@ void SCDatabaseEditorMainWindow::AddColumn()
 
     UpdateSchemaInspector();
     recordModel_->Refresh();
+    RefreshOverviewPanels();
     SetStatusMessage(QStringLiteral("Column added: ") + ToQString(column.name));
 }
 
@@ -353,6 +420,7 @@ void SCDatabaseEditorMainWindow::AddSessionComputedColumn()
     recordModel_->Refresh();
     UpdateComputedColumnsPanel();
     SelectComputedColumnByName(ToQString(definition.name));
+    RefreshOverviewPanels();
     SetStatusMessage(QStringLiteral("Computed column added: ") + ToQString(definition.name));
 }
 
@@ -395,6 +463,7 @@ void SCDatabaseEditorMainWindow::EditSelectedComputedColumn()
     recordModel_->Refresh();
     UpdateComputedColumnsPanel();
     SelectComputedColumnByName(ToQString(updated.name));
+    RefreshOverviewPanels();
     SetStatusMessage(QStringLiteral("Computed column updated: ") + ToQString(updated.name));
 }
 
@@ -446,6 +515,7 @@ void SCDatabaseEditorMainWindow::DeleteSelectedComputedColumn()
     recordModel_->Refresh();
     UpdateComputedColumnsPanel();
     SelectComputedColumnByName(fallbackSelection);
+    RefreshOverviewPanels();
     SetStatusMessage(QStringLiteral("Computed column deleted: ") + columnName);
 }
 
@@ -590,12 +660,22 @@ void SCDatabaseEditorMainWindow::RefreshCurrentView()
     UpdateSchemaInspector();
     UpdateRecordInspector();
     UpdateComputedColumnsPanel();
-    diagnosticsText_->setPlainText(session_->BuildHealthSummary());
+    RefreshOverviewPanels();
 }
 
 void SCDatabaseEditorMainWindow::ShowHealthSummary()
 {
     diagnosticsText_->setPlainText(session_->BuildHealthSummary());
+}
+
+void SCDatabaseEditorMainWindow::ShowEditLogSummary()
+{
+    if (editLogDock_ != nullptr)
+    {
+        editLogDock_->show();
+        editLogDock_->raise();
+    }
+    UpdateEditLogPanel();
 }
 
 void SCDatabaseEditorMainWindow::ExportDebugPackage()
@@ -624,6 +704,76 @@ void SCDatabaseEditorMainWindow::ExportDebugPackage()
     }
 
     SetStatusMessage(QStringLiteral("Debug package exported: ") + filePath);
+}
+
+void SCDatabaseEditorMainWindow::RefreshOverviewPanels()
+{
+    diagnosticsText_->setPlainText(session_->BuildHealthSummary());
+    UpdateEditLogPanel();
+}
+
+void SCDatabaseEditorMainWindow::UpdateEditLogPanel()
+{
+    if (editStateText_ == nullptr || editLogTree_ == nullptr)
+    {
+        return;
+    }
+
+    sc::SCEditingDatabaseState editingState;
+    sc::SCEditLogState logState;
+    QString error;
+    if (!session_->GetEditingState(&editingState, &error))
+    {
+        editStateText_->setPlainText(QStringLiteral("Failed to load editing state: ") + error);
+        editLogTree_->clear();
+        return;
+    }
+
+    if (!session_->GetEditLogState(&logState, &error))
+    {
+        editStateText_->setPlainText(QStringLiteral("Failed to load edit log: ") + error);
+        editLogTree_->clear();
+        return;
+    }
+
+    QString summary;
+    summary += QStringLiteral("Open: ") + (editingState.open ? QStringLiteral("true") : QStringLiteral("false")) + QLatin1Char('\n');
+    summary += QStringLiteral("OpenMode: ") + OpenModeToText(editingState.openMode) + QLatin1Char('\n');
+    summary += QStringLiteral("Dirty: ") + (editingState.dirty ? QStringLiteral("true") : QStringLiteral("false")) + QLatin1Char('\n');
+    summary += QStringLiteral("CurrentVersion: ") + QString::number(static_cast<qulonglong>(editingState.currentVersion)) + QLatin1Char('\n');
+    summary += QStringLiteral("BaselineVersion: ") + QString::number(static_cast<qulonglong>(editingState.baselineVersion)) + QLatin1Char('\n');
+    summary += QStringLiteral("UndoCount: ") + QString::number(editingState.undoCount) + QLatin1Char('\n');
+    summary += QStringLiteral("RedoCount: ") + QString::number(editingState.redoCount) + QLatin1Char('\n');
+    summary += QStringLiteral("UndoItems: ") + QString::number(logState.undoItems.size()) + QLatin1Char('\n');
+    summary += QStringLiteral("RedoItems: ") + QString::number(logState.redoItems.size()) + QLatin1Char('\n');
+    editStateText_->setPlainText(summary);
+
+    editLogTree_->clear();
+
+    auto appendItems = [this](const std::vector<sc::SCEditLogEntry>& items, const QString& side)
+    {
+        for (const sc::SCEditLogEntry& entry : items)
+        {
+            auto* row = new QTreeWidgetItem(editLogTree_);
+            row->setText(0, side);
+            row->setText(1, QString::number(static_cast<qulonglong>(entry.version)));
+            row->setText(2, EditLogActionKindToText(entry.kind));
+            row->setText(3, QString::number(static_cast<qulonglong>(entry.commitId)));
+            row->setText(4, FormatUtcTimestamp(entry.timestampUtcMs));
+            row->setText(5, QString::fromStdWString(entry.displayText));
+            row->setText(6, QString::fromStdWString(entry.detailText));
+        }
+    };
+
+    appendItems(logState.undoItems, QStringLiteral("Undo"));
+    appendItems(logState.redoItems, QStringLiteral("Redo"));
+    editLogTree_->resizeColumnToContents(0);
+    editLogTree_->resizeColumnToContents(1);
+    editLogTree_->resizeColumnToContents(2);
+    editLogTree_->resizeColumnToContents(3);
+    editLogTree_->resizeColumnToContents(4);
+    editLogTree_->resizeColumnToContents(5);
+    editLogTree_->resizeColumnToContents(6);
 }
 
 void SCDatabaseEditorMainWindow::OnTableSelectionChanged()

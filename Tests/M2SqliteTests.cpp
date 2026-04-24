@@ -1,4 +1,4 @@
-#include <filesystem>
+﻿#include <filesystem>
 #include <string>
 #include <utility>
 
@@ -19,6 +19,18 @@ fs::path MakeTempDbPath(const wchar_t* fileName)
     std::error_code ec;
     fs::remove(path, ec);
     return path;
+}
+
+sc::ErrorCode CreateFileDb(const wchar_t* path, sc::SCDbPtr& db)
+{
+    return sc::CreateFileDatabase(path, sc::SCOpenDatabaseOptions{}, db);
+}
+
+sc::ErrorCode CreateReadOnlyFileDb(const wchar_t* path, sc::SCDbPtr& db)
+{
+    sc::SCOpenDatabaseOptions options;
+    options.openMode = sc::SCDatabaseOpenMode::ReadOnly;
+    return sc::CreateFileDatabase(path, options, db);
 }
 
 bool ExecSqliteScript(const fs::path& dbPath, const char* sql)
@@ -226,7 +238,7 @@ TEST(StorageM2Sqlite, PersistedRecordSurvivesReopen)
 
     {
         sc::SCDbPtr db;
-        EXPECT_EQ(sc::CreateSqliteDatabase(dbPath.c_str(), db), sc::SC_OK);
+        EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
 
         sc::SCTablePtr beamTable = CreateBeamTable(db);
 
@@ -241,7 +253,7 @@ TEST(StorageM2Sqlite, PersistedRecordSurvivesReopen)
 
     {
         sc::SCDbPtr reopened;
-        EXPECT_EQ(sc::CreateSqliteDatabase(dbPath.c_str(), reopened), sc::SC_OK);
+        EXPECT_EQ(CreateFileDb(dbPath.c_str(), reopened), sc::SC_OK);
 
         sc::SCTablePtr beamTable;
         EXPECT_EQ(reopened->GetTable(L"Beam", beamTable), sc::SC_OK);
@@ -268,7 +280,7 @@ TEST(StorageM2Sqlite, UndoRedoSurvivesReopen)
 
     {
         sc::SCDbPtr db;
-        EXPECT_EQ(sc::CreateSqliteDatabase(dbPath.c_str(), db), sc::SC_OK);
+        EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
         sc::SCTablePtr beamTable = CreateBeamTable(db);
 
         sc::SCEditPtr createEdit;
@@ -288,7 +300,7 @@ TEST(StorageM2Sqlite, UndoRedoSurvivesReopen)
 
     {
         sc::SCDbPtr reopened;
-        EXPECT_EQ(sc::CreateSqliteDatabase(dbPath.c_str(), reopened), sc::SC_OK);
+        EXPECT_EQ(CreateFileDb(dbPath.c_str(), reopened), sc::SC_OK);
 
         sc::SCTablePtr beamTable;
         EXPECT_EQ(reopened->GetTable(L"Beam", beamTable), sc::SC_OK);
@@ -312,13 +324,142 @@ TEST(StorageM2Sqlite, UndoRedoSurvivesReopen)
     }
 }
 
+TEST(StorageM2Sqlite, OpenModeAndEditLogStateAreQueryable)
+{
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_M2_EditLogState.sqlite");
+
+    sc::SCOpenDatabaseOptions options;
+    options.openMode = sc::SCDatabaseOpenMode::Normal;
+
+    sc::SCDbPtr db;
+    EXPECT_EQ(sc::CreateFileDatabase(dbPath.c_str(), options, db), sc::SC_OK);
+
+    sc::SCEditingDatabaseState editingState;
+    EXPECT_EQ(db->GetEditingState(&editingState), sc::SC_OK);
+    EXPECT_TRUE(editingState.open);
+    EXPECT_EQ(editingState.openMode, sc::SCDatabaseOpenMode::Normal);
+    EXPECT_EQ(editingState.undoCount, 0u);
+    EXPECT_EQ(editingState.redoCount, 0u);
+
+    sc::SCEditLogState logState;
+    EXPECT_EQ(db->GetEditLogState(&logState), sc::SC_OK);
+    EXPECT_TRUE(logState.undoItems.empty());
+    EXPECT_TRUE(logState.redoItems.empty());
+
+    sc::SCTablePtr beamTable = CreateBeamTable(db);
+    sc::SCEditPtr edit;
+    EXPECT_EQ(db->BeginEdit(L"seed", edit), sc::SC_OK);
+
+    sc::SCRecordPtr beam;
+    EXPECT_EQ(beamTable->CreateRecord(beam), sc::SC_OK);
+    EXPECT_EQ(beam->SetInt64(L"Width", 320), sc::SC_OK);
+    EXPECT_EQ(db->Commit(edit.Get()), sc::SC_OK);
+
+    EXPECT_EQ(db->GetEditLogState(&logState), sc::SC_OK);
+    EXPECT_EQ(logState.undoItems.size(), 1u);
+    EXPECT_TRUE(logState.redoItems.empty());
+    ASSERT_EQ(logState.undoItems.size(), 1u);
+    const sc::CommitId firstCommitId = logState.undoItems.front().commitId;
+    const sc::VersionId firstCommittedVersion = logState.undoItems.front().version;
+    EXPECT_NE(firstCommitId, 0u);
+    EXPECT_EQ(firstCommittedVersion, 1u);
+    EXPECT_EQ(logState.undoItems.front().kind, sc::SCEditLogActionKind::Commit);
+
+    sc::SCBackupResult resetResult;
+    EXPECT_EQ(db->ResetHistoryBaseline(&resetResult), sc::SC_OK);
+    EXPECT_TRUE(resetResult.historyReset);
+    EXPECT_EQ(resetResult.trimmedUndoCount, 1u);
+
+    sc::SCEditingDatabaseState postResetState;
+    EXPECT_EQ(db->GetEditingState(&postResetState), sc::SC_OK);
+    const sc::VersionId savedBaselineVersion = postResetState.baselineVersion;
+    EXPECT_EQ(savedBaselineVersion, postResetState.currentVersion);
+
+    sc::SCEditPtr secondEdit;
+    EXPECT_EQ(db->BeginEdit(L"second", secondEdit), sc::SC_OK);
+    EXPECT_EQ(beamTable->CreateRecord(beam), sc::SC_OK);
+    EXPECT_EQ(beam->SetInt64(L"Width", 480), sc::SC_OK);
+    EXPECT_EQ(db->Commit(secondEdit.Get()), sc::SC_OK);
+
+    EXPECT_EQ(db->GetEditingState(&postResetState), sc::SC_OK);
+    EXPECT_EQ(postResetState.baselineVersion, savedBaselineVersion);
+    EXPECT_GT(postResetState.currentVersion, savedBaselineVersion);
+
+    EXPECT_EQ(db->GetEditLogState(&logState), sc::SC_OK);
+    EXPECT_EQ(logState.baselineVersion, savedBaselineVersion);
+    EXPECT_EQ(logState.undoItems.size(), 1u);
+    EXPECT_TRUE(logState.redoItems.empty());
+    const sc::CommitId secondCommitId = logState.undoItems.front().commitId;
+    const sc::VersionId secondCommittedVersion = logState.undoItems.front().version;
+    EXPECT_NE(secondCommitId, 0u);
+    EXPECT_NE(secondCommitId, firstCommitId);
+    EXPECT_EQ(secondCommittedVersion, 2u);
+    EXPECT_EQ(logState.undoItems.front().kind, sc::SCEditLogActionKind::Commit);
+
+    EXPECT_EQ(db->Undo(), sc::SC_OK);
+    EXPECT_EQ(db->GetEditLogState(&logState), sc::SC_OK);
+    ASSERT_EQ(logState.redoItems.size(), 1u);
+    EXPECT_EQ(logState.redoItems.front().commitId, secondCommitId);
+    EXPECT_EQ(logState.redoItems.front().version, secondCommittedVersion);
+    EXPECT_EQ(logState.redoItems.front().kind, sc::SCEditLogActionKind::Commit);
+
+    EXPECT_EQ(db->Redo(), sc::SC_OK);
+    EXPECT_EQ(db->GetEditLogState(&logState), sc::SC_OK);
+    ASSERT_EQ(logState.undoItems.size(), 1u);
+    EXPECT_EQ(logState.undoItems.front().commitId, secondCommitId);
+    EXPECT_EQ(logState.undoItems.front().version, secondCommittedVersion);
+    EXPECT_EQ(logState.undoItems.front().kind, sc::SCEditLogActionKind::Commit);
+
+    sc::SCDbPtr reopened;
+    EXPECT_EQ(CreateFileDb(dbPath.c_str(), reopened), sc::SC_OK);
+
+    sc::SCEditingDatabaseState reopenedState;
+    EXPECT_EQ(reopened->GetEditingState(&reopenedState), sc::SC_OK);
+    EXPECT_EQ(reopenedState.baselineVersion, savedBaselineVersion);
+    EXPECT_EQ(reopenedState.currentVersion, 4u);
+
+    sc::SCEditLogState reopenedLog;
+    EXPECT_EQ(reopened->GetEditLogState(&reopenedLog), sc::SC_OK);
+    EXPECT_EQ(reopenedLog.baselineVersion, savedBaselineVersion);
+    EXPECT_EQ(reopenedLog.undoItems.size(), 1u);
+    EXPECT_TRUE(reopenedLog.redoItems.empty());
+    EXPECT_EQ(reopenedLog.undoItems.front().commitId, secondCommitId);
+    EXPECT_EQ(reopenedLog.undoItems.front().version, secondCommittedVersion);
+    EXPECT_EQ(reopenedLog.undoItems.front().kind, sc::SCEditLogActionKind::Commit);
+}
+
+TEST(StorageM2Sqlite, NoHistoryOpenModeHidesEditLog)
+{
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_M2_NoHistory.sqlite");
+
+    sc::SCOpenDatabaseOptions options;
+    options.openMode = sc::SCDatabaseOpenMode::NoHistory;
+
+    sc::SCDbPtr db;
+    EXPECT_EQ(sc::CreateFileDatabase(dbPath.c_str(), options, db), sc::SC_OK);
+
+    sc::SCTablePtr beamTable = CreateBeamTable(db);
+    sc::SCEditPtr edit;
+    EXPECT_EQ(db->BeginEdit(L"seed", edit), sc::SC_OK);
+
+    sc::SCRecordPtr beam;
+    EXPECT_EQ(beamTable->CreateRecord(beam), sc::SC_OK);
+    EXPECT_EQ(beam->SetInt64(L"Width", 320), sc::SC_OK);
+    EXPECT_EQ(db->Commit(edit.Get()), sc::SC_OK);
+
+    sc::SCEditLogState logState;
+    EXPECT_EQ(db->GetEditLogState(&logState), sc::SC_OK);
+    EXPECT_TRUE(logState.undoItems.empty());
+    EXPECT_TRUE(logState.redoItems.empty());
+}
+
 TEST(StorageM2Sqlite, PersistedQueryAndDelete)
 {
     const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_M2_Query.sqlite");
 
     {
         sc::SCDbPtr db;
-        EXPECT_EQ(sc::CreateSqliteDatabase(dbPath.c_str(), db), sc::SC_OK);
+        EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
         sc::SCTablePtr beamTable = CreateBeamTable(db);
 
         sc::SCEditPtr edit;
@@ -342,7 +483,7 @@ TEST(StorageM2Sqlite, PersistedQueryAndDelete)
 
     {
         sc::SCDbPtr reopened;
-        EXPECT_EQ(sc::CreateSqliteDatabase(dbPath.c_str(), reopened), sc::SC_OK);
+        EXPECT_EQ(CreateFileDb(dbPath.c_str(), reopened), sc::SC_OK);
         sc::SCTablePtr beamTable;
         EXPECT_EQ(reopened->GetTable(L"Beam", beamTable), sc::SC_OK);
 
@@ -368,7 +509,7 @@ TEST(StorageM2Sqlite, PersistedSchemaRejectsInvalidReferenceTableUsage)
     const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_M2_SchemaValidation.sqlite");
 
     sc::SCDbPtr db;
-    EXPECT_EQ(sc::CreateSqliteDatabase(dbPath.c_str(), db), sc::SC_OK);
+    EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
 
     sc::SCTablePtr beamTable;
     EXPECT_EQ(db->CreateTable(L"Beam", beamTable), sc::SC_OK);
@@ -394,7 +535,7 @@ TEST(StorageM2Sqlite, PersistedEmptyQueryIsNotError)
     const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_M2_EmptyQuery.sqlite");
 
     sc::SCDbPtr db;
-    EXPECT_EQ(sc::CreateSqliteDatabase(dbPath.c_str(), db), sc::SC_OK);
+    EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
 
     sc::SCTablePtr beamTable = CreateBeamTable(db);
 
@@ -434,7 +575,7 @@ TEST(StorageM2Sqlite, ReadOnlySqliteOpenRejectsWrites)
 
     {
         sc::SCDbPtr db;
-        EXPECT_EQ(sc::CreateSqliteDatabase(dbPath.c_str(), db), sc::SC_OK);
+        EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
 
         sc::SCTablePtr beamTable = CreateBeamTable(db);
 
@@ -448,7 +589,7 @@ TEST(StorageM2Sqlite, ReadOnlySqliteOpenRejectsWrites)
     }
 
     sc::SCDbPtr readOnlyDb;
-    EXPECT_EQ(sc::CreateSqliteDatabase(dbPath.c_str(), true, readOnlyDb), sc::SC_OK);
+    EXPECT_EQ(CreateReadOnlyFileDb(dbPath.c_str(), readOnlyDb), sc::SC_OK);
     EXPECT_EQ(readOnlyDb->GetSchemaVersion(), 2);
 
     sc::SCEditPtr edit;
@@ -461,7 +602,7 @@ TEST(StorageM2Sqlite, UpgradeExecutionIsExplicit)
 
     {
         sc::SCDbPtr db;
-        EXPECT_EQ(sc::CreateSqliteDatabase(dbPath.c_str(), db), sc::SC_OK);
+        EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
         sc::SCTablePtr beamTable = CreateBeamTable(db);
 
         sc::SCEditPtr edit;
@@ -476,7 +617,7 @@ TEST(StorageM2Sqlite, UpgradeExecutionIsExplicit)
     EXPECT_TRUE(SetMetadataValue(dbPath, "schema_version", "1"));
 
     sc::SCDbPtr reopened;
-    EXPECT_EQ(sc::CreateSqliteDatabase(dbPath.c_str(), reopened), sc::SC_OK);
+    EXPECT_EQ(CreateFileDb(dbPath.c_str(), reopened), sc::SC_OK);
     EXPECT_EQ(reopened->GetSchemaVersion(), 1);
 
     sc::SCVersionGraph graph;
@@ -504,7 +645,7 @@ TEST(StorageM2Sqlite, UpgradeFailureRollsBackOnObjectNameConflict)
 
     {
         sc::SCDbPtr db;
-        EXPECT_EQ(sc::CreateSqliteDatabase(dbPath.c_str(), db), sc::SC_OK);
+        EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
         sc::SCTablePtr beamTable = CreateBeamTable(db);
 
         sc::SCEditPtr edit;
@@ -525,7 +666,7 @@ TEST(StorageM2Sqlite, UpgradeFailureRollsBackOnObjectNameConflict)
         "UPDATE metadata SET value='1' WHERE key='clean_shutdown';"));
 
     sc::SCDbPtr reopened;
-    EXPECT_EQ(sc::CreateSqliteDatabase(dbPath.c_str(), reopened), sc::SC_OK);
+    EXPECT_EQ(CreateFileDb(dbPath.c_str(), reopened), sc::SC_OK);
     EXPECT_EQ(reopened->GetSchemaVersion(), 1);
 
     sc::SCVersionGraph graph;
@@ -555,7 +696,7 @@ TEST(StorageM2Sqlite, UncleanShutdownBlocksUpgradeExecution)
 
     {
         sc::SCDbPtr db;
-        EXPECT_EQ(sc::CreateSqliteDatabase(dbPath.c_str(), db), sc::SC_OK);
+        EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
         sc::SCTablePtr beamTable = CreateBeamTable(db);
 
         sc::SCEditPtr edit;
@@ -571,7 +712,7 @@ TEST(StorageM2Sqlite, UncleanShutdownBlocksUpgradeExecution)
     EXPECT_TRUE(SetMetadataValue(dbPath, "clean_shutdown", "0"));
 
     sc::SCDbPtr reopened;
-    EXPECT_EQ(sc::CreateSqliteDatabase(dbPath.c_str(), reopened), sc::SC_OK);
+    EXPECT_EQ(CreateFileDb(dbPath.c_str(), reopened), sc::SC_OK);
     EXPECT_EQ(reopened->GetSchemaVersion(), 1);
 
     sc::SCVersionGraph graph;
@@ -596,7 +737,7 @@ TEST(StorageM2Sqlite, ImportSessionCheckpointIsNotLiveState)
     const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_M2_ImportCheckpoint.sqlite");
 
     sc::SCDbPtr db;
-    EXPECT_EQ(sc::CreateSqliteDatabase(dbPath.c_str(), db), sc::SC_OK);
+    EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
 
     sc::SCTablePtr beamTable = CreateBeamTable(db);
 
@@ -653,7 +794,7 @@ TEST(StorageM2Sqlite, RestartedDatabaseCanFinalizeImportRecoveryState)
 
     {
         sc::SCDbPtr db;
-        EXPECT_EQ(sc::CreateSqliteDatabase(dbPath.c_str(), db), sc::SC_OK);
+        EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
         sc::SCTablePtr beamTable = CreateBeamTable(db);
 
         sc::SCImportSessionOptions sessionOptions;
@@ -687,7 +828,7 @@ TEST(StorageM2Sqlite, RestartedDatabaseCanFinalizeImportRecoveryState)
     }
 
     sc::SCDbPtr reopened;
-    EXPECT_EQ(sc::CreateSqliteDatabase(dbPath.c_str(), reopened), sc::SC_OK);
+    EXPECT_EQ(CreateFileDb(dbPath.c_str(), reopened), sc::SC_OK);
 
     sc::SCImportRecoveryState recoveryState;
     EXPECT_EQ(reopened->LoadImportRecoveryState(sessionId, &recoveryState), sc::SC_OK);
@@ -721,7 +862,7 @@ TEST(StorageM2Sqlite, AbortImportSessionClearsRecoveryState)
     const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_M2_AbortImport.sqlite");
 
     sc::SCDbPtr db;
-    EXPECT_EQ(sc::CreateSqliteDatabase(dbPath.c_str(), db), sc::SC_OK);
+    EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
     CreateBeamTable(db);
 
     sc::SCImportSessionOptions sessionOptions;
@@ -762,7 +903,7 @@ TEST(StorageM2Sqlite, ExecuteImportUsesChunkedSessionModel)
     const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_M2_ChunkedImport.sqlite");
 
     sc::SCDbPtr db;
-    EXPECT_EQ(sc::CreateSqliteDatabase(dbPath.c_str(), db), sc::SC_OK);
+    EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
     sc::SCTablePtr beamTable = CreateBeamTable(db);
 
     std::vector<sc::SCBatchTableRequest> requests;
@@ -800,7 +941,7 @@ TEST(StorageM2Sqlite, BatchFailureDoesNotLeaveActiveEdit)
     const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_M2_BatchFailureCleanup.sqlite");
 
     sc::SCDbPtr db;
-    EXPECT_EQ(sc::CreateSqliteDatabase(dbPath.c_str(), db), sc::SC_OK);
+    EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
     sc::SCTablePtr beamTable = CreateBeamTable(db);
 
     sc::SCBatchExecutionOptions options;
@@ -834,7 +975,7 @@ TEST(StorageM2Sqlite, ExecuteImportKeepsRecoveryStateWhenCommitFails)
     const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_M2_ImportCommitFailure.sqlite");
 
     sc::SCDbPtr realDb;
-    EXPECT_EQ(sc::CreateSqliteDatabase(dbPath.c_str(), realDb), sc::SC_OK);
+    EXPECT_EQ(CreateFileDb(dbPath.c_str(), realDb), sc::SC_OK);
     sc::SCTablePtr beamTable = CreateBeamTable(realDb);
 
     sc::SCRefPtr<CommitFailingDatabase> proxy = sc::SCMakeRef<CommitFailingDatabase>(realDb);
@@ -872,7 +1013,7 @@ TEST(StorageM2Sqlite, ExecuteImportClearsRecoveryStateOnSuccess)
     const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_M2_ImportFinalizeSuccess.sqlite");
 
     sc::SCDbPtr db;
-    EXPECT_EQ(sc::CreateSqliteDatabase(dbPath.c_str(), db), sc::SC_OK);
+    EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
     sc::SCTablePtr beamTable = CreateBeamTable(db);
 
     std::vector<sc::SCBatchTableRequest> requests;
@@ -905,7 +1046,7 @@ TEST(StorageM2Sqlite, RemoveColumnCleansSqliteFootprint)
     const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_M2_RemoveColumnFootprint.sqlite");
 
     sc::SCDbPtr db;
-    EXPECT_EQ(sc::CreateSqliteDatabase(dbPath.c_str(), db), sc::SC_OK);
+    EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
 
     sc::SCTablePtr beamTable = CreateBeamTable(db);
 
@@ -948,3 +1089,4 @@ TEST(StorageM2Sqlite, RemoveColumnCleansSqliteFootprint)
         + "_Width' LIMIT 1;";
     EXPECT_FALSE(QuerySqliteExists(dbPath, indexSql.c_str()));
 }
+

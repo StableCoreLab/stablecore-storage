@@ -380,6 +380,8 @@ struct JournalEntry
 struct JournalTransaction
 {
     std::wstring actionName;
+    CommitId commitId{0};
+    VersionId committedVersion{0};
     std::vector<JournalEntry> entries;
 };
 

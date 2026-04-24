@@ -369,6 +369,11 @@ class MemoryDatabase final : public ISCDatabase,
                              public SCRefCountedObject
 {
 public:
+    explicit MemoryDatabase(SCDatabaseOpenMode openMode = SCDatabaseOpenMode::Normal)
+        : openMode_(openMode)
+    {
+    }
+
     ErrorCode BeginEdit(const wchar_t* name, SCEditPtr& outEdit) override;
     ErrorCode Commit(ISCEditSession* edit) override;
     ErrorCode Rollback(ISCEditSession* edit) override;
@@ -389,6 +394,10 @@ public:
     ErrorCode LoadImportRecoveryState(std::uint64_t sessionId, SCImportRecoveryState* outState) override;
     ErrorCode FinalizeImportSession(const SCImportFinalizeCommit& commit, SCImportRecoveryState* outState) override;
     ErrorCode AbortImportSession(std::uint64_t sessionId) override;
+    ErrorCode CreateBackupCopy(
+        const wchar_t* targetPath,
+        const SCBackupOptions& options,
+        SCBackupResult* outResult) override;
 
     ErrorCode AddObserver(ISCDatabaseObserver* observer) override;
     ErrorCode RemoveObserver(ISCDatabaseObserver* observer) override;
@@ -406,6 +415,9 @@ public:
     ErrorCode RebuildReferenceIndexes() override;
     ErrorCode CommitReferenceDelta(const ReferenceIndex& forwardDelta,
                                    const ReverseReferenceIndex& reverseDelta) override;
+    ErrorCode GetEditLogState(SCEditLogState* outState) const override;
+    ErrorCode GetEditingState(SCEditingDatabaseState* outState) const override;
+    ErrorCode ResetHistoryBaseline(SCBackupResult* outResult = nullptr) override;
 
     VersionId GetCurrentVersion() const noexcept override
     {
@@ -421,6 +433,8 @@ public:
     {
         return static_cast<bool>(activeEdit_);
     }
+
+    ErrorCode EnsureWritable() const;
 
     RecordId AllocateRecordId() noexcept
     {
@@ -473,6 +487,9 @@ private:
     JournalTransaction activeJournal_;
     std::vector<JournalTransaction> undoStack_;
     std::vector<JournalTransaction> redoStack_;
+    SCDatabaseOpenMode openMode_{SCDatabaseOpenMode::Normal};
+    VersionId baselineVersion_{0};
+    CommitId nextJournalTransactionId_{1};
     bool referenceIndexDirty_{true};
     bool referenceIndexBuilt_{false};
     VersionId referenceIndexVersion_{0};
@@ -480,6 +497,12 @@ private:
 
 ErrorCode MemoryDatabase::BeginEdit(const wchar_t* name, SCEditPtr& outEdit)
 {
+    const ErrorCode writableRc = EnsureWritable();
+    if (Failed(writableRc))
+    {
+        return writableRc;
+    }
+
     if (activeEdit_)
     {
         return SC_E_WRITE_CONFLICT;
@@ -494,6 +517,12 @@ ErrorCode MemoryDatabase::BeginEdit(const wchar_t* name, SCEditPtr& outEdit)
 
 ErrorCode MemoryDatabase::Commit(ISCEditSession* edit)
 {
+    const ErrorCode writableRc = EnsureWritable();
+    if (Failed(writableRc))
+    {
+        return writableRc;
+    }
+
     const ErrorCode validate = ValidateActiveEdit(edit);
     if (Failed(validate))
     {
@@ -511,6 +540,8 @@ ErrorCode MemoryDatabase::Commit(ISCEditSession* edit)
 
     ++version_;
     UpdateTouchedVersions(activeJournal_, version_);
+    activeJournal_.commitId = nextJournalTransactionId_++;
+    activeJournal_.committedVersion = version_;
     undoStack_.push_back(activeJournal_);
     redoStack_.clear();
     RefreshReferenceIndexState();
@@ -524,6 +555,12 @@ ErrorCode MemoryDatabase::Commit(ISCEditSession* edit)
 
 ErrorCode MemoryDatabase::Rollback(ISCEditSession* edit)
 {
+    const ErrorCode writableRc = EnsureWritable();
+    if (Failed(writableRc))
+    {
+        return writableRc;
+    }
+
     const ErrorCode validate = ValidateActiveEdit(edit);
     if (Failed(validate))
     {
@@ -544,6 +581,12 @@ ErrorCode MemoryDatabase::Rollback(ISCEditSession* edit)
 
 ErrorCode MemoryDatabase::Undo()
 {
+    const ErrorCode writableRc = EnsureWritable();
+    if (Failed(writableRc))
+    {
+        return writableRc;
+    }
+
     if (activeEdit_)
     {
         return SC_E_WRITE_CONFLICT;
@@ -566,6 +609,12 @@ ErrorCode MemoryDatabase::Undo()
 
 ErrorCode MemoryDatabase::Redo()
 {
+    const ErrorCode writableRc = EnsureWritable();
+    if (Failed(writableRc))
+    {
+        return writableRc;
+    }
+
     if (activeEdit_)
     {
         return SC_E_WRITE_CONFLICT;
@@ -633,6 +682,12 @@ ErrorCode MemoryDatabase::GetTableName(std::int32_t index, std::wstring* outName
 
 ErrorCode MemoryDatabase::CreateTable(const wchar_t* name, SCTablePtr& outTable)
 {
+    const ErrorCode writableRc = EnsureWritable();
+    if (Failed(writableRc))
+    {
+        return writableRc;
+    }
+
     if (name == nullptr || *name == L'\0')
     {
         return SC_E_INVALIDARG;
@@ -654,11 +709,23 @@ ErrorCode MemoryDatabase::CreateTable(const wchar_t* name, SCTablePtr& outTable)
 
 ErrorCode MemoryDatabase::ExecuteUpgradePlan(const SCUpgradePlan&, bool, SCUpgradeResult*)
 {
+    const ErrorCode writableRc = EnsureWritable();
+    if (Failed(writableRc))
+    {
+        return writableRc;
+    }
+
     return SC_E_NOTIMPL;
 }
 
 ErrorCode MemoryDatabase::BeginImportSession(const SCImportSessionOptions& options, SCImportStagingArea* outSession)
 {
+    const ErrorCode writableRc = EnsureWritable();
+    if (Failed(writableRc))
+    {
+        return writableRc;
+    }
+
     if (outSession == nullptr)
     {
         return SC_E_POINTER;
@@ -691,6 +758,12 @@ ErrorCode MemoryDatabase::AppendImportChunk(
     const SCImportChunk& chunk,
     SCImportCheckpoint* outCheckpoint)
 {
+    const ErrorCode writableRc = EnsureWritable();
+    if (Failed(writableRc))
+    {
+        return writableRc;
+    }
+
     if (session == nullptr)
     {
         return SC_E_POINTER;
@@ -743,6 +816,12 @@ ErrorCode MemoryDatabase::LoadImportRecoveryState(std::uint64_t sessionId, SCImp
 
 ErrorCode MemoryDatabase::FinalizeImportSession(const SCImportFinalizeCommit& commit, SCImportRecoveryState* outState)
 {
+    const ErrorCode writableRc = EnsureWritable();
+    if (Failed(writableRc))
+    {
+        return writableRc;
+    }
+
     if (!commit.confirmed)
     {
         return SC_E_INVALIDARG;
@@ -768,6 +847,12 @@ ErrorCode MemoryDatabase::FinalizeImportSession(const SCImportFinalizeCommit& co
 
 ErrorCode MemoryDatabase::AbortImportSession(std::uint64_t sessionId)
 {
+    const ErrorCode writableRc = EnsureWritable();
+    if (Failed(writableRc))
+    {
+        return writableRc;
+    }
+
     const auto it = importSessions_.find(sessionId);
     if (it == importSessions_.end())
     {
@@ -776,6 +861,17 @@ ErrorCode MemoryDatabase::AbortImportSession(std::uint64_t sessionId)
 
     importSessions_.erase(it);
     return SC_OK;
+}
+
+ErrorCode MemoryDatabase::CreateBackupCopy(
+    const wchar_t* targetPath,
+    const SCBackupOptions& options,
+    SCBackupResult* outResult)
+{
+    (void)targetPath;
+    (void)options;
+    (void)outResult;
+    return SC_E_NOTIMPL;
 }
 
 ErrorCode MemoryDatabase::AddObserver(ISCDatabaseObserver* observer)
@@ -813,6 +909,97 @@ ErrorCode MemoryDatabase::ValidateActiveEdit(ISCEditSession* edit) const
     {
         return SC_E_EDIT_ALREADY_CLOSED;
     }
+    return SC_OK;
+}
+
+ErrorCode MemoryDatabase::EnsureWritable() const
+{
+    return openMode_ == SCDatabaseOpenMode::ReadOnly ? SC_E_READ_ONLY_DATABASE : SC_OK;
+}
+
+ErrorCode MemoryDatabase::GetEditLogState(SCEditLogState* outState) const
+{
+    if (outState == nullptr)
+    {
+        return SC_E_POINTER;
+    }
+
+    outState->baselineVersion = baselineVersion_;
+    outState->undoItems.clear();
+    outState->redoItems.clear();
+
+    if (openMode_ == SCDatabaseOpenMode::NoHistory)
+    {
+        return SC_OK;
+    }
+
+    outState->undoItems.reserve(undoStack_.size());
+    for (const auto& tx : undoStack_)
+    {
+        outState->undoItems.push_back(SCEditLogEntry{
+            tx.commitId,
+            tx.committedVersion,
+            SCEditLogActionKind::Commit,
+            tx.actionName,
+            L"",
+            0});
+    }
+
+    outState->redoItems.reserve(redoStack_.size());
+    for (const auto& tx : redoStack_)
+    {
+        outState->redoItems.push_back(SCEditLogEntry{
+            tx.commitId,
+            tx.committedVersion,
+            SCEditLogActionKind::Commit,
+            tx.actionName,
+            L"",
+            0});
+    }
+
+    return SC_OK;
+}
+
+ErrorCode MemoryDatabase::GetEditingState(SCEditingDatabaseState* outState) const
+{
+    if (outState == nullptr)
+    {
+        return SC_E_POINTER;
+    }
+
+    outState->open = true;
+    outState->dirty = static_cast<bool>(activeEdit_) || !undoStack_.empty();
+    outState->openMode = openMode_;
+    outState->currentVersion = version_;
+    outState->baselineVersion = baselineVersion_;
+    outState->undoCount = openMode_ == SCDatabaseOpenMode::NoHistory ? 0 : undoStack_.size();
+    outState->redoCount = openMode_ == SCDatabaseOpenMode::NoHistory ? 0 : redoStack_.size();
+    return SC_OK;
+}
+
+ErrorCode MemoryDatabase::ResetHistoryBaseline(SCBackupResult* outResult)
+{
+    if (openMode_ == SCDatabaseOpenMode::ReadOnly)
+    {
+        return SC_E_READ_ONLY_DATABASE;
+    }
+    if (activeEdit_)
+    {
+        return SC_E_WRITE_CONFLICT;
+    }
+
+    if (outResult != nullptr)
+    {
+        outResult->sourceVersion = version_;
+        outResult->targetVersion = version_;
+        outResult->historyReset = true;
+        outResult->trimmedUndoCount = undoStack_.size();
+        outResult->trimmedRedoCount = redoStack_.size();
+    }
+
+    baselineVersion_ = version_;
+    undoStack_.clear();
+    redoStack_.clear();
     return SC_OK;
 }
 
@@ -931,6 +1118,12 @@ ErrorCode MemoryDatabase::WriteValue(
     const std::wstring& fieldName,
     const SCValue& value)
 {
+    const ErrorCode writableRc = EnsureWritable();
+    if (Failed(writableRc))
+    {
+        return writableRc;
+    }
+
     const ErrorCode validate = ValidateWrite(table, data, fieldName, value);
     if (Failed(validate))
     {
@@ -967,6 +1160,12 @@ ErrorCode MemoryDatabase::WriteValue(
 
 ErrorCode MemoryDatabase::DeleteRecord(MemoryTable* table, const std::shared_ptr<MemoryRecordData>& data)
 {
+    const ErrorCode writableRc = EnsureWritable();
+    if (Failed(writableRc))
+    {
+        return writableRc;
+    }
+
     if (!activeEdit_)
     {
         return SC_E_NO_ACTIVE_EDIT;
@@ -1750,11 +1949,16 @@ ErrorCode MemoryTable::FindRecords(const SCQueryCondition& condition, SCRecordCu
 
 }  // namespace
 
-ErrorCode CreateInMemoryDatabase(SCDbPtr& outDatabase)
+ErrorCode CreateInMemoryDatabase(const SCOpenDatabaseOptions& options, SCDbPtr& outDatabase)
 {
-    outDatabase = SCMakeRef<MemoryDatabase>();
+    outDatabase = SCMakeRef<MemoryDatabase>(options.openMode);
     RegisterQueryExecutionContextDispatch(QueryBackendKind::Memory, &ExecuteMemoryQueryDispatch);
     return SC_OK;
+}
+
+ErrorCode CreateInMemoryDatabase(SCDbPtr& outDatabase)
+{
+    return CreateInMemoryDatabase(SCOpenDatabaseOptions{}, outDatabase);
 }
 
 ErrorCode MemoryDatabase::RebuildReferenceIndexes()

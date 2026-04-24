@@ -40,6 +40,8 @@ public:
 
     bool CreateDatabase(const QString& filePath, QString* outError);
     bool OpenDatabase(const QString& filePath, QString* outError);
+    bool GetEditLogState(StableCore::Storage::SCEditLogState* outState, QString* outError) const;
+    bool GetEditingState(StableCore::Storage::SCEditingDatabaseState* outState, QString* outError) const;
     bool Refresh(QString* outError);
     bool CreateTable(const QString& tableName, QString* outError);
     bool SelectTable(const QString& tableName, QString* outError);

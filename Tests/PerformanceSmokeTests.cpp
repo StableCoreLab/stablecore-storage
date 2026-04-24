@@ -1,4 +1,4 @@
-#include <chrono>
+﻿#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <limits>
@@ -26,6 +26,11 @@ fs::path MakeTempDbPath(const wchar_t* fileName)
     std::error_code ec;
     fs::remove(path, ec);
     return path;
+}
+
+sc::ErrorCode CreateFileDb(const wchar_t* path, sc::SCDbPtr& db)
+{
+    return sc::CreateFileDatabase(path, sc::SCOpenDatabaseOptions{}, db);
 }
 
 template <typename Fn>
@@ -170,7 +175,7 @@ TEST(StoragePerformance, SqliteBulkImportBaseline)
     const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_PerfSmoke_BulkImport.sqlite");
 
     sc::SCDbPtr db;
-    ASSERT_EQ(sc::CreateSqliteDatabase(dbPath.c_str(), db), sc::SC_OK);
+    ASSERT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
 
     sc::SCTablePtr floorTable = CreateFloorTable(db);
     sc::SCTablePtr beamTable = CreateSmokeBeamTable(db);
@@ -209,7 +214,7 @@ TEST(StoragePerformance, SqliteQueryAndSortBaseline)
     const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_PerfSmoke_Query.sqlite");
 
     sc::SCDbPtr db;
-    ASSERT_EQ(sc::CreateSqliteDatabase(dbPath.c_str(), db), sc::SC_OK);
+    ASSERT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
 
     sc::SCTablePtr floorTable = CreateFloorTable(db);
     sc::SCTablePtr beamTable = CreateSmokeBeamTable(db);
@@ -358,7 +363,7 @@ TEST(StoragePerformance, SqliteRecoveryFinalizeBaseline)
     sc::SCImportSessionId sessionId = 0;
     {
         sc::SCDbPtr db;
-        ASSERT_EQ(sc::CreateSqliteDatabase(dbPath.c_str(), db), sc::SC_OK);
+        ASSERT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
 
         sc::SCTablePtr floorTable = CreateFloorTable(db);
         sc::SCTablePtr beamTable = CreateSmokeBeamTable(db);
@@ -400,7 +405,7 @@ TEST(StoragePerformance, SqliteRecoveryFinalizeBaseline)
     }
 
     sc::SCDbPtr reopened;
-    ASSERT_EQ(sc::CreateSqliteDatabase(dbPath.c_str(), reopened), sc::SC_OK);
+    ASSERT_EQ(CreateFileDb(dbPath.c_str(), reopened), sc::SC_OK);
 
     sc::SCImportRecoveryState recoveryState;
     ASSERT_EQ(reopened->LoadImportRecoveryState(sessionId, &recoveryState), sc::SC_OK);
@@ -435,3 +440,4 @@ TEST(StoragePerformance, SqliteRecoveryFinalizeBaseline)
 
     ASSERT_EQ(reopened->LoadImportRecoveryState(sessionId, &recoveryState), sc::SC_E_RECORD_NOT_FOUND);
 }
+

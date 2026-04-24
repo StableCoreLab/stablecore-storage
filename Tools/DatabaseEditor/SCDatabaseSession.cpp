@@ -228,7 +228,9 @@ bool SCDatabaseSession::CreateDatabase(const QString& filePath, QString* outErro
     currentTableView_.Reset();
     sessionComputedColumnsByTable_.clear();
 
-    const sc::ErrorCode rc = sc::CreateSqliteDatabase(filePath.toStdWString().c_str(), db_);
+    sc::SCOpenDatabaseOptions options;
+    options.openMode = sc::SCDatabaseOpenMode::Normal;
+    const sc::ErrorCode rc = sc::CreateFileDatabase(filePath.toStdWString().c_str(), options, db_);
     if (sc::Failed(rc))
     {
         if (outError != nullptr)
@@ -249,6 +251,68 @@ bool SCDatabaseSession::CreateDatabase(const QString& filePath, QString* outErro
 bool SCDatabaseSession::OpenDatabase(const QString& filePath, QString* outError)
 {
     return CreateDatabase(filePath, outError);
+}
+
+bool SCDatabaseSession::GetEditLogState(sc::SCEditLogState* outState, QString* outError) const
+{
+    if (outState == nullptr)
+    {
+        if (outError != nullptr)
+        {
+            *outError = QStringLiteral("Output edit log state is null.");
+        }
+        return false;
+    }
+    if (!db_)
+    {
+        if (outError != nullptr)
+        {
+            *outError = QStringLiteral("No database is open.");
+        }
+        return false;
+    }
+
+    const sc::ErrorCode rc = db_->GetEditLogState(outState);
+    if (sc::Failed(rc))
+    {
+        if (outError != nullptr)
+        {
+            *outError = ErrorToString(rc);
+        }
+        return false;
+    }
+    return true;
+}
+
+bool SCDatabaseSession::GetEditingState(sc::SCEditingDatabaseState* outState, QString* outError) const
+{
+    if (outState == nullptr)
+    {
+        if (outError != nullptr)
+        {
+            *outError = QStringLiteral("Output editing state is null.");
+        }
+        return false;
+    }
+    if (!db_)
+    {
+        if (outError != nullptr)
+        {
+            *outError = QStringLiteral("No database is open.");
+        }
+        return false;
+    }
+
+    const sc::ErrorCode rc = db_->GetEditingState(outState);
+    if (sc::Failed(rc))
+    {
+        if (outError != nullptr)
+        {
+            *outError = ErrorToString(rc);
+        }
+        return false;
+    }
+    return true;
 }
 
 bool SCDatabaseSession::Refresh(QString* outError)

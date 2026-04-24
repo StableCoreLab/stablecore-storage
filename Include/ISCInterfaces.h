@@ -45,6 +45,12 @@ struct SCImportFinalizeCommit;
 struct SCImportRecoveryState;
 struct SCUpgradePlan;
 struct SCUpgradeResult;
+struct SCOpenDatabaseOptions;
+struct SCEditLogEntry;
+struct SCEditLogState;
+struct SCEditingDatabaseState;
+struct SCBackupOptions;
+struct SCBackupResult;
 
 using SCSchemaPtr = SCRefPtr<ISCSchema>;
 using SCRecordPtr = SCRefPtr<ISCRecord>;
@@ -52,6 +58,81 @@ using SCRecordCursorPtr = SCRefPtr<ISCRecordCursor>;
 using SCTablePtr = SCRefPtr<ISCTable>;
 using SCEditPtr = SCRefPtr<ISCEditSession>;
 using SCDbPtr = SCRefPtr<ISCDatabase>;
+
+enum class SCDatabaseOpenMode
+{
+    Normal,
+    NoHistory,
+    ReadOnly,
+};
+
+struct SCOpenDatabaseOptions
+{
+    SCDatabaseOpenMode openMode{SCDatabaseOpenMode::Normal};
+};
+
+enum class SCEditLogActionKind
+{
+    Unknown,
+    Commit,
+    Undo,
+    Redo,
+    Import,
+    RuleWriteback,
+    SaveBaseline,
+};
+
+struct SCEditLogEntry
+{
+    CommitId commitId{0};
+    VersionId version{0};
+    // Transaction origin kind. This must stay stable when the entry moves
+    // between undo/redo visibility sets.
+    SCEditLogActionKind kind{SCEditLogActionKind::Unknown};
+    std::wstring displayText;
+    std::wstring detailText;
+    std::uint64_t timestampUtcMs{0};
+};
+
+struct SCEditLogState
+{
+    VersionId baselineVersion{0};
+    std::vector<SCEditLogEntry> undoItems;
+    std::vector<SCEditLogEntry> redoItems;
+};
+
+struct SCEditingDatabaseState
+{
+    bool open{false};
+    bool dirty{false};
+    SCDatabaseOpenMode openMode{SCDatabaseOpenMode::Normal};
+    VersionId currentVersion{0};
+    VersionId baselineVersion{0};
+    std::size_t undoCount{0};
+    std::size_t redoCount{0};
+};
+
+struct SCBackupOptions
+{
+    bool preserveHistory{true};
+    bool compactHistory{true};
+    bool preserveRecoveryLog{true};
+    std::size_t maxRecoveryLogBytes{4 * 1024 * 1024};
+    std::size_t maxRecoveryLogEntries{2000};
+};
+
+struct SCBackupResult
+{
+    std::wstring sourcePath;
+    std::wstring targetPath;
+    VersionId sourceVersion{0};
+    VersionId targetVersion{0};
+    bool replacedAtomically{false};
+    bool historyReset{false};
+    std::size_t trimmedUndoCount{0};
+    std::size_t trimmedRedoCount{0};
+    std::size_t trimmedRecoveryLogCount{0};
+};
 
 class ISCSchema : public virtual ISCRefObject
 {
@@ -176,6 +257,36 @@ public:
 
     virtual ErrorCode AddObserver(ISCDatabaseObserver* observer) = 0;
     virtual ErrorCode RemoveObserver(ISCDatabaseObserver* observer) = 0;
+
+    // File backend capability. Memory backend should return SC_E_NOTIMPL.
+    virtual ErrorCode CreateBackupCopy(
+        const wchar_t* targetPath,
+        const SCBackupOptions& options,
+        SCBackupResult* outResult)
+    {
+        (void)targetPath;
+        (void)options;
+        (void)outResult;
+        return SC_E_NOTIMPL;
+    }
+
+    virtual ErrorCode ResetHistoryBaseline(SCBackupResult* outResult = nullptr)
+    {
+        (void)outResult;
+        return SC_E_NOTIMPL;
+    }
+
+    virtual ErrorCode GetEditLogState(SCEditLogState* outState) const
+    {
+        (void)outState;
+        return SC_E_NOTIMPL;
+    }
+
+    virtual ErrorCode GetEditingState(SCEditingDatabaseState* outState) const
+    {
+        (void)outState;
+        return SC_E_NOTIMPL;
+    }
 
     virtual VersionId GetCurrentVersion() const noexcept = 0;
     virtual std::int32_t GetSchemaVersion() const noexcept = 0;
