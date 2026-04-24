@@ -21,7 +21,6 @@
 
 文档输入：
 - [Capability Gap Assessment](CapabilityGapAssessment.md)
-- [T26-T33 Implementation](T26-T33Implementation.md)
 - [Roadmap](Roadmap.md)
 - [Task Breakdown](TaskBreakdown.md)
 
@@ -43,7 +42,6 @@
 文档输入：
 - [V1 Baseline Decisions](V1BaselineDecisions.md)
 - [Capability Gap Assessment](CapabilityGapAssessment.md)
-- [T26-T33 Implementation](T26-T33Implementation.md)
 - [Computed Table View And Startup](ComputedTableViewAndStartup.md)
 
 涉及代码：
@@ -88,7 +86,7 @@
 - [DatabaseEditor Computed Column Lifecycle](DatabaseEditorComputedColumnLifecycle.md)
 - [Computed Table View And Startup](ComputedTableViewAndStartup.md)
 - [V1 Baseline Decisions](V1BaselineDecisions.md)
-- [Task 6-3A 执行分层设计稿](Quantity/DevGuide/Task6-3A执行分层设计稿.md)
+- [Phase2-P1 平台能力修复方案](Quantity/DevGuide/Phase2-P1平台能力修复方案.md)
 
 涉及代码：
 - `Src/Computed/SCTableView.cpp`
@@ -128,7 +126,6 @@
 
 文档输入：
 - [Capability Gap Assessment](CapabilityGapAssessment.md)
-- [T26-T33 Implementation](T26-T33Implementation.md)
 - [Performance Smoke Baseline](PerformanceSmokeBaseline.md)
 - [Roadmap](Roadmap.md)
 
@@ -170,8 +167,6 @@
 
 文档输入：
 - [Capability Gap Assessment](CapabilityGapAssessment.md)
-- [T1-T25 Status](T1-T25Status.md)
-- [T1-T33 Status](T1-T33Status.md)
 - [Performance Smoke Baseline](PerformanceSmokeBaseline.md)
 
 涉及代码：

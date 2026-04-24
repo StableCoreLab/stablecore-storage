@@ -2,6 +2,57 @@
 
 本文档定义 Query / Reference 在 Storage Core、Adapter 与现有接口之间的执行分层、下推策略和 fallback 模型。本文档不包含实现代码。
 
+> 说明：`QueryReference接口定义稿.md` 已并入本文，后续查询与引用索引语义以本文为唯一主文档。
+
+## 0. 公共查询与引用模型
+
+### 0.1 计划状态与执行模式
+
+统一使用以下计划状态：
+
+- `DirectIndex`
+- `PartialIndex`
+- `ScanFallback`
+- `Unsupported`
+
+统一使用以下执行模式：
+
+- `Planned`
+- `FallbackScan`
+- `Unsupported`
+
+### 0.2 查询条件与组合
+
+查询条件模型统一包含：
+
+- `QueryTarget`
+- `QueryCondition`
+- `QueryConditionGroup`
+- `SortSpec`
+- `QueryPage`
+- `QueryHints`
+- `QueryConstraints`
+
+其中：
+
+- `QueryTarget` 仅表达单表或单视图目标，不承载 join、union 或 cross-table lookup。
+- `QueryConditionOperator` 至少覆盖等值、范围、集合、空值、前缀、模糊和尾缀判断。
+- `QueryLogicOperator` 仅区分 `And` 与 `Or`，并以条件组表达组合关系。
+- `QueryPage` 负责偏移与条数，`limit = 0` 代表使用默认上限。
+- `QueryHints` 仅表达建议，不表达强约束。
+- `QueryConstraints` 表达强约束，其中 `requireIndex` 和 `allowFallbackScan` 直接影响执行路径。
+
+### 0.3 引用索引模型
+
+引用模型统一以 `ReferenceDirection`、`ReferenceRecord`、`ReferenceIndex`、`ReverseReferenceRecord`、`ReverseReferenceIndex` 表达。
+
+- `ReferenceDirection` 仅区分 `Forward` 与 `Reverse`。
+- `ReferenceRecord` 记录源表、源记录、源列、目标表、目标记录与提交上下文。
+- `ReferenceIndex` 表示正向引用集合。
+- `ReverseReferenceIndex` 表示反向引用集合。
+- 引用索引提供者负责读取，维护器负责重建、检查或增量维护。
+- 当前版本允许以只读扫描型 provider 作为过渡实现，但语义上仍要区分“正式索引”与“诊断扫描”。
+
 ## 一、执行架构分层
 
 ### 1.1 Storage Core
@@ -179,4 +230,3 @@ Fallback 扫描必须满足：
 - 第一阶段保持结果语义兼容。
 - 第二阶段逐步引导高频查询走索引执行。
 - 第三阶段再考虑更细粒度的执行优化。
-

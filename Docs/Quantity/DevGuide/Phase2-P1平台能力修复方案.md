@@ -2,6 +2,14 @@
 
 本阶段修复的是平台能力问题，不直接进入代码实现。目标是把版本升级、导入导出、主体隔离、查询与引用检查从“可用”提升到“可扩展、可维护、可恢复”的平台级能力。
 
+> 说明：以下相关设计稿已并入本文，后续以本文作为 P1/P0 平台能力修复的唯一主文档：
+> - `P0设计修复强约束清单.md`
+> - `Phase1-P0设计修复方案.md`
+> - `P1接口与核心模型定义稿.md`
+> - `P1代码改造设计与PatchPlan.md`
+> - `Task6代码改造设计与PatchPlan.md`
+> - `Task6-3A执行分层设计稿.md`
+
 ## 一、P1 各问题的目标能力定义
 
 ### 1. 存储版本升级没有形成完整版本图谱、降级 / 回滚 / 兼容窗口不够硬
@@ -92,6 +100,50 @@
   - Storage Core
   - Adapter
   - Product
+
+## 一.1 P0 强约束摘要
+
+P0 阶段需要先锁死工程、配置、Replay、问题包与只读打开之间的边界，核心原则如下：
+
+- 工程正式状态只能走 Project / ChangeSet / Journal 主链路。
+- open 只负责加载、校验与兼容性判断，不得产生持久化写入。
+- upgrade 必须是显式动作，不得由 open 隐式触发。
+- replay、问题包、主题样式、系统配置都不得混入工程正式状态。
+- 只读打开必须保持只读语义，不能因初始化而写入。
+
+## 一.2 P1 核心模型摘要
+
+平台能力修复需要统一以下核心模型，避免接口与实现各自定义：
+
+- `VersionNode` / `VersionGraph`
+- `CompatibilityWindow`
+- `UpgradePlan` / `UpgradeResult`
+- `ImportSession` / `ImportCheckpoint` / `ImportFinalizeCommit`
+- `ExportMode` / `AssetSelection` / `RedactionPolicy` / `PackageSizePolicy`
+- `Subject` / `Role` / `Scope` / `AccessDecision`
+- `QueryPlan` / `QueryCondition` / `QueryPage` / `SortSpec`
+- `ReferenceIndex` / `ReverseReferenceIndex`
+
+这些模型的职责边界应在本文件中统一解释，不再分散到多个 P1 草稿。
+
+## 一.3 代码改造收敛口径
+
+后续实现应按以下顺序收敛：
+
+1. 先锁版本图谱与升级边界。
+2. 再锁导入会话、checkpoint、finalize 与恢复语义。
+3. 再锁查询与引用索引的执行边界。
+4. 再锁主体隔离、导出脱敏与问题包边界。
+5. 最后把工程化测试、诊断和文档闭环补齐。
+
+## 一.4 执行分层摘要
+
+`Task6-3A执行分层设计稿.md` 中关于执行分层的设计，统一归入本节：
+
+- Storage Core 负责语义与约束。
+- Adapter 负责后端映射与差异收敛。
+- Backend 负责持久化执行与查询执行。
+- 执行层不得反向持有 UI 状态，也不得把临时投影写回工程正式状态。
 
 ## 二、版本升级体系修复方案
 
@@ -446,4 +498,3 @@ checkpoint 的作用是让导入过程支持中断恢复，而不是让失败后
 ## 九、最终结论
 
 P1 修复的目标不是把功能做多，而是把平台能力补齐：升级要可判定、导入要可恢复、导出要可控、隔离要可扩展、查询要可伸缩。只要这五条能力成立，后续实现与产品接入才有稳定的演进基础。
-
