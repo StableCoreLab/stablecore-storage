@@ -339,3 +339,8 @@ Codex 在本仓库中的角色是：
 * 优先正确性
 * 小步演进
 
+## Task Input Requirement
+
+所有任务必须遵循 TASK_TEMPLATE.md 结构。
+
+如果输入不完整，必须先要求补充，而不是直接实现。
