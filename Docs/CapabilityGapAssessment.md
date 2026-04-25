@@ -164,6 +164,16 @@
 
 ## M3 评估
 
+### 5. 备份与基线
+
+状态：已完成。
+
+说明：
+- `CreateBackupCopy` 已按 Level 2 语义实现为文件后端的一致性副本能力
+- `ResetHistoryBaseline` 已与 `baselineVersion` 持久化联动
+- `Memory` 后端对 `CreateBackupCopy` 返回 `SC_E_NOTIMPL`
+- 备份与基线的长期语义说明已经系统化到 `[Storage 备份与基线](StorageBackupAndBaseline.md)`
+
 ### 1. 典型业务关系
 
 状态：基本完成。
