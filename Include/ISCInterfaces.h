@@ -114,24 +114,17 @@ struct SCEditingDatabaseState
 
 struct SCBackupOptions
 {
-    bool preserveHistory{true};
-    bool compactHistory{true};
-    bool preserveRecoveryLog{true};
-    std::size_t maxRecoveryLogBytes{4 * 1024 * 1024};
-    std::size_t maxRecoveryLogEntries{2000};
+    bool preserveJournalHistory{false};
+    bool vacuumTarget{true};
+    bool validateTarget{true};
+    bool overwriteExisting{false};
 };
 
 struct SCBackupResult
 {
-    std::wstring sourcePath;
-    std::wstring targetPath;
-    VersionId sourceVersion{0};
-    VersionId targetVersion{0};
-    bool replacedAtomically{false};
-    bool historyReset{false};
-    std::size_t trimmedUndoCount{0};
-    std::size_t trimmedRedoCount{0};
-    std::size_t trimmedRecoveryLogCount{0};
+    std::uint64_t removedJournalTransactionCount{0};
+    std::uint64_t removedJournalEntryCount{0};
+    std::uint64_t outputFileSizeBytes{0};
 };
 
 class ISCSchema : public virtual ISCRefObject

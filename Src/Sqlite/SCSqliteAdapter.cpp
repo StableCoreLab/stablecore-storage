@@ -46,6 +46,8 @@ void EnsureSqliteQueryDispatchRegistered(ISCDatabase* database)
 constexpr int kStackUndo = 0;
 constexpr int kStackRedo = 1;
 
+ErrorCode MapSqliteError(int code);
+
 std::string ToUtf8(const std::wstring& text)
 {
 #if defined(_WIN32)
@@ -83,6 +85,278 @@ std::wstring FromUtf8(const char* text)
 #else
     std::string narrow(text);
     return std::wstring(narrow.begin(), narrow.end());
+#endif
+}
+
+#if defined(_WIN32)
+std::wstring GetBackupTempDirectory(const std::wstring& targetPath)
+{
+    const std::size_t slash = targetPath.find_last_of(L"\\/");
+    std::wstring directory;
+    if (slash == std::wstring::npos)
+    {
+        wchar_t currentDirectory[MAX_PATH] = {};
+        const DWORD len = GetCurrentDirectoryW(MAX_PATH, currentDirectory);
+        if (len == 0 || len >= MAX_PATH)
+        {
+            return {};
+        }
+        directory.assign(currentDirectory, currentDirectory + len);
+    }
+    else
+    {
+        directory = targetPath.substr(0, slash);
+        if (directory.empty())
+        {
+            wchar_t currentDirectory[MAX_PATH] = {};
+            const DWORD len = GetCurrentDirectoryW(MAX_PATH, currentDirectory);
+            if (len == 0 || len >= MAX_PATH)
+            {
+                return {};
+            }
+            directory.assign(currentDirectory, currentDirectory + len);
+        }
+    }
+
+    if (!directory.empty() && directory.back() != L'\\' && directory.back() != L'/')
+    {
+        directory.push_back(L'\\');
+    }
+    return directory;
+}
+
+bool CreateSiblingTempFile(const std::wstring& targetPath, std::wstring* outTempPath)
+{
+    if (outTempPath == nullptr)
+    {
+        return false;
+    }
+
+    const std::wstring directory = GetBackupTempDirectory(targetPath);
+    if (directory.empty())
+    {
+        return false;
+    }
+
+    wchar_t tempPath[MAX_PATH] = {};
+    if (GetTempFileNameW(directory.c_str(), L"bkp", 0, tempPath) == 0)
+    {
+        return false;
+    }
+
+    *outTempPath = tempPath;
+    return true;
+}
+
+struct ScopedDeleteFile
+{
+    explicit ScopedDeleteFile(std::wstring path) : path_(std::move(path)) {}
+    ~ScopedDeleteFile()
+    {
+        if (!path_.empty())
+        {
+            DeleteFileW(path_.c_str());
+        }
+    }
+
+    void Release() noexcept
+    {
+        path_.clear();
+    }
+
+    const std::wstring& Path() const noexcept
+    {
+        return path_;
+    }
+
+private:
+    std::wstring path_;
+};
+
+#endif
+
+ErrorCode GetSingleCount(sqlite3* db, const char* sql, std::size_t* outCount)
+{
+    if (outCount == nullptr)
+    {
+        return SC_E_POINTER;
+    }
+
+    sqlite3_stmt* stmt = nullptr;
+    const int prepareRc = sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+    if (prepareRc != SQLITE_OK)
+    {
+        if (stmt != nullptr)
+        {
+            sqlite3_finalize(stmt);
+        }
+        return MapSqliteError(prepareRc);
+    }
+
+    const int stepRc = sqlite3_step(stmt);
+    ErrorCode rc = SC_OK;
+    if (stepRc == SQLITE_ROW)
+    {
+        *outCount = static_cast<std::size_t>(sqlite3_column_int64(stmt, 0));
+    }
+    else if (stepRc == SQLITE_DONE)
+    {
+        *outCount = 0;
+    }
+    else
+    {
+        rc = MapSqliteError(stepRc);
+    }
+
+    sqlite3_finalize(stmt);
+    return rc;
+}
+
+ErrorCode UpdateMetadataBaselineVersion(sqlite3* db, VersionId version)
+{
+    sqlite3_stmt* stmt = nullptr;
+    const int prepareRc = sqlite3_prepare_v2(
+        db,
+        "UPDATE metadata SET value = ? WHERE key = 'baseline_version';",
+        -1,
+        &stmt,
+        nullptr);
+    if (prepareRc != SQLITE_OK)
+    {
+        if (stmt != nullptr)
+        {
+            sqlite3_finalize(stmt);
+        }
+        return MapSqliteError(prepareRc);
+    }
+
+    const int bindRc = sqlite3_bind_text(stmt, 1, std::to_string(static_cast<std::uint64_t>(version)).c_str(), -1, SQLITE_TRANSIENT);
+    if (bindRc != SQLITE_OK)
+    {
+        sqlite3_finalize(stmt);
+        return MapSqliteError(bindRc);
+    }
+
+    const int stepRc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    return stepRc == SQLITE_DONE ? SC_OK : MapSqliteError(stepRc);
+}
+
+ErrorCode RunSqliteExec(sqlite3* db, const char* sql)
+{
+    char* error = nullptr;
+    const int rc = sqlite3_exec(db, sql, nullptr, nullptr, &error);
+    if (error != nullptr)
+    {
+        sqlite3_free(error);
+    }
+    return MapSqliteError(rc);
+}
+
+ErrorCode ClearJournalHistoryForBackup(sqlite3* db, VersionId currentVersion, std::size_t* removedTransactionCount, std::size_t* removedEntryCount)
+{
+    const ErrorCode txCountRc = GetSingleCount(db, "SELECT COUNT(*) FROM journal_transactions;", removedTransactionCount);
+    if (Failed(txCountRc))
+    {
+        return txCountRc;
+    }
+
+    const ErrorCode entryCountRc = GetSingleCount(db, "SELECT COUNT(*) FROM journal_entries;", removedEntryCount);
+    if (Failed(entryCountRc))
+    {
+        return entryCountRc;
+    }
+
+    const ErrorCode deleteEntriesRc = RunSqliteExec(db, "DELETE FROM journal_entries;");
+    if (Failed(deleteEntriesRc))
+    {
+        return deleteEntriesRc;
+    }
+
+    const ErrorCode deleteTransactionsRc = RunSqliteExec(db, "DELETE FROM journal_transactions;");
+    if (Failed(deleteTransactionsRc))
+    {
+        return deleteTransactionsRc;
+    }
+
+    return UpdateMetadataBaselineVersion(db, currentVersion);
+}
+
+ErrorCode VacuumTargetDatabase(sqlite3* db)
+{
+    return RunSqliteExec(db, "VACUUM;");
+}
+
+ErrorCode ValidateTargetDatabase(sqlite3* db)
+{
+    sqlite3_stmt* stmt = nullptr;
+    int prepareRc = sqlite3_prepare_v2(db, "PRAGMA integrity_check;", -1, &stmt, nullptr);
+    if (prepareRc != SQLITE_OK)
+    {
+        if (stmt != nullptr)
+        {
+            sqlite3_finalize(stmt);
+        }
+        return MapSqliteError(prepareRc);
+    }
+
+    int stepRc = sqlite3_step(stmt);
+    if (stepRc != SQLITE_ROW)
+    {
+        sqlite3_finalize(stmt);
+        return MapSqliteError(stepRc == SQLITE_DONE ? SQLITE_OK : stepRc);
+    }
+
+    const std::wstring integrity = FromUtf8(reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0)));
+    sqlite3_finalize(stmt);
+    if (integrity != L"ok")
+    {
+        return SC_E_VALIDATION_FAILED;
+    }
+
+    prepareRc = sqlite3_prepare_v2(db, "PRAGMA foreign_key_check;", -1, &stmt, nullptr);
+    if (prepareRc != SQLITE_OK)
+    {
+        if (stmt != nullptr)
+        {
+            sqlite3_finalize(stmt);
+        }
+        return MapSqliteError(prepareRc);
+    }
+
+    stepRc = sqlite3_step(stmt);
+    if (stepRc != SQLITE_DONE)
+    {
+        sqlite3_finalize(stmt);
+        return SC_E_VALIDATION_FAILED;
+    }
+
+    sqlite3_finalize(stmt);
+    return SC_OK;
+}
+
+ErrorCode GetFileSizeBytes(const std::wstring& path, std::uint64_t* outSize)
+{
+    if (outSize == nullptr)
+    {
+        return SC_E_POINTER;
+    }
+
+#if defined(_WIN32)
+    WIN32_FILE_ATTRIBUTE_DATA data{};
+    if (!GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &data))
+    {
+        return SC_E_IO_ERROR;
+    }
+    ULARGE_INTEGER size{};
+    size.HighPart = data.nFileSizeHigh;
+    size.LowPart = data.nFileSizeLow;
+    *outSize = size.QuadPart;
+    return SC_OK;
+#else
+    (void)path;
+    *outSize = 0;
+    return SC_E_NOTIMPL;
 #endif
 }
 
@@ -2745,10 +3019,33 @@ ErrorCode SqliteDatabase::CreateBackupCopy(
         return SC_E_INVALIDARG;
     }
 
-    const std::string targetUtf8 = ToUtf8(targetPath);
+#if !defined(_WIN32)
+    (void)options;
+    (void)outResult;
+    return SC_E_NOTIMPL;
+#else
+    if (!options.overwriteExisting)
+    {
+        const DWORD attrs = GetFileAttributesW(targetPath);
+        if (attrs != INVALID_FILE_ATTRIBUTES)
+        {
+            return SC_E_FILE_EXISTS;
+        }
+    }
+
+    std::wstring tempPath;
+    if (!CreateSiblingTempFile(targetPath, &tempPath))
+    {
+        return SC_E_IO_ERROR;
+    }
+
+    ScopedDeleteFile cleanup(std::move(tempPath));
+    const std::wstring& tempFilePath = cleanup.Path();
+    const std::string tempUtf8 = ToUtf8(tempFilePath);
+
     sqlite3* targetDb = nullptr;
     const int openRc = sqlite3_open_v2(
-        targetUtf8.c_str(),
+        tempUtf8.c_str(),
         &targetDb,
         SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX,
         nullptr);
@@ -2758,7 +3055,7 @@ ErrorCode SqliteDatabase::CreateBackupCopy(
         {
             sqlite3_close(targetDb);
         }
-        return SC_E_FAIL;
+        return SC_E_IO_ERROR;
     }
 
     ErrorCode resultRc = SC_OK;
@@ -2776,42 +3073,53 @@ ErrorCode SqliteDatabase::CreateBackupCopy(
     }
     sqlite3_backup_finish(backup);
 
-    if (resultRc == SC_OK && (!options.preserveHistory || !options.preserveRecoveryLog))
+    std::size_t removedTransactionCount = 0;
+    std::size_t removedEntryCount = 0;
+    if (resultRc == SC_OK && !options.preserveJournalHistory)
     {
-        char* error = nullptr;
-        const int execRc = sqlite3_exec(
-            targetDb,
-            "DELETE FROM journal_entries; DELETE FROM journal_transactions;",
-            nullptr,
-            nullptr,
-            &error);
-        if (error != nullptr)
-        {
-            sqlite3_free(error);
-        }
-        resultRc = MapSqliteError(execRc);
+        resultRc = ClearJournalHistoryForBackup(targetDb, version_, &removedTransactionCount, &removedEntryCount);
     }
 
+    if (resultRc == SC_OK && options.vacuumTarget)
+    {
+        resultRc = VacuumTargetDatabase(targetDb);
+    }
+
+    if (resultRc == SC_OK && options.validateTarget)
+    {
+        resultRc = ValidateTargetDatabase(targetDb);
+    }
+
+    std::uint64_t outputFileSizeBytes = 0;
     if (resultRc == SC_OK)
     {
-        if (outResult != nullptr)
+        const ErrorCode sizeRc = GetFileSizeBytes(tempFilePath, &outputFileSizeBytes);
+        if (Failed(sizeRc))
         {
-            outResult->sourcePath = path_;
-            outResult->targetPath = targetPath;
-            outResult->sourceVersion = version_;
-            outResult->targetVersion = version_;
-            outResult->replacedAtomically = false;
-            outResult->historyReset = false;
-            outResult->trimmedUndoCount = (!options.preserveHistory || !options.preserveRecoveryLog) ? undoStack_.size() : 0;
-            outResult->trimmedRedoCount = (!options.preserveHistory || !options.preserveRecoveryLog) ? redoStack_.size() : 0;
-            outResult->trimmedRecoveryLogCount = (!options.preserveHistory || !options.preserveRecoveryLog)
-                ? (undoStack_.size() + redoStack_.size())
-                : 0;
+            resultRc = sizeRc;
         }
     }
 
     sqlite3_close(targetDb);
+
+    if (resultRc == SC_OK)
+    {
+        if (!MoveFileExW(tempFilePath.c_str(), targetPath, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+        {
+            return SC_E_IO_ERROR;
+        }
+
+        cleanup.Release();
+        if (outResult != nullptr)
+        {
+            outResult->removedJournalTransactionCount = static_cast<std::uint64_t>(removedTransactionCount);
+            outResult->removedJournalEntryCount = static_cast<std::uint64_t>(removedEntryCount);
+            outResult->outputFileSizeBytes = outputFileSizeBytes;
+        }
+    }
+
     return resultRc;
+#endif
 }
 
 ErrorCode SqliteDatabase::ResetHistoryBaseline(SCBackupResult* outResult)
@@ -2825,21 +3133,20 @@ ErrorCode SqliteDatabase::ResetHistoryBaseline(SCBackupResult* outResult)
         return SC_E_WRITE_CONFLICT;
     }
 
-    const std::size_t trimmedUndoCount = undoStack_.size();
-    const std::size_t trimmedRedoCount = redoStack_.size();
+    std::size_t removedTransactionCount = 0;
+    std::size_t removedEntryCount = 0;
 
     try
     {
         SqliteTxn txn(db_);
-        const ErrorCode clearEntriesRc = db_.Execute("DELETE FROM journal_entries;");
-        if (Failed(clearEntriesRc))
+        const ErrorCode clearRc = ClearJournalHistoryForBackup(
+            db_.Raw(),
+            version_,
+            &removedTransactionCount,
+            &removedEntryCount);
+        if (Failed(clearRc))
         {
-            return clearEntriesRc;
-        }
-        const ErrorCode clearTransactionsRc = db_.Execute("DELETE FROM journal_transactions;");
-        if (Failed(clearTransactionsRc))
-        {
-            return clearTransactionsRc;
+            return clearRc;
         }
         baselineVersion_ = version_;
         undoStack_.clear();
@@ -2858,15 +3165,9 @@ ErrorCode SqliteDatabase::ResetHistoryBaseline(SCBackupResult* outResult)
 
     if (outResult != nullptr)
     {
-        outResult->sourcePath = path_;
-        outResult->targetPath = path_;
-        outResult->sourceVersion = version_;
-        outResult->targetVersion = version_;
-        outResult->replacedAtomically = false;
-        outResult->historyReset = true;
-        outResult->trimmedUndoCount = trimmedUndoCount;
-        outResult->trimmedRedoCount = trimmedRedoCount;
-        outResult->trimmedRecoveryLogCount = trimmedUndoCount + trimmedRedoCount;
+        *outResult = SCBackupResult{};
+        outResult->removedJournalTransactionCount = static_cast<std::uint64_t>(removedTransactionCount);
+        outResult->removedJournalEntryCount = static_cast<std::uint64_t>(removedEntryCount);
     }
 
     return SC_OK;

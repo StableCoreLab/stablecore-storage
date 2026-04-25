@@ -988,13 +988,13 @@ ErrorCode MemoryDatabase::ResetHistoryBaseline(SCBackupResult* outResult)
         return SC_E_WRITE_CONFLICT;
     }
 
+    const std::size_t removedTransactionCount = undoStack_.size();
+    const std::size_t removedEntryCount = redoStack_.size();
     if (outResult != nullptr)
     {
-        outResult->sourceVersion = version_;
-        outResult->targetVersion = version_;
-        outResult->historyReset = true;
-        outResult->trimmedUndoCount = undoStack_.size();
-        outResult->trimmedRedoCount = redoStack_.size();
+        *outResult = SCBackupResult{};
+        outResult->removedJournalTransactionCount = static_cast<std::uint64_t>(removedTransactionCount);
+        outResult->removedJournalEntryCount = static_cast<std::uint64_t>(removedEntryCount);
     }
 
     baselineVersion_ = version_;

@@ -1,4 +1,5 @@
 ﻿#include <chrono>
+#include <atomic>
 #include <cstdint>
 #include <filesystem>
 #include <limits>
@@ -22,7 +23,11 @@ constexpr long long kRecoveryFinalizeMaxMs = 15000;
 
 fs::path MakeTempDbPath(const wchar_t* fileName)
 {
-    fs::path path = fs::temp_directory_path() / fileName;
+    static std::atomic<std::uint64_t> counter{0};
+    const auto now = std::chrono::high_resolution_clock::now().time_since_epoch().count();
+    const std::wstring uniqueName =
+        std::wstring(fileName) + L"." + std::to_wstring(now) + L"." + std::to_wstring(counter.fetch_add(1, std::memory_order_relaxed)) + L".sqlite";
+    fs::path path = fs::temp_directory_path() / uniqueName;
     std::error_code ec;
     fs::remove(path, ec);
     return path;

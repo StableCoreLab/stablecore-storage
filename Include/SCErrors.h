@@ -38,6 +38,9 @@ constexpr ErrorCode SC_E_EXPORT_TOO_LARGE      = 0xA0010304L;
 constexpr ErrorCode SC_E_EXPORT_CANCELLED      = 0xA0010305L;
 constexpr ErrorCode SC_E_EXPORT_WRITE_FAILED   = 0xA0010306L;
 constexpr ErrorCode SC_E_EXPORT_INVALID_STATE  = 0xA0010307L;
+constexpr ErrorCode SC_E_FILE_EXISTS           = 0xA0010308L;
+constexpr ErrorCode SC_E_VALIDATION_FAILED     = 0xA0010309L;
+constexpr ErrorCode SC_E_IO_ERROR              = 0xA001030AL;
 
 inline bool Succeeded(ErrorCode code) noexcept
 {
