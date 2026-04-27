@@ -142,6 +142,8 @@ namespace StableCore::Storage
         // Registers a new schema column. Unknown columns cannot be written
         // before registration.
         virtual ErrorCode AddColumn(const SCColumnDef& def) = 0;
+        // Replaces an existing schema column definition in place.
+        virtual ErrorCode UpdateColumn(const SCColumnDef& def) = 0;
         // Removes a schema column by name. Used by editors to compensate failed
         // schema/view updates.
         virtual ErrorCode RemoveColumn(const wchar_t* name) = 0;
@@ -251,6 +253,9 @@ namespace StableCore::Storage
                                    SCTablePtr& outTable) = 0;
         virtual ErrorCode CreateTable(const wchar_t* name,
                                       SCTablePtr& outTable) = 0;
+        // Clears persisted values for a column across records in a table.
+        virtual ErrorCode ClearColumnValues(ISCTable* table,
+                                            const wchar_t* name) = 0;
 
         // Executes an explicit upgrade plan after the caller has confirmed the
         // change.

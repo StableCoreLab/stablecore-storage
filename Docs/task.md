@@ -191,6 +191,7 @@
 - [DatabaseEditor GUI Design](DatabaseEditorGuiDesign.md)
 - [DatabaseEditor GUI Implementation Scope](DatabaseEditorGuiImplementationScope.md)
 - [DatabaseEditor Computed Column Lifecycle](DatabaseEditorComputedColumnLifecycle.md)
+- [DatabaseEditor Column Conversion Task](DatabaseEditorColumnConversionTask.md)
 - [Computed Table View And Startup](ComputedTableViewAndStartup.md)
 
 涉及代码：

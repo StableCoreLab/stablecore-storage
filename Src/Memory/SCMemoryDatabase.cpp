@@ -155,6 +155,35 @@ namespace StableCore::Storage
                 return SC_OK;
             }
 
+            ErrorCode UpdateColumn(const SCColumnDef& def) override
+            {
+                const ErrorCode validate = ValidateColumnDef(def);
+                if (Failed(validate))
+                {
+                    return validate;
+                }
+
+                const auto existingIt = columnsByName_.find(def.name);
+                if (existingIt == columnsByName_.end())
+                {
+                    return SC_E_COLUMN_NOT_FOUND;
+                }
+
+                const auto vecIt =
+                    std::find_if(columns_.begin(), columns_.end(),
+                                 [&def](const SCColumnDef& existing) {
+                                     return existing.name == def.name;
+                                 });
+                if (vecIt == columns_.end())
+                {
+                    return SC_E_COLUMN_NOT_FOUND;
+                }
+
+                *vecIt = def;
+                existingIt->second = def;
+                return SC_OK;
+            }
+
             ErrorCode RemoveColumn(const wchar_t* name) override
             {
                 if (name == nullptr)
@@ -425,6 +454,8 @@ namespace StableCore::Storage
             ErrorCode CreateBackupCopy(const wchar_t* targetPath,
                                        const SCBackupOptions& options,
                                        SCBackupResult* outResult) override;
+            ErrorCode ClearColumnValues(ISCTable* table,
+                                        const wchar_t* name) override;
 
             ErrorCode AddObserver(ISCDatabaseObserver* observer) override;
             ErrorCode RemoveObserver(ISCDatabaseObserver* observer) override;
@@ -1267,6 +1298,63 @@ namespace StableCore::Storage
             RecordJournal(table->Name(), data->id, L"", SCValue::Null(),
                           SCValue::Null(), false, true,
                           JournalOp::DeleteRecord);
+            MarkReferenceIndexDirty();
+            return SC_OK;
+        }
+
+        ErrorCode MemoryDatabase::ClearColumnValues(ISCTable* table,
+                                                    const wchar_t* name)
+        {
+            if (name == nullptr)
+            {
+                return SC_E_INVALIDARG;
+            }
+            if (!activeEdit_)
+            {
+                return SC_E_NO_ACTIVE_EDIT;
+            }
+            if (table == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+
+            auto* memoryTable = static_cast<MemoryTable*>(table);
+            SCSchemaPtr schema;
+            const ErrorCode schemaRc = memoryTable->GetSchema(schema);
+            if (Failed(schemaRc) || !schema)
+            {
+                return schemaRc;
+            }
+
+            SCColumnDef column;
+            const ErrorCode columnRc = schema->FindColumn(name, &column);
+            if (Failed(columnRc))
+            {
+                return columnRc;
+            }
+
+            const bool relationColumn = column.columnKind == ColumnKind::Relation;
+            for (const auto& [recordId, data] : memoryTable->Records())
+            {
+                if (data == nullptr)
+                {
+                    continue;
+                }
+
+                const auto valueIt = data->values.find(name);
+                if (valueIt == data->values.end())
+                {
+                    continue;
+                }
+
+                const SCValue oldValue = valueIt->second;
+                data->values.erase(valueIt);
+                RecordJournal(memoryTable->Name(), recordId, name, oldValue,
+                              SCValue::Null(), false, false,
+                              relationColumn ? JournalOp::SetRelation
+                                             : JournalOp::SetValue);
+            }
+
             MarkReferenceIndexDirty();
             return SC_OK;
         }

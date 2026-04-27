@@ -1369,6 +1369,7 @@ namespace StableCore::Storage
             ErrorCode FindColumn(const wchar_t* name,
                                  SCColumnDef* outDef) override;
             ErrorCode AddColumn(const SCColumnDef& def) override;
+            ErrorCode UpdateColumn(const SCColumnDef& def) override;
             ErrorCode RemoveColumn(const wchar_t* name) override;
 
             const SCColumnDef* FindColumnDef(
@@ -1381,6 +1382,20 @@ namespace StableCore::Storage
             void LoadColumn(const SCColumnDef& def)
             {
                 columns_.push_back(def);
+                columnsByName_[def.name] = def;
+            }
+
+            void ReplaceColumn(const SCColumnDef& def)
+            {
+                const auto vecIt =
+                    std::find_if(columns_.begin(), columns_.end(),
+                                 [&def](const SCColumnDef& existing) {
+                                     return existing.name == def.name;
+                                 });
+                if (vecIt != columns_.end())
+                {
+                    *vecIt = def;
+                }
                 columnsByName_[def.name] = def;
             }
 
@@ -1653,6 +1668,8 @@ namespace StableCore::Storage
             ErrorCode CreateBackupCopy(const wchar_t* targetPath,
                                        const SCBackupOptions& options,
                                        SCBackupResult* outResult) override;
+            ErrorCode ClearColumnValues(ISCTable* table,
+                                        const wchar_t* name) override;
             ErrorCode ResetHistoryBaseline(
                 SCBackupResult* outResult = nullptr) override;
             ErrorCode GetEditLogState(SCEditLogState* outState) const override;
@@ -1703,6 +1720,8 @@ namespace StableCore::Storage
                               const std::shared_ptr<SqliteRecordData>& data);
             ErrorCode PersistAddedColumn(SqliteSchema* schema,
                                          const SCColumnDef& def);
+            ErrorCode PersistUpdatedColumn(SqliteSchema* schema,
+                                           const SCColumnDef& def);
             ErrorCode PersistRemovedColumn(SqliteSchema* schema,
                                            const wchar_t* columnName);
 
@@ -1856,6 +1875,22 @@ namespace StableCore::Storage
                 return SC_E_COLUMN_EXISTS;
             }
             const ErrorCode persist = db_->PersistAddedColumn(this, def);
+            return persist;
+        }
+
+        ErrorCode SqliteSchema::UpdateColumn(const SCColumnDef& def)
+        {
+            const ErrorCode validate = ValidateColumnDef(def);
+            if (Failed(validate))
+            {
+                return validate;
+            }
+            if (FindColumnDef(def.name) == nullptr)
+            {
+                return SC_E_COLUMN_NOT_FOUND;
+            }
+
+            const ErrorCode persist = db_->PersistUpdatedColumn(this, def);
             return persist;
         }
 
@@ -4270,6 +4305,134 @@ namespace StableCore::Storage
             {
                 EnsureColumnIndex(schema->TableRowId(), def.name);
             }
+            MarkReferenceIndexDirty();
+            return SC_OK;
+        }
+
+        ErrorCode SqliteDatabase::PersistUpdatedColumn(SqliteSchema* schema,
+                                                       const SCColumnDef& def)
+        {
+            const ErrorCode writableRc = EnsureWritable();
+            if (Failed(writableRc))
+            {
+                return writableRc;
+            }
+            if (schema == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+
+            try
+            {
+                SqliteTxn txn(db_);
+                SqliteStmt stmt = db_.Prepare(
+                    "UPDATE schema_columns SET "
+                    " display_name = ?, value_kind = ?, column_kind = ?, "
+                    "nullable_flag = ?, editable_flag = ?, user_defined_flag = ?, "
+                    "indexed_flag = ?, participates_in_calc_flag = ?, unit = ?, "
+                    "reference_table = ?, default_kind = ?, default_int64 = ?, "
+                    "default_double = ?, default_bool = ?, default_text = ? "
+                    "WHERE table_id = ? AND column_name = ?;");
+                stmt.BindText(1, def.displayName);
+                stmt.BindInt(2, ToSqliteValueKind(def.valueKind));
+                stmt.BindInt(3, ToSqliteColumnKind(def.columnKind));
+                stmt.BindInt(4, def.nullable ? 1 : 0);
+                stmt.BindInt(5, def.editable ? 1 : 0);
+                stmt.BindInt(6, def.userDefined ? 1 : 0);
+                stmt.BindInt(7, def.indexed ? 1 : 0);
+                stmt.BindInt(8, def.participatesInCalc ? 1 : 0);
+                stmt.BindText(9, def.unit);
+                stmt.BindText(10, def.referenceTable);
+                BindValueForStorage(stmt, 11, 12, 13, 14, 15, def.defaultValue);
+                stmt.BindInt64(16, schema->TableRowId());
+                stmt.BindText(17, def.name);
+                const ErrorCode rc = stmt.Step();
+                if (Failed(rc))
+                {
+                    return rc;
+                }
+                const ErrorCode commitRc = txn.Commit();
+                if (Failed(commitRc))
+                {
+                    return commitRc;
+                }
+            } catch (...)
+            {
+                return SC_E_FAIL;
+            }
+
+            schema->ReplaceColumn(def);
+
+            const std::wstring indexName =
+                L"idx_fv_" + std::to_wstring(schema->TableRowId()) + L"_" +
+                SanitizeIdentifier(def.name);
+            if (def.indexed)
+            {
+                EnsureColumnIndex(schema->TableRowId(), def.name);
+            } else
+            {
+                db_.Execute((std::string("DROP INDEX IF EXISTS ") +
+                             ToUtf8(indexName) + ";")
+                                .c_str());
+            }
+
+            MarkReferenceIndexDirty();
+            return SC_OK;
+        }
+
+        ErrorCode SqliteDatabase::ClearColumnValues(ISCTable* table,
+                                                    const wchar_t* name)
+        {
+            if (name == nullptr)
+            {
+                return SC_E_INVALIDARG;
+            }
+            if (!activeEdit_)
+            {
+                return SC_E_NO_ACTIVE_EDIT;
+            }
+            if (table == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+
+            auto* sqliteTable = static_cast<SqliteTable*>(table);
+            SCSchemaPtr schema;
+            const ErrorCode schemaRc = sqliteTable->GetSchema(schema);
+            if (Failed(schemaRc) || !schema)
+            {
+                return schemaRc;
+            }
+
+            SCColumnDef column;
+            const ErrorCode columnRc = schema->FindColumn(name, &column);
+            if (Failed(columnRc))
+            {
+                return columnRc;
+            }
+
+            const bool relationColumn = column.columnKind == ColumnKind::Relation;
+            for (const auto& [recordId, data] : sqliteTable->Records())
+            {
+                if (data == nullptr)
+                {
+                    continue;
+                }
+
+                const auto valueIt = data->values.find(name);
+                if (valueIt == data->values.end())
+                {
+                    continue;
+                }
+
+                const SCValue oldValue = valueIt->second;
+                data->values.erase(valueIt);
+                RecordJournal(sqliteTable->Name(), recordId, name, oldValue,
+                              SCValue::Null(), false, false,
+                              relationColumn ? JournalOp::SetRelation
+                                             : JournalOp::SetValue);
+            }
+
             MarkReferenceIndexDirty();
             return SC_OK;
         }
