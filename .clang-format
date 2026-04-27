@@ -27,7 +27,7 @@ BraceWrapping:
   AfterClass: true           # ✅ 类声明的 { 单独一行
   AfterStruct: true
   AfterControlStatement: true
-  AfterEnum: false
+  AfterEnum: true
   AfterNamespace: true
   AfterUnion: false
   BeforeElse: false
