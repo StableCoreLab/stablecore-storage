@@ -1,0 +1,36 @@
+BasedOnStyle: Google
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+ColumnLimit: 80
+AccessModifierOffset: -4          # <-- 修饰符与 class 对齐
+DerivePointerAlignment: false
+PointerAlignment: Left
+AllowShortFunctionsOnASingleLine: None  # 永不将函数放在单行上
+SortIncludes: false
+IncludeBlocks: Regroup
+SpaceBeforeParens: ControlStatements
+ReflowComments: true
+AlwaysBreakAfterReturnType: None
+Cpp11BracedListStyle: true
+IndentCaseLabels: true
+ContinuationIndentWidth: 4
+AllowShortIfStatementsOnASingleLine: false
+AllowShortLoopsOnASingleLine: false
+AllowShortCaseLabelsOnASingleLine: false
+BreakConstructorInitializers: BeforeColon
+ConstructorInitializerAllOnOneLineOrOnePerLine: true
+# Brace control
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterFunction: true        # 函数的 { 单独一行
+  AfterClass: true           # ✅ 类声明的 { 单独一行
+  AfterStruct: true
+  AfterControlStatement: true
+  AfterEnum: false
+  AfterNamespace: true
+  AfterUnion: false
+  BeforeElse: false
+  BeforeCatch: false
+  IndentBraces: false
+NamespaceIndentation: All
