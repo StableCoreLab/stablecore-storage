@@ -109,6 +109,38 @@ namespace StableCore::Storage::Editor
             return dateTime.toString(Qt::ISODate);
         }
 
+        sc::SCComputedColumnDef BuildComputedTemplate(
+            const sc::SCColumnDef& column)
+        {
+            sc::SCComputedColumnDef computed;
+            computed.name = column.name;
+            computed.displayName = column.displayName.empty() ? column.name
+                                                             : column.displayName;
+            computed.valueKind = column.valueKind;
+            computed.kind = sc::ComputedFieldKind::Expression;
+            computed.cacheable = true;
+            computed.editable = false;
+            return computed;
+        }
+
+        sc::SCColumnDef BuildColumnTemplate(
+            const sc::SCComputedColumnDef& column)
+        {
+            sc::SCColumnDef schemaColumn;
+            schemaColumn.name = column.name;
+            schemaColumn.displayName = column.displayName.empty()
+                                           ? column.name
+                                           : column.displayName;
+            schemaColumn.valueKind = column.valueKind;
+            schemaColumn.columnKind = sc::ColumnKind::Fact;
+            schemaColumn.nullable = true;
+            schemaColumn.editable = true;
+            schemaColumn.userDefined = true;
+            schemaColumn.indexed = false;
+            schemaColumn.participatesInCalc = false;
+            return schemaColumn;
+        }
+
     }  // namespace
 
     SCDatabaseEditorMainWindow::SCDatabaseEditorMainWindow(QWidget* parent)
@@ -216,6 +248,8 @@ namespace StableCore::Storage::Editor
             QStringLiteral("Add Computed Column"), centerWidget);
         auto* editComputedButton =
             new QPushButton(QStringLiteral("Edit Computed"), centerWidget);
+        auto* convertComputedButton =
+            new QPushButton(QStringLiteral("Convert To Computed"), centerWidget);
         auto* deleteComputedButton =
             new QPushButton(QStringLiteral("Delete Computed"), centerWidget);
 
@@ -225,6 +259,7 @@ namespace StableCore::Storage::Editor
         toolsLayout->addWidget(relationButton);
         toolsLayout->addWidget(computedButton);
         toolsLayout->addWidget(editComputedButton);
+        toolsLayout->addWidget(convertComputedButton);
         toolsLayout->addWidget(deleteComputedButton);
         centerLayout->addLayout(toolsLayout);
 
@@ -249,6 +284,8 @@ namespace StableCore::Storage::Editor
                 &SCDatabaseEditorMainWindow::AddSessionComputedColumn);
         connect(editComputedButton, &QPushButton::clicked, this,
                 &SCDatabaseEditorMainWindow::EditSelectedComputedColumn);
+        connect(convertComputedButton, &QPushButton::clicked, this,
+                &SCDatabaseEditorMainWindow::ConvertSelectedColumnToComputed);
         connect(deleteComputedButton, &QPushButton::clicked, this,
                 &SCDatabaseEditorMainWindow::DeleteSelectedComputedColumn);
 
@@ -331,18 +368,28 @@ namespace StableCore::Storage::Editor
                             &SCDatabaseEditorMainWindow::CreateDatabase);
         fileMenu->addAction(QStringLiteral("Open Database..."), this,
                             &SCDatabaseEditorMainWindow::OpenDatabase);
+        fileMenu->addAction(QStringLiteral("Create Backup Copy..."), this,
+                            &SCDatabaseEditorMainWindow::CreateBackupCopy);
 
         auto* tableMenu = menuBar()->addMenu(QStringLiteral("&Table"));
         tableMenu->addAction(QStringLiteral("Create Table..."), this,
                              &SCDatabaseEditorMainWindow::CreateTable);
         tableMenu->addAction(QStringLiteral("Add Column..."), this,
                              &SCDatabaseEditorMainWindow::AddColumn);
+        tableMenu->addAction(QStringLiteral("Edit Selected Column..."), this,
+                             &SCDatabaseEditorMainWindow::EditSelectedColumn);
         tableMenu->addAction(
             QStringLiteral("Add Session Computed Column..."), this,
             &SCDatabaseEditorMainWindow::AddSessionComputedColumn);
         tableMenu->addAction(
             QStringLiteral("Edit Selected Computed Column..."), this,
             &SCDatabaseEditorMainWindow::EditSelectedComputedColumn);
+        tableMenu->addAction(
+            QStringLiteral("Convert Selected Column To Computed..."), this,
+            &SCDatabaseEditorMainWindow::ConvertSelectedColumnToComputed);
+        tableMenu->addAction(
+            QStringLiteral("Convert Selected Computed Column To Column..."),
+            this, &SCDatabaseEditorMainWindow::ConvertSelectedComputedToColumn);
         tableMenu->addAction(
             QStringLiteral("Delete Selected Computed Column"), this,
             &SCDatabaseEditorMainWindow::DeleteSelectedComputedColumn);
@@ -374,17 +421,27 @@ namespace StableCore::Storage::Editor
                            &SCDatabaseEditorMainWindow::OpenDatabase);
         toolbar->addAction(QStringLiteral("New DB"), this,
                            &SCDatabaseEditorMainWindow::CreateDatabase);
+        toolbar->addAction(QStringLiteral("Backup Copy"), this,
+                           &SCDatabaseEditorMainWindow::CreateBackupCopy);
         toolbar->addSeparator();
         toolbar->addAction(QStringLiteral("New Table"), this,
                            &SCDatabaseEditorMainWindow::CreateTable);
         toolbar->addAction(QStringLiteral("Add Column"), this,
                            &SCDatabaseEditorMainWindow::AddColumn);
+        toolbar->addAction(QStringLiteral("Edit Column"), this,
+                           &SCDatabaseEditorMainWindow::EditSelectedColumn);
         toolbar->addAction(
             QStringLiteral("Add Computed"), this,
             &SCDatabaseEditorMainWindow::AddSessionComputedColumn);
         toolbar->addAction(
             QStringLiteral("Edit Computed"), this,
             &SCDatabaseEditorMainWindow::EditSelectedComputedColumn);
+        toolbar->addAction(
+            QStringLiteral("To Computed"), this,
+            &SCDatabaseEditorMainWindow::ConvertSelectedColumnToComputed);
+        toolbar->addAction(
+            QStringLiteral("To Column"), this,
+            &SCDatabaseEditorMainWindow::ConvertSelectedComputedToColumn);
         toolbar->addAction(
             QStringLiteral("Delete Computed"), this,
             &SCDatabaseEditorMainWindow::DeleteSelectedComputedColumn);
@@ -437,6 +494,41 @@ namespace StableCore::Storage::Editor
         }
     }
 
+    void SCDatabaseEditorMainWindow::CreateBackupCopy()
+    {
+        if (!session_->IsOpen())
+        {
+            ShowError(QStringLiteral("Create Backup Copy Failed"),
+                      QStringLiteral("No database is open."));
+            return;
+        }
+
+        const QString defaultPath = session_->DatabasePath().isEmpty()
+                                        ? QString()
+                                        : session_->DatabasePath() +
+                                              QStringLiteral("_backup.sqlite");
+        const QString filePath = QFileDialog::getSaveFileName(
+            this, QStringLiteral("Create Backup Copy"), defaultPath,
+            QStringLiteral("SQLite Database (*.sqlite);;All Files (*)"));
+        if (filePath.isEmpty())
+        {
+            return;
+        }
+
+        sc::SCBackupOptions options;
+        options.overwriteExisting = true;
+
+        sc::SCBackupResult result;
+        QString error;
+        if (!session_->CreateBackupCopy(filePath, options, &result, &error))
+        {
+            ShowError(QStringLiteral("Create Backup Copy Failed"), error);
+            return;
+        }
+
+        SetStatusMessage(QStringLiteral("Backup copy created: ") + filePath);
+    }
+
     void SCDatabaseEditorMainWindow::CreateTable()
     {
         bool accepted = false;
@@ -472,10 +564,106 @@ namespace StableCore::Storage::Editor
         }
 
         UpdateSchemaInspector();
+        SelectSchemaColumnByName(ToQString(column.name));
         recordModel_->Refresh();
         RefreshOverviewPanels();
         SetStatusMessage(QStringLiteral("Column added: ") +
                          ToQString(column.name));
+    }
+
+    void SCDatabaseEditorMainWindow::EditSelectedColumn()
+    {
+        const QString columnName = CurrentSchemaColumnName();
+        if (columnName.isEmpty())
+        {
+            ShowError(QStringLiteral("Edit Column Failed"),
+                      QStringLiteral("Select a schema field first."));
+            return;
+        }
+
+        sc::SCColumnDef existing;
+        QString error;
+        if (!session_->GetColumnDef(columnName, &existing, &error))
+        {
+            ShowError(QStringLiteral("Edit Column Failed"), error);
+            return;
+        }
+
+        SCAddColumnDialog dialog(existing, this);
+        if (dialog.exec() != QDialog::Accepted)
+        {
+            return;
+        }
+
+        const sc::SCColumnDef updated = dialog.BuildColumnDef();
+        if (updated.name.empty())
+        {
+            ShowError(QStringLiteral("Edit Column Failed"),
+                      QStringLiteral("Column name is required."));
+            return;
+        }
+
+        if (!session_->UpdateColumn(columnName, updated, &error))
+        {
+            ShowError(QStringLiteral("Edit Column Failed"), error);
+            return;
+        }
+
+        UpdateSchemaInspector();
+        SelectSchemaColumnByName(ToQString(updated.name));
+        recordModel_->Refresh();
+        RefreshOverviewPanels();
+        SetStatusMessage(QStringLiteral("Column updated: ") +
+                         ToQString(updated.name));
+    }
+
+    void SCDatabaseEditorMainWindow::ConvertSelectedColumnToComputed()
+    {
+        const QString columnName = CurrentSchemaColumnName();
+        if (columnName.isEmpty())
+        {
+            ShowError(QStringLiteral("Convert To Computed Failed"),
+                      QStringLiteral("Select a schema field first."));
+            return;
+        }
+
+        sc::SCColumnDef existing;
+        QString error;
+        if (!session_->GetColumnDef(columnName, &existing, &error))
+        {
+            ShowError(QStringLiteral("Convert To Computed Failed"), error);
+            return;
+        }
+
+        SCComputedColumnDialog dialog(session_->CurrentTableName(),
+                                      BuildComputedTemplate(existing), true,
+                                      this);
+        dialog.setWindowTitle(QStringLiteral("Convert Column To Computed"));
+        if (dialog.exec() != QDialog::Accepted)
+        {
+            return;
+        }
+
+        sc::SCComputedColumnDef definition;
+        if (!dialog.BuildDefinition(&definition, &error))
+        {
+            ShowError(QStringLiteral("Convert To Computed Failed"), error);
+            return;
+        }
+
+        if (!session_->ConvertColumnToComputed(columnName, definition, &error))
+        {
+            ShowError(QStringLiteral("Convert To Computed Failed"), error);
+            return;
+        }
+
+        UpdateSchemaInspector();
+        UpdateComputedColumnsPanel();
+        SelectComputedColumnByName(ToQString(definition.name));
+        recordModel_->Refresh();
+        RefreshOverviewPanels();
+        SetStatusMessage(QStringLiteral("Converted to computed column: ") +
+                         ToQString(definition.name));
     }
 
     void SCDatabaseEditorMainWindow::AddSessionComputedColumn()
@@ -560,6 +748,54 @@ namespace StableCore::Storage::Editor
         RefreshOverviewPanels();
         SetStatusMessage(QStringLiteral("Computed column updated: ") +
                          ToQString(updated.name));
+    }
+
+    void SCDatabaseEditorMainWindow::ConvertSelectedComputedToColumn()
+    {
+        const QString columnName = CurrentComputedColumnName();
+        if (columnName.isEmpty())
+        {
+            ShowError(QStringLiteral("Convert To Column Failed"),
+                      QStringLiteral("Select a computed column first."));
+            return;
+        }
+
+        sc::SCComputedColumnDef existing;
+        QString error;
+        if (!session_->GetSessionComputedColumn(columnName, &existing, &error))
+        {
+            ShowError(QStringLiteral("Convert To Column Failed"), error);
+            return;
+        }
+
+        SCAddColumnDialog dialog(BuildColumnTemplate(existing), this);
+        dialog.setWindowTitle(QStringLiteral("Convert Computed To Column"));
+        if (dialog.exec() != QDialog::Accepted)
+        {
+            return;
+        }
+
+        const sc::SCColumnDef definition = dialog.BuildColumnDef();
+        if (definition.name.empty())
+        {
+            ShowError(QStringLiteral("Convert To Column Failed"),
+                      QStringLiteral("Column name is required."));
+            return;
+        }
+
+        if (!session_->ConvertComputedToColumn(columnName, definition, &error))
+        {
+            ShowError(QStringLiteral("Convert To Column Failed"), error);
+            return;
+        }
+
+        UpdateSchemaInspector();
+        UpdateComputedColumnsPanel();
+        SelectSchemaColumnByName(ToQString(definition.name));
+        recordModel_->Refresh();
+        RefreshOverviewPanels();
+        SetStatusMessage(QStringLiteral("Converted to column: ") +
+                         ToQString(definition.name));
     }
 
     void SCDatabaseEditorMainWindow::DeleteSelectedComputedColumn()
@@ -956,6 +1192,7 @@ namespace StableCore::Storage::Editor
             auto* root = new QTreeWidgetItem(
                 schemaTree_,
                 {ToQString(column.name), ColumnKindToText(column.columnKind)});
+            root->setData(0, Qt::UserRole, ToQString(column.name));
             root->addChild(
                 new QTreeWidgetItem({QStringLiteral("Display Name"),
                                      ToQString(column.displayName)}));
@@ -1093,6 +1330,21 @@ namespace StableCore::Storage::Editor
                                     : QModelIndex{};
     }
 
+    QString SCDatabaseEditorMainWindow::CurrentSchemaColumnName() const
+    {
+        QTreeWidgetItem* item = schemaTree_->currentItem();
+        if (item == nullptr)
+        {
+            return {};
+        }
+
+        while (item->parent() != nullptr)
+        {
+            item = item->parent();
+        }
+        return item->data(0, Qt::UserRole).toString();
+    }
+
     QString SCDatabaseEditorMainWindow::CurrentComputedColumnName() const
     {
         QTreeWidgetItem* item = computedColumnsTree_->currentItem();
@@ -1106,6 +1358,28 @@ namespace StableCore::Storage::Editor
             item = item->parent();
         }
         return item->data(0, Qt::UserRole).toString();
+    }
+
+    void SCDatabaseEditorMainWindow::SelectSchemaColumnByName(
+        const QString& name)
+    {
+        if (name.isEmpty())
+        {
+            return;
+        }
+
+        for (int index = 0; index < schemaTree_->topLevelItemCount(); ++index)
+        {
+            QTreeWidgetItem* item = schemaTree_->topLevelItem(index);
+            if (item != nullptr &&
+                item->data(0, Qt::UserRole)
+                        .toString()
+                        .compare(name, Qt::CaseInsensitive) == 0)
+            {
+                schemaTree_->setCurrentItem(item);
+                return;
+            }
+        }
     }
 
     void SCDatabaseEditorMainWindow::SelectComputedColumnByName(

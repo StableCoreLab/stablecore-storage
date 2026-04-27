@@ -179,6 +179,11 @@ namespace
         {
             return inner_->CreateTable(name, outTable);
         }
+        sc::ErrorCode ClearColumnValues(sc::ISCTable* table,
+                                        const wchar_t* name) override
+        {
+            return inner_->ClearColumnValues(table, name);
+        }
         sc::ErrorCode ExecuteUpgradePlan(
             const sc::SCUpgradePlan& plan, bool confirmed,
             sc::SCUpgradeResult* outResult) override
@@ -286,6 +291,11 @@ namespace
                                   sc::SCTablePtr& outTable) override
         {
             return inner_->CreateTable(name, outTable);
+        }
+        sc::ErrorCode ClearColumnValues(sc::ISCTable* table,
+                                        const wchar_t* name) override
+        {
+            return inner_->ClearColumnValues(table, name);
         }
         sc::ErrorCode ExecuteUpgradePlan(
             const sc::SCUpgradePlan& plan, bool confirmed,

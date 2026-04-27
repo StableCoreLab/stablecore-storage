@@ -18,10 +18,14 @@ namespace StableCore::Storage::Editor
 
     public:
         explicit SCAddColumnDialog(QWidget* parent = nullptr);
+        explicit SCAddColumnDialog(
+            const StableCore::Storage::SCColumnDef& initialValue,
+            QWidget* parent = nullptr);
 
         StableCore::Storage::SCColumnDef BuildColumnDef() const;
 
     private:
+        void ApplyInitialValue(const StableCore::Storage::SCColumnDef& value);
         QLineEdit* nameEdit_{nullptr};
         QLineEdit* displayNameEdit_{nullptr};
         QComboBox* valueKindCombo_{nullptr};

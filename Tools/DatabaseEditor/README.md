@@ -48,10 +48,12 @@ Build\StorageDbEditor\Release\SCStorageDatabaseEditor.exe
 - `New DB` / `New Database...`
 - `New Table`
 - `Add Column`
+- `Edit Column`
 - `Add Computed`
 - `Add Record`
 - `Delete Record`
 - `Pick Relation`
+- `Backup Copy`
 - `Undo`
 - `Redo`
 - `Refresh`
@@ -135,6 +137,7 @@ Build\StorageDbEditor\Release\SCStorageDatabaseEditor.exe
 ## 会话级计算列
 
 点击 `Add Computed Column` 或 `Add Session Computed Column...` 可为当前表添加临时计算列。
+如果需要把普通字段转成临时计算列，可先在 `Schema` 面板选中字段，再使用 `Convert Selected Column To Computed...`。
 
 支持的类型：
 
@@ -162,7 +165,7 @@ Build\StorageDbEditor\Release\SCStorageDatabaseEditor.exe
 编辑和删除：
 
 1. 在右侧 `Session Computed Columns` 面板选中一个计算列
-2. 点击 `Edit Computed` 或 `Delete Computed`
+2. 点击 `Edit Computed`、`Convert To Column` 或 `Delete Computed`
 3. 编辑会整体替换该列定义；删除会从当前会话视图中移除
 
 当前实现按“同表内 `name` 唯一”定位会话计算列。
@@ -182,3 +185,8 @@ Build\StorageDbEditor\Release\SCStorageDatabaseEditor.exe
 - `Docs/DatabaseEditorComputedColumnLifecycle.md`
 - `Tools/DatabaseEditor/SCDatabaseEditorMainWindow.cpp`
 - `Tools/DatabaseEditor/SCDatabaseSession.cpp`
+
+## 补充能力
+
+- `Edit Column...` 可对选中的 Schema 字段做原地编辑，当前要求字段名保持不变。
+- `Create Backup Copy...` 可直接调用底层 `ISCDatabase::CreateBackupCopy` 生成数据库备份副本。

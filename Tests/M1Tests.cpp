@@ -119,6 +119,36 @@ TEST(StorageM1, SchemaRejectsInvalidReferenceTableUsage)
     EXPECT_EQ(schema->AddColumn(relationWithoutRef), sc::SC_E_SCHEMA_VIOLATION);
 }
 
+TEST(StorageM1, SchemaUpdateColumnReplacesDefinitionInMemory)
+{
+    sc::SCDbPtr db;
+    EXPECT_EQ(sc::CreateInMemoryDatabase(db), sc::SC_OK);
+
+    sc::SCTablePtr table;
+    EXPECT_EQ(db->CreateTable(L"Beam", table), sc::SC_OK);
+
+    sc::SCSchemaPtr schema;
+    EXPECT_EQ(table->GetSchema(schema), sc::SC_OK);
+
+    sc::SCColumnDef width;
+    width.name = L"Width";
+    width.displayName = L"Width";
+    width.valueKind = sc::ValueKind::Int64;
+    width.defaultValue = sc::SCValue::FromInt64(0);
+    EXPECT_EQ(schema->AddColumn(width), sc::SC_OK);
+
+    sc::SCColumnDef updated = width;
+    updated.displayName = L"Width Label";
+    updated.valueKind = sc::ValueKind::String;
+    updated.defaultValue = sc::SCValue::FromString(L"0");
+    EXPECT_EQ(schema->UpdateColumn(updated), sc::SC_OK);
+
+    sc::SCColumnDef loaded;
+    EXPECT_EQ(schema->FindColumn(L"Width", &loaded), sc::SC_OK);
+    EXPECT_EQ(loaded.displayName, L"Width Label");
+    EXPECT_EQ(loaded.valueKind, sc::ValueKind::String);
+}
+
 TEST(StorageM1, TransactionCommitAndQuery)
 {
     sc::SCDbPtr db;

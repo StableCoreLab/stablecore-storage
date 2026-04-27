@@ -22,6 +22,11 @@ namespace StableCore::Storage::Editor
             const QString& currentTableName,
             const StableCore::Storage::SCComputedColumnDef& initialValue,
             QWidget* parent = nullptr);
+        SCComputedColumnDialog(
+            const QString& currentTableName,
+            const StableCore::Storage::SCComputedColumnDef& initialValue,
+            bool lockName,
+            QWidget* parent = nullptr);
 
         bool BuildDefinition(
             StableCore::Storage::SCComputedColumnDef* outColumn,
@@ -51,6 +56,7 @@ namespace StableCore::Storage::Editor
         QLineEdit* factDepsEdit_{nullptr};
         QLineEdit* relationDepsEdit_{nullptr};
         QCheckBox* cacheableCheck_{nullptr};
+        bool lockName_{false};
     };
 
 }  // namespace StableCore::Storage::Editor

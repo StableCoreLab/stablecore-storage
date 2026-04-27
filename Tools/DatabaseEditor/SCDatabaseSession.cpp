@@ -123,6 +123,165 @@ namespace StableCore::Storage::Editor
             return QString(value.size(), QLatin1Char('*'));
         }
 
+        struct ColumnValueSnapshot
+        {
+            sc::RecordId recordId{0};
+            sc::SCValue value;
+        };
+
+        bool SnapshotColumnValues(sc::ISCTable* table, const QString& columnName,
+                                  QVector<ColumnValueSnapshot>* outValues,
+                                  QString* outError)
+        {
+            if (outValues == nullptr)
+            {
+                if (outError != nullptr)
+                {
+                    *outError = QStringLiteral("Output snapshot container is null.");
+                }
+                return false;
+            }
+            outValues->clear();
+            if (table == nullptr)
+            {
+                if (outError != nullptr)
+                {
+                    *outError = QStringLiteral("No table is selected.");
+                }
+                return false;
+            }
+
+            sc::SCRecordCursorPtr cursor;
+            const sc::ErrorCode rc = table->EnumerateRecords(cursor);
+            if (sc::Failed(rc))
+            {
+                if (outError != nullptr)
+                {
+                    *outError = QStringLiteral("Failed to enumerate records: ") +
+                                 QString::number(static_cast<qulonglong>(rc), 16);
+                }
+                return false;
+            }
+
+            bool hasRow = false;
+            while (cursor->MoveNext(&hasRow) == sc::SC_OK && hasRow)
+            {
+                sc::SCRecordPtr record;
+                const sc::ErrorCode currentRc = cursor->GetCurrent(record);
+                if (sc::Failed(currentRc))
+                {
+                    if (outError != nullptr)
+                    {
+                        *outError = QStringLiteral("Failed to read record: ") +
+                                     QString::number(
+                                         static_cast<qulonglong>(currentRc), 16);
+                    }
+                    return false;
+                }
+
+                ColumnValueSnapshot snapshot;
+                snapshot.recordId = record->GetId();
+                const sc::ErrorCode valueRc =
+                    record->GetValue(columnName.toStdWString().c_str(),
+                                     &snapshot.value);
+                if (valueRc == sc::SC_E_VALUE_IS_NULL)
+                {
+                    snapshot.value = sc::SCValue::Null();
+                } else if (sc::Failed(valueRc))
+                {
+                    if (outError != nullptr)
+                    {
+                        *outError = QStringLiteral("Failed to read column value: ") +
+                                     QString::number(
+                                         static_cast<qulonglong>(valueRc), 16);
+                    }
+                    return false;
+                }
+
+                outValues->push_back(snapshot);
+            }
+
+            return true;
+        }
+
+        bool RestoreColumnValues(sc::SCDbPtr db, sc::ISCTable* table,
+                                 const QString& columnName,
+                                 const QVector<ColumnValueSnapshot>& snapshots,
+                                 QString* outError)
+        {
+            if (snapshots.isEmpty())
+            {
+                return true;
+            }
+            if (!db || table == nullptr)
+            {
+                if (outError != nullptr)
+                {
+                    *outError = QStringLiteral("No database is open.");
+                }
+                return false;
+            }
+
+            sc::SCEditPtr edit;
+            const sc::ErrorCode beginRc =
+                db->BeginEdit(L"Restore Column Values", edit);
+            if (sc::Failed(beginRc))
+            {
+                if (outError != nullptr)
+                {
+                    *outError = QStringLiteral("Failed to begin restore edit: ") +
+                                 QString::number(static_cast<qulonglong>(beginRc), 16);
+                }
+                return false;
+            }
+
+            for (const ColumnValueSnapshot& snapshot : snapshots)
+            {
+                sc::SCRecordPtr record;
+                const sc::ErrorCode getRc =
+                    table->GetRecord(snapshot.recordId, record);
+                if (sc::Failed(getRc))
+                {
+                    db->Rollback(edit.Get());
+                    if (outError != nullptr)
+                    {
+                        *outError =
+                            QStringLiteral("Failed to reload record during restore: ") +
+                            QString::number(static_cast<qulonglong>(getRc), 16);
+                    }
+                    return false;
+                }
+
+                const sc::ErrorCode setRc =
+                    record->SetValue(columnName.toStdWString().c_str(),
+                                     snapshot.value);
+                if (sc::Failed(setRc))
+                {
+                    db->Rollback(edit.Get());
+                    if (outError != nullptr)
+                    {
+                        *outError =
+                            QStringLiteral("Failed to restore column value: ") +
+                            QString::number(static_cast<qulonglong>(setRc), 16);
+                    }
+                    return false;
+                }
+            }
+
+            const sc::ErrorCode commitRc = db->Commit(edit.Get());
+            if (sc::Failed(commitRc))
+            {
+                if (outError != nullptr)
+                {
+                    *outError = QStringLiteral("Failed to commit restore edit: ") +
+                                 QString::number(static_cast<qulonglong>(commitRc), 16);
+                }
+                return false;
+            }
+
+            return true;
+        }
+
         sc::ErrorCode SaveFileWriteCallback(void* userData, const void* data,
                                             std::size_t size,
                                             std::size_t* bytesWritten)
@@ -512,6 +671,449 @@ namespace StableCore::Storage::Editor
         return true;
     }
 
+    bool SCDatabaseSession::UpdateColumn(
+        const QString& originalName, const sc::SCColumnDef& column,
+        QString* outError)
+    {
+        if (!currentTable_)
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("No table is selected.");
+            }
+            return false;
+        }
+
+        const QString originalKey = originalName.trimmed();
+        const QString requestedName = ToQString(column.name).trimmed();
+        if (originalKey.isEmpty() || requestedName.isEmpty())
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("Column name is required.");
+            }
+            return false;
+        }
+
+        if (originalKey.compare(requestedName, Qt::CaseInsensitive) != 0)
+        {
+            if (outError != nullptr)
+            {
+                *outError =
+                    QStringLiteral("Renaming columns is not supported yet.");
+            }
+            return false;
+        }
+
+        sc::SCSchemaPtr schema;
+        sc::ErrorCode rc = currentTable_->GetSchema(schema);
+        if (sc::Failed(rc))
+        {
+            if (outError != nullptr)
+            {
+                *outError = ErrorToString(rc);
+            }
+            return false;
+        }
+
+        sc::SCColumnDef previousColumn;
+        rc = schema->FindColumn(originalKey.toStdWString().c_str(),
+                                &previousColumn);
+        if (sc::Failed(rc))
+        {
+            if (outError != nullptr)
+            {
+                *outError = ErrorToString(rc);
+            }
+            return false;
+        }
+
+        const sc::SCComputedTableViewPtr previousTableView = currentTableView_;
+        rc = schema->UpdateColumn(column);
+        if (sc::Failed(rc))
+        {
+            if (outError != nullptr)
+            {
+                *outError = ErrorToString(rc);
+            }
+            return false;
+        }
+
+        if (currentTableView_)
+        {
+            if (!RebuildCurrentTableView(outError))
+            {
+                const sc::ErrorCode restoreRc = schema->UpdateColumn(previousColumn);
+                if (sc::Succeeded(restoreRc))
+                {
+                    currentTableView_ = previousTableView;
+                } else if (outError != nullptr)
+                {
+                    *outError = ErrorToString(restoreRc);
+                }
+                emit CurrentTableChanged();
+                emit RecordsChanged();
+                return false;
+            }
+        }
+
+        emit CurrentTableChanged();
+        emit RecordsChanged();
+        return true;
+    }
+
+    bool SCDatabaseSession::ConvertColumnToComputed(
+        const QString& columnName,
+        const sc::SCComputedColumnDef& computedColumn, QString* outError)
+    {
+        if (!currentTable_ || !currentTableView_)
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("No table is selected.");
+            }
+            return false;
+        }
+
+        QVector<sc::SCComputedColumnDef>* columns =
+            CurrentSessionComputedColumnsStorage();
+        if (columns == nullptr)
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("No table is selected.");
+            }
+            return false;
+        }
+
+        const QString sourceName = columnName.trimmed();
+        const QString targetName = ToQString(computedColumn.name).trimmed();
+        if (sourceName.isEmpty() || targetName.isEmpty())
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("Column name is required.");
+            }
+            return false;
+        }
+        if (sourceName.compare(targetName, Qt::CaseInsensitive) != 0)
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral(
+                    "Converted computed column must keep the same name.");
+            }
+            return false;
+        }
+        for (const sc::SCComputedColumnDef& existing : *columns)
+        {
+            if (ToQString(existing.name).compare(targetName, Qt::CaseInsensitive) ==
+                0)
+            {
+                if (outError != nullptr)
+                {
+                    *outError = QStringLiteral(
+                        "A computed column with the same name already exists.");
+                }
+                return false;
+            }
+        }
+        if (computedColumn.dependencies.factFields.empty() &&
+            computedColumn.dependencies.relationFields.empty())
+        {
+            if (outError != nullptr)
+            {
+                *outError =
+                    QStringLiteral("At least one dependency is required.");
+            }
+            return false;
+        }
+        const auto referencesSourceColumn =
+            [this, &sourceName](
+                const std::vector<sc::SCFieldDependency>& dependencies) {
+                for (const sc::SCFieldDependency& dependency : dependencies)
+                {
+                    if (ToQString(dependency.tableName)
+                            .compare(currentTableName_, Qt::CaseInsensitive) ==
+                        0 &&
+                        ToQString(dependency.fieldName)
+                            .compare(sourceName, Qt::CaseInsensitive) == 0)
+                    {
+                        return true;
+                    }
+                }
+                return false;
+            };
+        if (referencesSourceColumn(computedColumn.dependencies.factFields) ||
+            referencesSourceColumn(computedColumn.dependencies.relationFields))
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral(
+                    "Computed column cannot depend on the converted field itself.");
+            }
+            return false;
+        }
+
+        sc::SCSchemaPtr schema;
+        sc::ErrorCode rc = currentTable_->GetSchema(schema);
+        if (sc::Failed(rc))
+        {
+            if (outError != nullptr)
+            {
+                *outError = ErrorToString(rc);
+            }
+            return false;
+        }
+
+        sc::SCColumnDef previousColumn;
+        rc = schema->FindColumn(sourceName.toStdWString().c_str(),
+                                &previousColumn);
+        if (sc::Failed(rc))
+        {
+            if (outError != nullptr)
+            {
+                *outError = ErrorToString(rc);
+            }
+            return false;
+        }
+
+        const sc::SCComputedTableViewPtr previousTableView = currentTableView_;
+        sc::SCEditPtr edit;
+        rc = db_->BeginEdit(L"Convert Column To Computed", edit);
+        if (sc::Failed(rc))
+        {
+            if (outError != nullptr)
+            {
+                *outError = ErrorToString(rc);
+            }
+            return false;
+        }
+
+        rc = db_->ClearColumnValues(currentTable_.Get(),
+                                    sourceName.toStdWString().c_str());
+        if (sc::Failed(rc))
+        {
+            db_->Rollback(edit.Get());
+            if (outError != nullptr)
+            {
+                *outError = ErrorToString(rc);
+            }
+            return false;
+        }
+
+        rc = schema->RemoveColumn(sourceName.toStdWString().c_str());
+        if (sc::Failed(rc))
+        {
+            db_->Rollback(edit.Get());
+            if (outError != nullptr)
+            {
+                *outError = ErrorToString(rc);
+            }
+            return false;
+        }
+
+        columns->push_back(computedColumn);
+
+        if (!RebuildCurrentTableView(outError))
+        {
+            columns->removeLast();
+            const sc::ErrorCode restoreSchemaRc =
+                schema->AddColumn(previousColumn);
+            db_->Rollback(edit.Get());
+            currentTableView_ = previousTableView;
+            if (sc::Failed(restoreSchemaRc) && outError != nullptr)
+            {
+                *outError = ErrorToString(restoreSchemaRc);
+            }
+            emit CurrentTableChanged();
+            emit RecordsChanged();
+            return false;
+        }
+
+        rc = db_->Commit(edit.Get());
+        if (sc::Failed(rc))
+        {
+            columns->removeLast();
+            const sc::ErrorCode restoreSchemaRc =
+                schema->AddColumn(previousColumn);
+            db_->Rollback(edit.Get());
+            currentTableView_ = previousTableView;
+            if (sc::Failed(restoreSchemaRc) && outError != nullptr)
+            {
+                *outError = ErrorToString(restoreSchemaRc);
+            }
+            else if (outError != nullptr)
+            {
+                *outError = ErrorToString(rc);
+            }
+            emit CurrentTableChanged();
+            emit RecordsChanged();
+            return false;
+        }
+
+        emit CurrentTableChanged();
+        emit RecordsChanged();
+        return true;
+    }
+
+    bool SCDatabaseSession::ConvertComputedToColumn(
+        const QString& computedName, const sc::SCColumnDef& column,
+        QString* outError)
+    {
+        if (!currentTable_ || !currentTableView_)
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("No table is selected.");
+            }
+            return false;
+        }
+
+        QVector<sc::SCComputedColumnDef>* computedColumns =
+            CurrentSessionComputedColumnsStorage();
+        if (computedColumns == nullptr)
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("No table is selected.");
+            }
+            return false;
+        }
+
+        const QString sourceName = computedName.trimmed();
+        const QString targetName = ToQString(column.name).trimmed();
+        if (sourceName.isEmpty() || targetName.isEmpty())
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("Column name is required.");
+            }
+            return false;
+        }
+        if (sourceName.compare(targetName, Qt::CaseInsensitive) != 0)
+        {
+            if (outError != nullptr)
+            {
+                *outError =
+                    QStringLiteral("Converted column must keep the same name.");
+            }
+            return false;
+        }
+
+        int targetIndex = -1;
+        sc::SCComputedColumnDef removedComputed;
+        for (int index = 0; index < computedColumns->size(); ++index)
+        {
+            if (ToQString(computedColumns->at(index).name)
+                    .compare(sourceName, Qt::CaseInsensitive) != 0)
+            {
+                continue;
+            }
+            targetIndex = index;
+            removedComputed = computedColumns->at(index);
+            break;
+        }
+
+        if (targetIndex < 0)
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral(
+                    "The selected computed column no longer exists.");
+            }
+            return false;
+        }
+
+        sc::SCSchemaPtr schema;
+        sc::ErrorCode rc = currentTable_->GetSchema(schema);
+        if (sc::Failed(rc))
+        {
+            if (outError != nullptr)
+            {
+                *outError = ErrorToString(rc);
+            }
+            return false;
+        }
+        sc::SCColumnDef existingColumn;
+        if (sc::Succeeded(schema->FindColumn(sourceName.toStdWString().c_str(),
+                                             &existingColumn)))
+        {
+            if (outError != nullptr)
+            {
+                *outError =
+                    QStringLiteral("A schema column with the same name already exists.");
+            }
+            return false;
+        }
+
+        const sc::SCComputedTableViewPtr previousTableView = currentTableView_;
+        sc::SCEditPtr edit;
+        rc = db_->BeginEdit(L"Convert Computed To Column", edit);
+        if (sc::Failed(rc))
+        {
+            if (outError != nullptr)
+            {
+                *outError = ErrorToString(rc);
+            }
+            return false;
+        }
+
+        computedColumns->removeAt(targetIndex);
+        rc = schema->AddColumn(column);
+        if (sc::Failed(rc))
+        {
+            computedColumns->insert(targetIndex, removedComputed);
+            db_->Rollback(edit.Get());
+            if (outError != nullptr)
+            {
+                *outError = ErrorToString(rc);
+            }
+            return false;
+        }
+
+        if (!RebuildCurrentTableView(outError))
+        {
+            const sc::ErrorCode restoreSchemaRc =
+                schema->RemoveColumn(column.name.c_str());
+            computedColumns->insert(targetIndex, removedComputed);
+            db_->Rollback(edit.Get());
+            currentTableView_ = previousTableView;
+            if (sc::Failed(restoreSchemaRc) && outError != nullptr)
+            {
+                *outError = ErrorToString(restoreSchemaRc);
+            }
+            emit CurrentTableChanged();
+            emit RecordsChanged();
+            return false;
+        }
+
+        rc = db_->Commit(edit.Get());
+        if (sc::Failed(rc))
+        {
+            const sc::ErrorCode restoreSchemaRc =
+                schema->RemoveColumn(column.name.c_str());
+            computedColumns->insert(targetIndex, removedComputed);
+            db_->Rollback(edit.Get());
+            currentTableView_ = previousTableView;
+            if (sc::Failed(restoreSchemaRc) && outError != nullptr)
+            {
+                *outError = ErrorToString(restoreSchemaRc);
+            }
+            else if (outError != nullptr)
+            {
+                *outError = ErrorToString(rc);
+            }
+            emit CurrentTableChanged();
+            emit RecordsChanged();
+            return false;
+        }
+
+        emit CurrentTableChanged();
+        emit RecordsChanged();
+        return true;
+    }
+
     bool SCDatabaseSession::AddRecord(QString* outError)
     {
         if (!currentTable_)
@@ -536,6 +1138,45 @@ namespace StableCore::Storage::Editor
             emit RecordsChanged();
         }
         return ok;
+    }
+
+    bool SCDatabaseSession::CreateBackupCopy(
+        const QString& targetPath, const sc::SCBackupOptions& options,
+        sc::SCBackupResult* outResult, QString* outError) const
+    {
+        if (!IsOpen())
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("No database is open.");
+            }
+            return false;
+        }
+
+        if (targetPath.trimmed().isEmpty())
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("Target backup path is required.");
+            }
+            return false;
+        }
+
+        const sc::ErrorCode rc = db_->CreateBackupCopy(
+            targetPath.toStdWString().c_str(), options, outResult);
+        if (sc::Failed(rc))
+        {
+            if (outError != nullptr)
+            {
+                *outError = rc == sc::SC_E_NOTIMPL
+                                ? QStringLiteral(
+                                      "Backup copy is not supported by the "
+                                      "current backend.")
+                                : ErrorToString(rc);
+            }
+            return false;
+        }
+        return true;
     }
 
     void SCDatabaseSession::SetForceRebuildCurrentTableViewFailureForTest(

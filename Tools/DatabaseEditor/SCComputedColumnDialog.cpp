@@ -89,22 +89,40 @@ namespace StableCore::Storage::Editor
 
     SCComputedColumnDialog::SCComputedColumnDialog(
         const QString& currentTableName, QWidget* parent)
-        : QDialog(parent), currentTableName_(currentTableName)
+        : SCComputedColumnDialog(currentTableName, sc::SCComputedColumnDef{},
+                                 false, parent)
     {
-        setWindowTitle(QStringLiteral("Add Session Computed Column"));
-        resize(620, 540);
-        BuildForm();
     }
 
     SCComputedColumnDialog::SCComputedColumnDialog(
         const QString& currentTableName,
         const sc::SCComputedColumnDef& initialValue, QWidget* parent)
-        : QDialog(parent), currentTableName_(currentTableName)
+        : SCComputedColumnDialog(currentTableName, initialValue, false, parent)
     {
-        setWindowTitle(QStringLiteral("Edit Session Computed Column"));
+    }
+
+    SCComputedColumnDialog::SCComputedColumnDialog(
+        const QString& currentTableName,
+        const sc::SCComputedColumnDef& initialValue, bool lockName,
+        QWidget* parent)
+        : QDialog(parent),
+          currentTableName_(currentTableName),
+          lockName_(lockName)
+    {
+        setWindowTitle(initialValue.name.empty()
+                           ? QStringLiteral("Add Session Computed Column")
+                           : QStringLiteral("Edit Session Computed Column"));
         resize(620, 540);
         BuildForm();
-        ApplyInitialValue(initialValue);
+        nameEdit_->setReadOnly(lockName_);
+        if (lockName_)
+        {
+            nameEdit_->setEnabled(true);
+        }
+        if (!initialValue.name.empty())
+        {
+            ApplyInitialValue(initialValue);
+        }
     }
 
     void SCComputedColumnDialog::BuildForm()

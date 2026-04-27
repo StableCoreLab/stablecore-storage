@@ -51,6 +51,17 @@ namespace StableCore::Storage::Editor
         bool SelectTable(const QString& tableName, QString* outError);
         bool AddColumn(const StableCore::Storage::SCColumnDef& column,
                        QString* outError);
+        bool UpdateColumn(const QString& originalName,
+                          const StableCore::Storage::SCColumnDef& column,
+                          QString* outError);
+        bool ConvertColumnToComputed(
+            const QString& columnName,
+            const StableCore::Storage::SCComputedColumnDef& computedColumn,
+            QString* outError);
+        bool ConvertComputedToColumn(
+            const QString& computedName,
+            const StableCore::Storage::SCColumnDef& column,
+            QString* outError);
         bool AddRecord(QString* outError);
         bool DeleteRecord(StableCore::Storage::RecordId recordId,
                           QString* outError);
@@ -69,6 +80,11 @@ namespace StableCore::Storage::Editor
         bool ExportDebugPackage(
             const QString& filePath,
             const StableCore::Storage::SCExportRequest& request,
+            QString* outError) const;
+        bool CreateBackupCopy(
+            const QString& targetPath,
+            const StableCore::Storage::SCBackupOptions& options,
+            StableCore::Storage::SCBackupResult* outResult,
             QString* outError) const;
         bool SetCellValue(StableCore::Storage::RecordId recordId,
                           const QString& columnName, const QVariant& SCValue,

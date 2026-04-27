@@ -31,10 +31,14 @@ namespace StableCore::Storage::Editor
     private slots:
         void CreateDatabase();
         void OpenDatabase();
+        void CreateBackupCopy();
         void CreateTable();
         void AddColumn();
+        void EditSelectedColumn();
+        void ConvertSelectedColumnToComputed();
         void AddSessionComputedColumn();
         void EditSelectedComputedColumn();
+        void ConvertSelectedComputedToColumn();
         void DeleteSelectedComputedColumn();
         void AddRecord();
         void DeleteSelectedRecord();
@@ -57,7 +61,9 @@ namespace StableCore::Storage::Editor
 
     private:
         QModelIndex CurrentSourceIndex() const;
+        QString CurrentSchemaColumnName() const;
         QString CurrentComputedColumnName() const;
+        void SelectSchemaColumnByName(const QString& name);
         void SelectComputedColumnByName(const QString& name);
         void BuildUi();
         void BuildMenus();

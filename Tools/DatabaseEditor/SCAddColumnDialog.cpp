@@ -95,6 +95,86 @@ namespace StableCore::Storage::Editor
         layout->addRow(buttons);
     }
 
+    SCAddColumnDialog::SCAddColumnDialog(
+        const sc::SCColumnDef& initialValue, QWidget* parent)
+        : SCAddColumnDialog(parent)
+    {
+        setWindowTitle(QStringLiteral("Edit Column"));
+        nameEdit_->setReadOnly(true);
+        ApplyInitialValue(initialValue);
+    }
+
+    void SCAddColumnDialog::ApplyInitialValue(const sc::SCColumnDef& value)
+    {
+        nameEdit_->setText(QString::fromStdWString(value.name));
+        displayNameEdit_->setText(QString::fromStdWString(value.displayName));
+        const int valueKindIndex =
+            valueKindCombo_->findData(static_cast<int>(value.valueKind));
+        if (valueKindIndex >= 0)
+        {
+            valueKindCombo_->setCurrentIndex(valueKindIndex);
+        }
+        relationCheck_->setChecked(value.columnKind == sc::ColumnKind::Relation);
+        nullableCheck_->setChecked(value.nullable);
+        editableCheck_->setChecked(value.editable);
+        userDefinedCheck_->setChecked(value.userDefined);
+        indexedCheck_->setChecked(value.indexed);
+        participatesInCalcCheck_->setChecked(value.participatesInCalc);
+        unitEdit_->setText(QString::fromStdWString(value.unit));
+        referenceTableEdit_->setText(QString::fromStdWString(value.referenceTable));
+
+        if (value.defaultValue.IsNull())
+        {
+            defaultValueEdit_->clear();
+            return;
+        }
+
+        switch (value.defaultValue.GetKind())
+        {
+            case sc::ValueKind::Int64: {
+                std::int64_t result = 0;
+                value.defaultValue.AsInt64(&result);
+                defaultValueEdit_->setText(QString::number(result));
+                break;
+            }
+            case sc::ValueKind::Double: {
+                double result = 0.0;
+                value.defaultValue.AsDouble(&result);
+                defaultValueEdit_->setText(QString::number(result, 'g', 12));
+                break;
+            }
+            case sc::ValueKind::Bool: {
+                bool result = false;
+                value.defaultValue.AsBool(&result);
+                defaultValueEdit_->setText(result ? QStringLiteral("true")
+                                                  : QStringLiteral("false"));
+                break;
+            }
+            case sc::ValueKind::String: {
+                std::wstring result;
+                value.defaultValue.AsStringCopy(&result);
+                defaultValueEdit_->setText(QString::fromStdWString(result));
+                break;
+            }
+            case sc::ValueKind::RecordId: {
+                sc::RecordId result = 0;
+                value.defaultValue.AsRecordId(&result);
+                defaultValueEdit_->setText(QString::number(result));
+                break;
+            }
+            case sc::ValueKind::Enum: {
+                std::wstring result;
+                value.defaultValue.AsEnumCopy(&result);
+                defaultValueEdit_->setText(QString::fromStdWString(result));
+                break;
+            }
+            case sc::ValueKind::Null:
+            default:
+                defaultValueEdit_->clear();
+                break;
+        }
+    }
+
     sc::SCColumnDef SCAddColumnDialog::BuildColumnDef() const
     {
         sc::SCColumnDef column;

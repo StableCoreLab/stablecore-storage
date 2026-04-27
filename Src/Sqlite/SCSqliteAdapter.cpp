@@ -4290,6 +4290,25 @@ namespace StableCore::Storage
                 {
                     return rc;
                 }
+
+                if (def.indexed)
+                {
+                    const std::wstring indexName =
+                        L"idx_fv_" + std::to_wstring(schema->TableRowId()) +
+                        L"_" + SanitizeIdentifier(def.name);
+                    SqliteStmt createIndexStmt = db_.Prepare(
+                        (std::string("CREATE INDEX IF NOT EXISTS ") +
+                         ToUtf8(indexName) +
+                         " ON field_values(table_id, column_name, "
+                         "int64_value, double_value, bool_value, text_value);")
+                            .c_str());
+                    const ErrorCode createIndexRc = createIndexStmt.Step();
+                    if (Failed(createIndexRc))
+                    {
+                        return createIndexRc;
+                    }
+                }
+
                 const ErrorCode commitRc = txn.Commit();
                 if (Failed(commitRc))
                 {
@@ -4301,10 +4320,6 @@ namespace StableCore::Storage
             }
 
             schema->LoadColumn(def);
-            if (def.indexed)
-            {
-                EnsureColumnIndex(schema->TableRowId(), def.name);
-            }
             MarkReferenceIndexDirty();
             return SC_OK;
         }
@@ -4351,10 +4366,41 @@ namespace StableCore::Storage
                 {
                     return rc;
                 }
-                const ErrorCode commitRc = txn.Commit();
-                if (Failed(commitRc))
+
+                const std::wstring indexName =
+                    L"idx_fv_" + std::to_wstring(schema->TableRowId()) + L"_" +
+                    SanitizeIdentifier(def.name);
+                if (def.indexed)
                 {
-                    return commitRc;
+                    SqliteStmt createIndexStmt = db_.Prepare(
+                        (std::string("CREATE INDEX IF NOT EXISTS ") +
+                         ToUtf8(indexName) +
+                         " ON field_values(table_id, column_name, "
+                         "int64_value, double_value, bool_value, text_value);")
+                            .c_str());
+                    const ErrorCode createIndexRc = createIndexStmt.Step();
+                    if (Failed(createIndexRc))
+                    {
+                        return createIndexRc;
+                    }
+                }
+                else
+                {
+                    SqliteStmt dropIndexStmt = db_.Prepare(
+                        (std::string("DROP INDEX IF EXISTS ") +
+                         ToUtf8(indexName) + ";")
+                            .c_str());
+                    const ErrorCode dropIndexRc = dropIndexStmt.Step();
+                    if (Failed(dropIndexRc))
+                    {
+                        return dropIndexRc;
+                    }
+                }
+
+                const ErrorCode finalCommitRc = txn.Commit();
+                if (Failed(finalCommitRc))
+                {
+                    return finalCommitRc;
                 }
             } catch (...)
             {
@@ -4362,19 +4408,6 @@ namespace StableCore::Storage
             }
 
             schema->ReplaceColumn(def);
-
-            const std::wstring indexName =
-                L"idx_fv_" + std::to_wstring(schema->TableRowId()) + L"_" +
-                SanitizeIdentifier(def.name);
-            if (def.indexed)
-            {
-                EnsureColumnIndex(schema->TableRowId(), def.name);
-            } else
-            {
-                db_.Execute((std::string("DROP INDEX IF EXISTS ") +
-                             ToUtf8(indexName) + ";")
-                                .c_str());
-            }
 
             MarkReferenceIndexDirty();
             return SC_OK;
