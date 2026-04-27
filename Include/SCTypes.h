@@ -11,398 +11,422 @@
 namespace StableCore::Storage
 {
 
-using RecordId = std::int64_t;
-using VersionId = std::uint64_t;
-using CommitId = std::uint64_t;
-using SessionId = std::uint64_t;
-using SnapshotId = std::uint64_t;
+    using RecordId = std::int64_t;
+    using VersionId = std::uint64_t;
+    using CommitId = std::uint64_t;
+    using SessionId = std::uint64_t;
+    using SnapshotId = std::uint64_t;
 
-struct SCEnumValue
-{
-    std::wstring value;
-
-    bool operator==(const SCEnumValue& other) const noexcept
+    struct SCEnumValue
     {
-        return value == other.value;
-    }
-};
+        std::wstring value;
 
-struct RecordIdValue
-{
-    RecordId value{0};
-
-    bool operator==(const RecordIdValue& other) const noexcept
-    {
-        return value == other.value;
-    }
-};
-
-enum class ValueKind
-{
-    Null,
-    Int64,
-    Double,
-    Bool,
-    String,
-    RecordId,
-    Enum,
-};
-
-enum class ColumnKind
-{
-    Fact,
-    Relation,
-};
-
-enum class TableColumnLayer
-{
-    Fact,
-    Computed,
-};
-
-enum class ChangeSource
-{
-    UserEdit,
-    Undo,
-    Redo,
-    Import,
-    RuleWriteback,
-};
-
-enum class ChangeKind
-{
-    FieldUpdated,
-    RecordCreated,
-    RecordDeleted,
-    RelationUpdated,
-};
-
-enum class JournalOp
-{
-    SetValue,
-    CreateRecord,
-    DeleteRecord,
-    SetRelation,
-};
-
-enum class RecordState
-{
-    Alive,
-    Deleted,
-};
-
-enum class EditState
-{
-    Active,
-    Committed,
-    RolledBack,
-};
-
-class SCValue
-{
-public:
-    using Storage = std::variant<std::monostate, std::int64_t, double, bool, std::wstring, RecordIdValue, SCEnumValue>;
-
-    SCValue() = default;
-
-    static SCValue Null() { return SCValue(); }
-    static SCValue FromInt64(std::int64_t value) { return SCValue(value); }
-    static SCValue FromDouble(double value) { return SCValue(value); }
-    static SCValue FromBool(bool value) { return SCValue(value); }
-    static SCValue FromString(std::wstring value) { return SCValue(std::move(value)); }
-    static SCValue FromRecordId(RecordId value) { return SCValue(RecordIdValue{value}); }
-    static SCValue FromEnum(std::wstring value) { return SCValue(SCEnumValue{std::move(value)}); }
-
-    ValueKind GetKind() const noexcept
-    {
-        switch (value_.index())
+        bool operator==(const SCEnumValue& other) const noexcept
         {
-        case 0: return ValueKind::Null;
-        case 1: return ValueKind::Int64;
-        case 2: return ValueKind::Double;
-        case 3: return ValueKind::Bool;
-        case 4: return ValueKind::String;
-        case 5: return ValueKind::RecordId;
-        case 6: return ValueKind::Enum;
-        default: return ValueKind::Null;
+            return value == other.value;
         }
-    }
+    };
 
-    bool IsNull() const noexcept
+    struct RecordIdValue
     {
-        return std::holds_alternative<std::monostate>(value_);
-    }
+        RecordId value{0};
 
-    ErrorCode AsInt64(std::int64_t* outValue) const noexcept
-    {
-        if (outValue == nullptr)
+        bool operator==(const RecordIdValue& other) const noexcept
         {
-            return SC_E_POINTER;
+            return value == other.value;
         }
-        if (const auto* typed = TryGet<std::int64_t>())
+    };
+
+    enum class ValueKind
+    {
+        Null,
+        Int64,
+        Double,
+        Bool,
+        String,
+        RecordId,
+        Enum,
+    };
+
+    enum class ColumnKind
+    {
+        Fact,
+        Relation,
+    };
+
+    enum class TableColumnLayer
+    {
+        Fact,
+        Computed,
+    };
+
+    enum class ChangeSource
+    {
+        UserEdit,
+        Undo,
+        Redo,
+        Import,
+        RuleWriteback,
+    };
+
+    enum class ChangeKind
+    {
+        FieldUpdated,
+        RecordCreated,
+        RecordDeleted,
+        RelationUpdated,
+    };
+
+    enum class JournalOp
+    {
+        SetValue,
+        CreateRecord,
+        DeleteRecord,
+        SetRelation,
+    };
+
+    enum class RecordState
+    {
+        Alive,
+        Deleted,
+    };
+
+    enum class EditState
+    {
+        Active,
+        Committed,
+        RolledBack,
+    };
+
+    class SCValue
+    {
+    public:
+        using Storage = std::variant<std::monostate, std::int64_t, double, bool,
+                                     std::wstring, RecordIdValue, SCEnumValue>;
+
+        SCValue() = default;
+
+        static SCValue Null()
         {
-            *outValue = *typed;
-            return SC_OK;
+            return SCValue();
         }
-        return IsNull() ? SC_E_VALUE_IS_NULL : SC_E_TYPE_MISMATCH;
-    }
-
-    ErrorCode AsDouble(double* outValue) const noexcept
-    {
-        if (outValue == nullptr)
+        static SCValue FromInt64(std::int64_t value)
         {
-            return SC_E_POINTER;
+            return SCValue(value);
         }
-        if (const auto* typed = TryGet<double>())
+        static SCValue FromDouble(double value)
         {
-            *outValue = *typed;
-            return SC_OK;
+            return SCValue(value);
         }
-        return IsNull() ? SC_E_VALUE_IS_NULL : SC_E_TYPE_MISMATCH;
-    }
-
-    ErrorCode AsBool(bool* outValue) const noexcept
-    {
-        if (outValue == nullptr)
+        static SCValue FromBool(bool value)
         {
-            return SC_E_POINTER;
+            return SCValue(value);
         }
-        if (const auto* typed = TryGet<bool>())
+        static SCValue FromString(std::wstring value)
         {
-            *outValue = *typed;
-            return SC_OK;
+            return SCValue(std::move(value));
         }
-        return IsNull() ? SC_E_VALUE_IS_NULL : SC_E_TYPE_MISMATCH;
-    }
-
-    ErrorCode AsString(const wchar_t** outValue) const noexcept
-    {
-        if (outValue == nullptr)
+        static SCValue FromRecordId(RecordId value)
         {
-            return SC_E_POINTER;
+            return SCValue(RecordIdValue{value});
         }
-        if (const auto* typed = TryGet<std::wstring>())
+        static SCValue FromEnum(std::wstring value)
         {
-            *outValue = typed->c_str();
-            return SC_OK;
+            return SCValue(SCEnumValue{std::move(value)});
         }
-        return IsNull() ? SC_E_VALUE_IS_NULL : SC_E_TYPE_MISMATCH;
-    }
 
-    ErrorCode AsStringCopy(std::wstring* outValue) const
-    {
-        if (outValue == nullptr)
+        ValueKind GetKind() const noexcept
         {
-            return SC_E_POINTER;
+            switch (value_.index())
+            {
+                case 0:
+                    return ValueKind::Null;
+                case 1:
+                    return ValueKind::Int64;
+                case 2:
+                    return ValueKind::Double;
+                case 3:
+                    return ValueKind::Bool;
+                case 4:
+                    return ValueKind::String;
+                case 5:
+                    return ValueKind::RecordId;
+                case 6:
+                    return ValueKind::Enum;
+                default:
+                    return ValueKind::Null;
+            }
         }
-        if (const auto* typed = TryGet<std::wstring>())
+
+        bool IsNull() const noexcept
         {
-            *outValue = *typed;
-            return SC_OK;
+            return std::holds_alternative<std::monostate>(value_);
         }
-        return IsNull() ? SC_E_VALUE_IS_NULL : SC_E_TYPE_MISMATCH;
-    }
 
-    ErrorCode AsRecordId(RecordId* outValue) const noexcept
-    {
-        if (outValue == nullptr)
+        ErrorCode AsInt64(std::int64_t* outValue) const noexcept
         {
-            return SC_E_POINTER;
+            if (outValue == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+            if (const auto* typed = TryGet<std::int64_t>())
+            {
+                *outValue = *typed;
+                return SC_OK;
+            }
+            return IsNull() ? SC_E_VALUE_IS_NULL : SC_E_TYPE_MISMATCH;
         }
-        if (const auto* typed = TryGet<RecordIdValue>())
+
+        ErrorCode AsDouble(double* outValue) const noexcept
         {
-            *outValue = typed->value;
-            return SC_OK;
+            if (outValue == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+            if (const auto* typed = TryGet<double>())
+            {
+                *outValue = *typed;
+                return SC_OK;
+            }
+            return IsNull() ? SC_E_VALUE_IS_NULL : SC_E_TYPE_MISMATCH;
         }
-        return IsNull() ? SC_E_VALUE_IS_NULL : SC_E_TYPE_MISMATCH;
-    }
 
-    ErrorCode AsEnum(const wchar_t** outValue) const noexcept
-    {
-        if (outValue == nullptr)
+        ErrorCode AsBool(bool* outValue) const noexcept
         {
-            return SC_E_POINTER;
+            if (outValue == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+            if (const auto* typed = TryGet<bool>())
+            {
+                *outValue = *typed;
+                return SC_OK;
+            }
+            return IsNull() ? SC_E_VALUE_IS_NULL : SC_E_TYPE_MISMATCH;
         }
-        if (const auto* typed = TryGet<SCEnumValue>())
+
+        ErrorCode AsString(const wchar_t** outValue) const noexcept
         {
-            *outValue = typed->value.c_str();
-            return SC_OK;
+            if (outValue == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+            if (const auto* typed = TryGet<std::wstring>())
+            {
+                *outValue = typed->c_str();
+                return SC_OK;
+            }
+            return IsNull() ? SC_E_VALUE_IS_NULL : SC_E_TYPE_MISMATCH;
         }
-        return IsNull() ? SC_E_VALUE_IS_NULL : SC_E_TYPE_MISMATCH;
-    }
 
-    ErrorCode AsEnumCopy(std::wstring* outValue) const
-    {
-        if (outValue == nullptr)
+        ErrorCode AsStringCopy(std::wstring* outValue) const
         {
-            return SC_E_POINTER;
+            if (outValue == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+            if (const auto* typed = TryGet<std::wstring>())
+            {
+                *outValue = *typed;
+                return SC_OK;
+            }
+            return IsNull() ? SC_E_VALUE_IS_NULL : SC_E_TYPE_MISMATCH;
         }
-        if (const auto* typed = TryGet<SCEnumValue>())
+
+        ErrorCode AsRecordId(RecordId* outValue) const noexcept
         {
-            *outValue = typed->value;
-            return SC_OK;
+            if (outValue == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+            if (const auto* typed = TryGet<RecordIdValue>())
+            {
+                *outValue = typed->value;
+                return SC_OK;
+            }
+            return IsNull() ? SC_E_VALUE_IS_NULL : SC_E_TYPE_MISMATCH;
         }
-        return IsNull() ? SC_E_VALUE_IS_NULL : SC_E_TYPE_MISMATCH;
-    }
 
-    bool operator==(const SCValue& other) const noexcept
+        ErrorCode AsEnum(const wchar_t** outValue) const noexcept
+        {
+            if (outValue == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+            if (const auto* typed = TryGet<SCEnumValue>())
+            {
+                *outValue = typed->value.c_str();
+                return SC_OK;
+            }
+            return IsNull() ? SC_E_VALUE_IS_NULL : SC_E_TYPE_MISMATCH;
+        }
+
+        ErrorCode AsEnumCopy(std::wstring* outValue) const
+        {
+            if (outValue == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+            if (const auto* typed = TryGet<SCEnumValue>())
+            {
+                *outValue = typed->value;
+                return SC_OK;
+            }
+            return IsNull() ? SC_E_VALUE_IS_NULL : SC_E_TYPE_MISMATCH;
+        }
+
+        bool operator==(const SCValue& other) const noexcept
+        {
+            return value_ == other.value_;
+        }
+
+        bool operator!=(const SCValue& other) const noexcept
+        {
+            return !(*this == other);
+        }
+
+        template <class T>
+        const T* TryGet() const noexcept
+        {
+            return std::get_if<T>(&value_);
+        }
+
+    private:
+        explicit SCValue(std::int64_t value) : value_(value)
+        {
+        }
+
+        explicit SCValue(double value) : value_(value)
+        {
+        }
+
+        explicit SCValue(bool value) : value_(value)
+        {
+        }
+
+        explicit SCValue(std::wstring value) : value_(std::move(value))
+        {
+        }
+
+        explicit SCValue(RecordIdValue value) : value_(std::move(value))
+        {
+        }
+
+        explicit SCValue(SCEnumValue value) : value_(std::move(value))
+        {
+        }
+
+        Storage value_{};
+    };
+
+    struct SCColumnDef
     {
-        return value_ == other.value_;
-    }
+        std::wstring name;
+        std::wstring displayName;
+        ValueKind valueKind{ValueKind::Null};
+        ColumnKind columnKind{ColumnKind::Fact};
+        bool nullable{true};
+        bool editable{true};
+        bool userDefined{false};
+        bool indexed{false};
+        bool participatesInCalc{false};
+        std::wstring unit;
+        std::wstring referenceTable;
+        SCValue defaultValue;
+    };
 
-    bool operator!=(const SCValue& other) const noexcept
+    enum class ComputedFieldKind
     {
-        return !(*this == other);
-    }
+        Expression,
+        Rule,
+        Aggregate,
+    };
 
-    template <class T>
-    const T* TryGet() const noexcept
+    enum class SCAggregateKind
     {
-        return std::get_if<T>(&value_);
-    }
+        Count,
+        Sum,
+        Min,
+        Max,
+    };
 
-private:
-    explicit SCValue(std::int64_t value)
-        : value_(value)
+    struct SCFieldDependency
     {
-    }
+        std::wstring tableName;
+        std::wstring fieldName;
+    };
 
-    explicit SCValue(double value)
-        : value_(value)
+    struct SCComputedDependencySet
     {
-    }
+        std::vector<SCFieldDependency> factFields;
+        std::vector<SCFieldDependency> relationFields;
+    };
 
-    explicit SCValue(bool value)
-        : value_(value)
+    struct SCComputedColumnDef
     {
-    }
+        std::wstring name;
+        std::wstring displayName;
+        ValueKind valueKind{ValueKind::Null};
+        TableColumnLayer layer{TableColumnLayer::Computed};
 
-    explicit SCValue(std::wstring value)
-        : value_(std::move(value))
+        ComputedFieldKind kind{ComputedFieldKind::Expression};
+        std::wstring expression;
+        std::wstring ruleId;
+        SCComputedDependencySet dependencies;
+        SCAggregateKind aggregateKind{SCAggregateKind::Count};
+        std::wstring aggregateRelation;
+        std::wstring aggregateField;
+
+        bool cacheable{true};
+        bool editable{false};
+    };
+
+    // Legacy single-condition bridge for existing FindRecords paths.
+    // New query plans should use QueryCondition / QueryConditionGroup.
+    struct SCQueryCondition
     {
-    }
+        std::wstring fieldName;
+        SCValue expectedValue;
+    };
 
-    explicit SCValue(RecordIdValue value)
-        : value_(std::move(value))
+    struct JournalEntry
     {
-    }
+        JournalOp op{};
+        std::wstring tableName;
+        RecordId recordId{0};
+        std::wstring fieldName;
+        SCValue oldValue;
+        SCValue newValue;
+        bool oldDeleted{false};
+        bool newDeleted{false};
+    };
 
-    explicit SCValue(SCEnumValue value)
-        : value_(std::move(value))
+    struct JournalTransaction
     {
-    }
+        std::wstring actionName;
+        CommitId commitId{0};
+        VersionId committedVersion{0};
+        std::vector<JournalEntry> entries;
+    };
 
-    Storage value_{};
-};
+    struct SCDataChange
+    {
+        ChangeKind kind{};
+        std::wstring tableName;
+        RecordId recordId{0};
+        std::wstring fieldName;
+        SCValue oldValue;
+        SCValue newValue;
+        bool structuralChange{false};
+        bool relationChange{false};
+    };
 
-struct SCColumnDef
-{
-    std::wstring name;
-    std::wstring displayName;
-    ValueKind valueKind{ValueKind::Null};
-    ColumnKind columnKind{ColumnKind::Fact};
-    bool nullable{true};
-    bool editable{true};
-    bool userDefined{false};
-    bool indexed{false};
-    bool participatesInCalc{false};
-    std::wstring unit;
-    std::wstring referenceTable;
-    SCValue defaultValue;
-};
-
-enum class ComputedFieldKind
-{
-    Expression,
-    Rule,
-    Aggregate,
-};
-
-enum class SCAggregateKind
-{
-    Count,
-    Sum,
-    Min,
-    Max,
-};
-
-struct SCFieldDependency
-{
-    std::wstring tableName;
-    std::wstring fieldName;
-};
-
-struct SCComputedDependencySet
-{
-    std::vector<SCFieldDependency> factFields;
-    std::vector<SCFieldDependency> relationFields;
-};
-
-struct SCComputedColumnDef
-{
-    std::wstring name;
-    std::wstring displayName;
-    ValueKind valueKind{ValueKind::Null};
-    TableColumnLayer layer{TableColumnLayer::Computed};
-
-    ComputedFieldKind kind{ComputedFieldKind::Expression};
-    std::wstring expression;
-    std::wstring ruleId;
-    SCComputedDependencySet dependencies;
-    SCAggregateKind aggregateKind{SCAggregateKind::Count};
-    std::wstring aggregateRelation;
-    std::wstring aggregateField;
-
-    bool cacheable{true};
-    bool editable{false};
-};
-
-// Legacy single-condition bridge for existing FindRecords paths.
-// New query plans should use QueryCondition / QueryConditionGroup.
-struct SCQueryCondition
-{
-    std::wstring fieldName;
-    SCValue expectedValue;
-};
-
-struct JournalEntry
-{
-    JournalOp op{};
-    std::wstring tableName;
-    RecordId recordId{0};
-    std::wstring fieldName;
-    SCValue oldValue;
-    SCValue newValue;
-    bool oldDeleted{false};
-    bool newDeleted{false};
-};
-
-struct JournalTransaction
-{
-    std::wstring actionName;
-    CommitId commitId{0};
-    VersionId committedVersion{0};
-    std::vector<JournalEntry> entries;
-};
-
-struct SCDataChange
-{
-    ChangeKind kind{};
-    std::wstring tableName;
-    RecordId recordId{0};
-    std::wstring fieldName;
-    SCValue oldValue;
-    SCValue newValue;
-    bool structuralChange{false};
-    bool relationChange{false};
-};
-
-struct SCChangeSet
-{
-    std::wstring actionName;
-    ChangeSource source{ChangeSource::UserEdit};
-    VersionId version{0};
-    std::vector<SCDataChange> changes;
-};
+    struct SCChangeSet
+    {
+        std::wstring actionName;
+        ChangeSource source{ChangeSource::UserEdit};
+        VersionId version{0};
+        std::vector<SCDataChange> changes;
+    };
 
 }  // namespace StableCore::Storage

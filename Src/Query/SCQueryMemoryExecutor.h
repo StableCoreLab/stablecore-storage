@@ -5,9 +5,8 @@
 namespace StableCore::Storage
 {
 
-ErrorCode ExecuteMemoryQueryDispatch(
-    const QueryPlan& plan,
-    const QueryExecutionContext& context,
-    QueryExecutionResult* outResult);
+    ErrorCode ExecuteMemoryQueryDispatch(const QueryPlan& plan,
+                                         const QueryExecutionContext& context,
+                                         QueryExecutionResult* outResult);
 
 }  // namespace StableCore::Storage

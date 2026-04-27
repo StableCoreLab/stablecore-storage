@@ -60,6 +60,7 @@ int main()
         return 1;
     }
 
-    std::wcout << L"Beam " << beam->GetId() << L" width = " << widthValue << std::endl;
+    std::wcout << L"Beam " << beam->GetId() << L" width = " << widthValue
+               << std::endl;
     return 0;
 }

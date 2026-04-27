@@ -8,62 +8,62 @@ namespace sc = StableCore::Storage;
 namespace
 {
 
-sc::SCTablePtr CreateQueryableBeamTable(sc::SCDbPtr& db)
-{
-    sc::SCTablePtr table;
-    EXPECT_EQ(db->CreateTable(L"Beam", table), sc::SC_OK);
+    sc::SCTablePtr CreateQueryableBeamTable(sc::SCDbPtr& db)
+    {
+        sc::SCTablePtr table;
+        EXPECT_EQ(db->CreateTable(L"Beam", table), sc::SC_OK);
 
-    sc::SCSchemaPtr schema;
-    EXPECT_EQ(table->GetSchema(schema), sc::SC_OK);
+        sc::SCSchemaPtr schema;
+        EXPECT_EQ(table->GetSchema(schema), sc::SC_OK);
 
-    sc::SCColumnDef width;
-    width.name = L"Width";
-    width.displayName = L"Width";
-    width.valueKind = sc::ValueKind::Int64;
-    width.indexed = true;
-    width.defaultValue = sc::SCValue::FromInt64(0);
-    EXPECT_EQ(schema->AddColumn(width), sc::SC_OK);
+        sc::SCColumnDef width;
+        width.name = L"Width";
+        width.displayName = L"Width";
+        width.valueKind = sc::ValueKind::Int64;
+        width.indexed = true;
+        width.defaultValue = sc::SCValue::FromInt64(0);
+        EXPECT_EQ(schema->AddColumn(width), sc::SC_OK);
 
-    sc::SCColumnDef name;
-    name.name = L"Name";
-    name.displayName = L"Name";
-    name.valueKind = sc::ValueKind::String;
-    name.indexed = true;
-    name.defaultValue = sc::SCValue::FromString(L"");
-    EXPECT_EQ(schema->AddColumn(name), sc::SC_OK);
+        sc::SCColumnDef name;
+        name.name = L"Name";
+        name.displayName = L"Name";
+        name.valueKind = sc::ValueKind::String;
+        name.indexed = true;
+        name.defaultValue = sc::SCValue::FromString(L"");
+        EXPECT_EQ(schema->AddColumn(name), sc::SC_OK);
 
-    return table;
-}
+        return table;
+    }
 
-void SeedQueryableBeamRows(const sc::SCTablePtr& table, sc::SCDbPtr& db)
-{
-    sc::SCEditPtr edit;
-    EXPECT_EQ(db->BeginEdit(L"seed", edit), sc::SC_OK);
+    void SeedQueryableBeamRows(const sc::SCTablePtr& table, sc::SCDbPtr& db)
+    {
+        sc::SCEditPtr edit;
+        EXPECT_EQ(db->BeginEdit(L"seed", edit), sc::SC_OK);
 
-    sc::SCRecordPtr row;
-    EXPECT_EQ(table->CreateRecord(row), sc::SC_OK);
-    EXPECT_EQ(row->SetInt64(L"Width", 100), sc::SC_OK);
-    EXPECT_EQ(row->SetString(L"Name", L"Alpha"), sc::SC_OK);
+        sc::SCRecordPtr row;
+        EXPECT_EQ(table->CreateRecord(row), sc::SC_OK);
+        EXPECT_EQ(row->SetInt64(L"Width", 100), sc::SC_OK);
+        EXPECT_EQ(row->SetString(L"Name", L"Alpha"), sc::SC_OK);
 
-    EXPECT_EQ(table->CreateRecord(row), sc::SC_OK);
-    EXPECT_EQ(row->SetInt64(L"Width", 200), sc::SC_OK);
-    EXPECT_EQ(row->SetString(L"Name", L"Beta"), sc::SC_OK);
+        EXPECT_EQ(table->CreateRecord(row), sc::SC_OK);
+        EXPECT_EQ(row->SetInt64(L"Width", 200), sc::SC_OK);
+        EXPECT_EQ(row->SetString(L"Name", L"Beta"), sc::SC_OK);
 
-    EXPECT_EQ(table->CreateRecord(row), sc::SC_OK);
-    EXPECT_EQ(row->SetInt64(L"Width", 300), sc::SC_OK);
-    EXPECT_EQ(row->SetString(L"Name", L"Alpine"), sc::SC_OK);
+        EXPECT_EQ(table->CreateRecord(row), sc::SC_OK);
+        EXPECT_EQ(row->SetInt64(L"Width", 300), sc::SC_OK);
+        EXPECT_EQ(row->SetString(L"Name", L"Alpine"), sc::SC_OK);
 
-    EXPECT_EQ(db->Commit(edit.Get()), sc::SC_OK);
-}
+        EXPECT_EQ(db->Commit(edit.Get()), sc::SC_OK);
+    }
 
-sc::QueryExecutionContext MakeContext(sc::SCDbPtr& db)
-{
-    sc::QueryExecutionContext context;
-    context.database = db.Get();
-    context.backendHandle = db.Get();
-    context.backendKind = sc::QueryBackendKind::Memory;
-    return context;
-}
+    sc::QueryExecutionContext MakeContext(sc::SCDbPtr& db)
+    {
+        sc::QueryExecutionContext context;
+        context.database = db.Get();
+        context.backendHandle = db.Get();
+        context.backendKind = sc::QueryBackendKind::Memory;
+        return context;
+    }
 
 }  // namespace
 
@@ -83,13 +83,10 @@ TEST(QueryMemoryExecutorTests, ContextDispatchWorksForMemory)
                   sc::QueryTarget{L"Beam", sc::QueryTargetType::Table},
                   {sc::QueryConditionGroup{
                       sc::QueryLogicOperator::And,
-                      {sc::QueryCondition{L"Width", sc::QueryConditionOperator::Equal, {sc::SCValue::FromInt64(200)}}}}},
-                  sc::QueryLogicOperator::And,
-                  {},
-                  {},
-                  {},
-                  {},
-                  &plan),
+                      {sc::QueryCondition{L"Width",
+                                          sc::QueryConditionOperator::Equal,
+                                          {sc::SCValue::FromInt64(200)}}}}},
+                  sc::QueryLogicOperator::And, {}, {}, {}, {}, &plan),
               sc::SC_OK);
 
     sc::QueryExecutionContext context = MakeContext(db);
@@ -104,7 +101,8 @@ TEST(QueryMemoryExecutorTests, ContextDispatchWorksForMemory)
     EXPECT_FALSE(result.usedIndexIds.empty());
 }
 
-TEST(QueryMemoryExecutorTests, MemoryExecutorReportsExecutorUnsupportedForRequireIndex)
+TEST(QueryMemoryExecutorTests,
+     MemoryExecutorReportsExecutorUnsupportedForRequireIndex)
 {
     sc::SCDbPtr db;
     EXPECT_EQ(sc::CreateInMemoryDatabase(db), sc::SC_OK);
@@ -114,12 +112,11 @@ TEST(QueryMemoryExecutorTests, MemoryExecutorReportsExecutorUnsupportedForRequir
 
     sc::QueryPlan plan;
     plan.target = sc::QueryTarget{L"Beam", sc::QueryTargetType::Table};
-    plan.conditionGroups = {
-        sc::QueryConditionGroup{
-            sc::QueryLogicOperator::And,
-            {sc::QueryCondition{L"Name", sc::QueryConditionOperator::StartsWith, {sc::SCValue::FromString(L"Al")}}}
-        }
-    };
+    plan.conditionGroups = {sc::QueryConditionGroup{
+        sc::QueryLogicOperator::And,
+        {sc::QueryCondition{L"Name",
+                            sc::QueryConditionOperator::StartsWith,
+                            {sc::SCValue::FromString(L"Al")}}}}};
     plan.conditionGroupLogic = sc::QueryLogicOperator::And;
     plan.state = sc::QueryPlanState::PartialIndex;
     plan.constraints.requireIndex = true;
@@ -130,10 +127,12 @@ TEST(QueryMemoryExecutorTests, MemoryExecutorReportsExecutorUnsupportedForRequir
     sc::QueryExecutionResult result;
     sc::QueryExecutionContext context = MakeContext(db);
     context.resultCursor = &cursor;
-    EXPECT_EQ(sc::ExecuteQueryPlan(plan, context, &result), sc::SC_E_INVALIDARG);
+    EXPECT_EQ(sc::ExecuteQueryPlan(plan, context, &result),
+              sc::SC_E_INVALIDARG);
     EXPECT_EQ(result.mode, sc::QueryExecutionMode::Unsupported);
     EXPECT_EQ(result.unsupportedSource, sc::QueryUnsupportedSource::Executor);
-    EXPECT_NE(result.executionNote.find(L"executor-unsupported:index-required"), std::wstring::npos);
+    EXPECT_NE(result.executionNote.find(L"executor-unsupported:index-required"),
+              std::wstring::npos);
 }
 
 TEST(QueryMemoryExecutorTests, MemoryExecutorRunsControlledFallbackScan)
@@ -152,13 +151,10 @@ TEST(QueryMemoryExecutorTests, MemoryExecutorRunsControlledFallbackScan)
                   sc::QueryTarget{L"Beam", sc::QueryTargetType::Table},
                   {sc::QueryConditionGroup{
                       sc::QueryLogicOperator::And,
-                      {sc::QueryCondition{L"Name", sc::QueryConditionOperator::Contains, {sc::SCValue::FromString(L"Al")}}}}},
-                  sc::QueryLogicOperator::And,
-                  {},
-                  {},
-                  {},
-                  {},
-                  &plan),
+                      {sc::QueryCondition{L"Name",
+                                          sc::QueryConditionOperator::Contains,
+                                          {sc::SCValue::FromString(L"Al")}}}}},
+                  sc::QueryLogicOperator::And, {}, {}, {}, {}, &plan),
               sc::SC_OK);
     EXPECT_EQ(plan.state, sc::QueryPlanState::ScanFallback);
 
@@ -173,5 +169,6 @@ TEST(QueryMemoryExecutorTests, MemoryExecutorRunsControlledFallbackScan)
     EXPECT_EQ(result.scannedRows, 3u);
     EXPECT_EQ(result.matchedRows, 2u);
     EXPECT_EQ(result.returnedRows, 2u);
-    EXPECT_NE(result.executionNote.find(L"planner-fallback"), std::wstring::npos);
+    EXPECT_NE(result.executionNote.find(L"planner-fallback"),
+              std::wstring::npos);
 }

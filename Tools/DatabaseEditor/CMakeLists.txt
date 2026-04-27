@@ -16,6 +16,23 @@ add_executable(SCStorageDatabaseEditor
     main.cpp
 )
 SCStorageConfigureOutputDirs(SCStorageDatabaseEditor)
+SCStorageSourceGroupTree("${CMAKE_CURRENT_SOURCE_DIR}"
+    SCAddColumnDialog.cpp
+    SCAddColumnDialog.h
+    SCComputedColumnDialog.cpp
+    SCComputedColumnDialog.h
+    SCDatabaseEditorMainWindow.cpp
+    SCDatabaseEditorMainWindow.h
+    SCDatabaseSession.cpp
+    SCDatabaseSession.h
+    SCRecordFilterProxyModel.cpp
+    SCRecordFilterProxyModel.h
+    SCRecordTableModel.cpp
+    SCRecordTableModel.h
+    SCRelationPickerDialog.cpp
+    SCRelationPickerDialog.h
+    main.cpp
+)
 
 target_link_libraries(SCStorageDatabaseEditor
         PRIVATE

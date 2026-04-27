@@ -21,65 +21,65 @@
 namespace StableCore::Storage::Editor
 {
 
-class SCDatabaseEditorMainWindow final : public QMainWindow
-{
-    Q_OBJECT
+    class SCDatabaseEditorMainWindow final : public QMainWindow
+    {
+        Q_OBJECT
 
-public:
-    explicit SCDatabaseEditorMainWindow(QWidget* parent = nullptr);
+    public:
+        explicit SCDatabaseEditorMainWindow(QWidget* parent = nullptr);
 
-private slots:
-    void CreateDatabase();
-    void OpenDatabase();
-    void CreateTable();
-    void AddColumn();
-    void AddSessionComputedColumn();
-    void EditSelectedComputedColumn();
-    void DeleteSelectedComputedColumn();
-    void AddRecord();
-    void DeleteSelectedRecord();
-    void EditSelectedRelation();
-    void UndoLastAction();
-    void RedoLastAction();
-    void RefreshCurrentView();
-    void ShowHealthSummary();
-    void ShowEditLogSummary();
-    void ExportDebugPackage();
-    void OnTableSelectionChanged();
-    void OnGridSelectionChanged();
-    void OnFilterTextChanged(const QString& text);
-    void UpdateSchemaInspector();
-    void UpdateRecordInspector();
-    void UpdateComputedColumnsPanel();
-    void UpdateGridSummary();
-    void UpdateEditLogPanel();
-    void RefreshOverviewPanels();
+    private slots:
+        void CreateDatabase();
+        void OpenDatabase();
+        void CreateTable();
+        void AddColumn();
+        void AddSessionComputedColumn();
+        void EditSelectedComputedColumn();
+        void DeleteSelectedComputedColumn();
+        void AddRecord();
+        void DeleteSelectedRecord();
+        void EditSelectedRelation();
+        void UndoLastAction();
+        void RedoLastAction();
+        void RefreshCurrentView();
+        void ShowHealthSummary();
+        void ShowEditLogSummary();
+        void ExportDebugPackage();
+        void OnTableSelectionChanged();
+        void OnGridSelectionChanged();
+        void OnFilterTextChanged(const QString& text);
+        void UpdateSchemaInspector();
+        void UpdateRecordInspector();
+        void UpdateComputedColumnsPanel();
+        void UpdateGridSummary();
+        void UpdateEditLogPanel();
+        void RefreshOverviewPanels();
 
-private:
-    QModelIndex CurrentSourceIndex() const;
-    QString CurrentComputedColumnName() const;
-    void SelectComputedColumnByName(const QString& name);
-    void BuildUi();
-    void BuildMenus();
-    void ShowError(const QString& title, const QString& message);
-    void SetStatusMessage(const QString& text);
+    private:
+        QModelIndex CurrentSourceIndex() const;
+        QString CurrentComputedColumnName() const;
+        void SelectComputedColumnByName(const QString& name);
+        void BuildUi();
+        void BuildMenus();
+        void ShowError(const QString& title, const QString& message);
+        void SetStatusMessage(const QString& text);
 
-    SCDatabaseSession* session_{nullptr};
-    SCRecordTableModel* recordModel_{nullptr};
-    SCRecordFilterProxyModel* filterModel_{nullptr};
+        SCDatabaseSession* session_{nullptr};
+        SCRecordTableModel* recordModel_{nullptr};
+        SCRecordFilterProxyModel* filterModel_{nullptr};
 
-    QListWidget* tablesList_{nullptr};
-    QTableView* dataTable_{nullptr};
-    QLineEdit* filterEdit_{nullptr};
-    QLabel* tableSummaryLabel_{nullptr};
-    QTreeWidget* schemaTree_{nullptr};
-    QTreeWidget* recordTree_{nullptr};
-    QTreeWidget* computedColumnsTree_{nullptr};
-    QDockWidget* editLogDock_{nullptr};
-    QPlainTextEdit* editStateText_{nullptr};
-    QTreeWidget* editLogTree_{nullptr};
-    QPlainTextEdit* diagnosticsText_{nullptr};
-    QLabel* statusLabel_{nullptr};
-};
+        QListWidget* tablesList_{nullptr};
+        QTableView* dataTable_{nullptr};
+        QLineEdit* filterEdit_{nullptr};
+        QLabel* tableSummaryLabel_{nullptr};
+        QTreeWidget* schemaTree_{nullptr};
+        QTreeWidget* recordTree_{nullptr};
+        QTreeWidget* computedColumnsTree_{nullptr};
+        QDockWidget* editLogDock_{nullptr};
+        QPlainTextEdit* editStateText_{nullptr};
+        QTreeWidget* editLogTree_{nullptr};
+        QPlainTextEdit* diagnosticsText_{nullptr};
+        QLabel* statusLabel_{nullptr};
+    };
 
 }  // namespace StableCore::Storage::Editor

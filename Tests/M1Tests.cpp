@@ -9,58 +9,58 @@ namespace sc = StableCore::Storage;
 namespace
 {
 
-struct RecordingObserver final : sc::ISCDatabaseObserver
-{
-    void OnDatabaseChanged(const sc::SCChangeSet& SCChangeSet) override
+    struct RecordingObserver final : sc::ISCDatabaseObserver
     {
-        seen.push_back(SCChangeSet);
+        void OnDatabaseChanged(const sc::SCChangeSet& SCChangeSet) override
+        {
+            seen.push_back(SCChangeSet);
+        }
+
+        std::vector<sc::SCChangeSet> seen;
+    };
+
+    sc::SCTablePtr CreateBeamTable(sc::SCDbPtr& db)
+    {
+        sc::SCTablePtr table;
+        EXPECT_EQ(db->CreateTable(L"Beam", table), sc::SC_OK);
+
+        sc::SCSchemaPtr schema;
+        EXPECT_EQ(table->GetSchema(schema), sc::SC_OK);
+
+        sc::SCColumnDef width;
+        width.name = L"Width";
+        width.displayName = L"Width";
+        width.valueKind = sc::ValueKind::Int64;
+        width.defaultValue = sc::SCValue::FromInt64(0);
+        EXPECT_EQ(schema->AddColumn(width), sc::SC_OK);
+
+        sc::SCColumnDef name;
+        name.name = L"Name";
+        name.displayName = L"Name";
+        name.valueKind = sc::ValueKind::String;
+        name.nullable = true;
+        EXPECT_EQ(schema->AddColumn(name), sc::SC_OK);
+
+        return table;
     }
 
-    std::vector<sc::SCChangeSet> seen;
-};
+    sc::SCTablePtr CreateFloorTable(sc::SCDbPtr& db)
+    {
+        sc::SCTablePtr table;
+        EXPECT_EQ(db->CreateTable(L"Floor", table), sc::SC_OK);
 
-sc::SCTablePtr CreateBeamTable(sc::SCDbPtr& db)
-{
-    sc::SCTablePtr table;
-    EXPECT_EQ(db->CreateTable(L"Beam", table), sc::SC_OK);
+        sc::SCSchemaPtr schema;
+        EXPECT_EQ(table->GetSchema(schema), sc::SC_OK);
 
-    sc::SCSchemaPtr schema;
-    EXPECT_EQ(table->GetSchema(schema), sc::SC_OK);
+        sc::SCColumnDef title;
+        title.name = L"Title";
+        title.displayName = L"Title";
+        title.valueKind = sc::ValueKind::String;
+        title.defaultValue = sc::SCValue::FromString(L"");
+        EXPECT_EQ(schema->AddColumn(title), sc::SC_OK);
 
-    sc::SCColumnDef width;
-    width.name = L"Width";
-    width.displayName = L"Width";
-    width.valueKind = sc::ValueKind::Int64;
-    width.defaultValue = sc::SCValue::FromInt64(0);
-    EXPECT_EQ(schema->AddColumn(width), sc::SC_OK);
-
-    sc::SCColumnDef name;
-    name.name = L"Name";
-    name.displayName = L"Name";
-    name.valueKind = sc::ValueKind::String;
-    name.nullable = true;
-    EXPECT_EQ(schema->AddColumn(name), sc::SC_OK);
-
-    return table;
-}
-
-sc::SCTablePtr CreateFloorTable(sc::SCDbPtr& db)
-{
-    sc::SCTablePtr table;
-    EXPECT_EQ(db->CreateTable(L"Floor", table), sc::SC_OK);
-
-    sc::SCSchemaPtr schema;
-    EXPECT_EQ(table->GetSchema(schema), sc::SC_OK);
-
-    sc::SCColumnDef title;
-    title.name = L"Title";
-    title.displayName = L"Title";
-    title.valueKind = sc::ValueKind::String;
-    title.defaultValue = sc::SCValue::FromString(L"");
-    EXPECT_EQ(schema->AddColumn(title), sc::SC_OK);
-
-    return table;
-}
+        return table;
+    }
 
 }  // namespace
 
@@ -253,7 +253,8 @@ TEST(StorageM1, RelationFieldValidationAndChangeSet)
     bool sawRelationUpdate = false;
     for (const auto& change : SCChangeSet.changes)
     {
-        if (change.kind == sc::ChangeKind::RelationUpdated && change.fieldName == L"FloorRef")
+        if (change.kind == sc::ChangeKind::RelationUpdated &&
+            change.fieldName == L"FloorRef")
         {
             sawRelationUpdate = true;
         }
@@ -301,7 +302,9 @@ TEST(StorageM1, WriteRequiresActiveEditAndEmptyQueryIsNotError)
     EXPECT_EQ(beam->SetInt64(L"Width", 200), sc::SC_E_NO_ACTIVE_EDIT);
 
     sc::SCRecordCursorPtr cursor;
-    EXPECT_EQ(beamTable->FindRecords({L"Width", sc::SCValue::FromInt64(999)}, cursor), sc::SC_OK);
+    EXPECT_EQ(
+        beamTable->FindRecords({L"Width", sc::SCValue::FromInt64(999)}, cursor),
+        sc::SC_OK);
 
     bool hasRow = true;
     EXPECT_EQ(cursor->MoveNext(&hasRow), sc::SC_OK);
@@ -368,5 +371,7 @@ TEST(StorageM1, CreateBackupCopyIsNotSupportedOnMemoryDatabase)
     sc::SCBackupOptions options;
     sc::SCBackupResult result;
 
-    EXPECT_EQ(db->CreateBackupCopy(L"StableCoreStorage_M1_BackupCopy.sqlite", options, &result), sc::SC_E_NOTIMPL);
+    EXPECT_EQ(db->CreateBackupCopy(L"StableCoreStorage_M1_BackupCopy.sqlite",
+                                   options, &result),
+              sc::SC_E_NOTIMPL);
 }

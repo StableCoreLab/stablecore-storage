@@ -7,29 +7,29 @@
 namespace StableCore::Storage
 {
 
-class SCRefCountedObject : public virtual ISCRefObject
-{
-public:
-    unsigned int AddRef() override
+    class SCRefCountedObject : public virtual ISCRefObject
     {
-        return ++refCount_;
-    }
-
-    unsigned int Release() override
-    {
-        const unsigned int remaining = --refCount_;
-        if (remaining == 0)
+    public:
+        unsigned int AddRef() override
         {
-            delete this;
+            return ++refCount_;
         }
-        return remaining;
-    }
 
-protected:
-    ~SCRefCountedObject() override = default;
+        unsigned int Release() override
+        {
+            const unsigned int remaining = --refCount_;
+            if (remaining == 0)
+            {
+                delete this;
+            }
+            return remaining;
+        }
 
-private:
-    std::atomic<unsigned int> refCount_{1};
-};
+    protected:
+        ~SCRefCountedObject() override = default;
+
+    private:
+        std::atomic<unsigned int> refCount_{1};
+    };
 
 }  // namespace StableCore::Storage

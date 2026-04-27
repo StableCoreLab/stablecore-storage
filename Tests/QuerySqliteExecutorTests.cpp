@@ -11,72 +11,73 @@ namespace fs = std::filesystem;
 namespace
 {
 
-fs::path MakeTempDbPath(const wchar_t* fileName)
-{
-    fs::path path = fs::temp_directory_path() / fileName;
-    std::error_code ec;
-    fs::remove(path, ec);
-    return path;
-}
+    fs::path MakeTempDbPath(const wchar_t* fileName)
+    {
+        fs::path path = fs::temp_directory_path() / fileName;
+        std::error_code ec;
+        fs::remove(path, ec);
+        return path;
+    }
 
-sc::ErrorCode CreateFileDb(const wchar_t* path, sc::SCDbPtr& db)
-{
-    return sc::CreateFileDatabase(path, sc::SCOpenDatabaseOptions{}, db);
-}
+    sc::ErrorCode CreateFileDb(const wchar_t* path, sc::SCDbPtr& db)
+    {
+        return sc::CreateFileDatabase(path, sc::SCOpenDatabaseOptions{}, db);
+    }
 
-sc::SCTablePtr CreateQueryableBeamTable(sc::SCDbPtr& db)
-{
-    sc::SCTablePtr table;
-    EXPECT_EQ(db->CreateTable(L"Beam", table), sc::SC_OK);
+    sc::SCTablePtr CreateQueryableBeamTable(sc::SCDbPtr& db)
+    {
+        sc::SCTablePtr table;
+        EXPECT_EQ(db->CreateTable(L"Beam", table), sc::SC_OK);
 
-    sc::SCSchemaPtr schema;
-    EXPECT_EQ(table->GetSchema(schema), sc::SC_OK);
+        sc::SCSchemaPtr schema;
+        EXPECT_EQ(table->GetSchema(schema), sc::SC_OK);
 
-    sc::SCColumnDef width;
-    width.name = L"Width";
-    width.displayName = L"Width";
-    width.valueKind = sc::ValueKind::Int64;
-    width.indexed = true;
-    width.defaultValue = sc::SCValue::FromInt64(0);
-    EXPECT_EQ(schema->AddColumn(width), sc::SC_OK);
+        sc::SCColumnDef width;
+        width.name = L"Width";
+        width.displayName = L"Width";
+        width.valueKind = sc::ValueKind::Int64;
+        width.indexed = true;
+        width.defaultValue = sc::SCValue::FromInt64(0);
+        EXPECT_EQ(schema->AddColumn(width), sc::SC_OK);
 
-    sc::SCColumnDef name;
-    name.name = L"Name";
-    name.displayName = L"Name";
-    name.valueKind = sc::ValueKind::String;
-    name.indexed = true;
-    name.defaultValue = sc::SCValue::FromString(L"");
-    EXPECT_EQ(schema->AddColumn(name), sc::SC_OK);
+        sc::SCColumnDef name;
+        name.name = L"Name";
+        name.displayName = L"Name";
+        name.valueKind = sc::ValueKind::String;
+        name.indexed = true;
+        name.defaultValue = sc::SCValue::FromString(L"");
+        EXPECT_EQ(schema->AddColumn(name), sc::SC_OK);
 
-    return table;
-}
+        return table;
+    }
 
-void SeedQueryableBeamRows(const sc::SCTablePtr& table, sc::SCDbPtr& db)
-{
-    sc::SCEditPtr edit;
-    EXPECT_EQ(db->BeginEdit(L"seed", edit), sc::SC_OK);
+    void SeedQueryableBeamRows(const sc::SCTablePtr& table, sc::SCDbPtr& db)
+    {
+        sc::SCEditPtr edit;
+        EXPECT_EQ(db->BeginEdit(L"seed", edit), sc::SC_OK);
 
-    sc::SCRecordPtr row;
-    EXPECT_EQ(table->CreateRecord(row), sc::SC_OK);
-    EXPECT_EQ(row->SetInt64(L"Width", 100), sc::SC_OK);
-    EXPECT_EQ(row->SetString(L"Name", L"Alpha"), sc::SC_OK);
+        sc::SCRecordPtr row;
+        EXPECT_EQ(table->CreateRecord(row), sc::SC_OK);
+        EXPECT_EQ(row->SetInt64(L"Width", 100), sc::SC_OK);
+        EXPECT_EQ(row->SetString(L"Name", L"Alpha"), sc::SC_OK);
 
-    EXPECT_EQ(table->CreateRecord(row), sc::SC_OK);
-    EXPECT_EQ(row->SetInt64(L"Width", 200), sc::SC_OK);
-    EXPECT_EQ(row->SetString(L"Name", L"Beta"), sc::SC_OK);
+        EXPECT_EQ(table->CreateRecord(row), sc::SC_OK);
+        EXPECT_EQ(row->SetInt64(L"Width", 200), sc::SC_OK);
+        EXPECT_EQ(row->SetString(L"Name", L"Beta"), sc::SC_OK);
 
-    EXPECT_EQ(table->CreateRecord(row), sc::SC_OK);
-    EXPECT_EQ(row->SetInt64(L"Width", 300), sc::SC_OK);
-    EXPECT_EQ(row->SetString(L"Name", L"Alpine"), sc::SC_OK);
+        EXPECT_EQ(table->CreateRecord(row), sc::SC_OK);
+        EXPECT_EQ(row->SetInt64(L"Width", 300), sc::SC_OK);
+        EXPECT_EQ(row->SetString(L"Name", L"Alpine"), sc::SC_OK);
 
-    EXPECT_EQ(db->Commit(edit.Get()), sc::SC_OK);
-}
+        EXPECT_EQ(db->Commit(edit.Get()), sc::SC_OK);
+    }
 
 }  // namespace
 
 TEST(QuerySqliteExecutorTests, LegacyFindRecordsRoutesThroughExecutor)
 {
-    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_QuerySqlite_Legacy.sqlite");
+    const fs::path dbPath =
+        MakeTempDbPath(L"StableCoreStorage_QuerySqlite_Legacy.sqlite");
 
     sc::SCDbPtr db;
     EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
@@ -85,7 +86,9 @@ TEST(QuerySqliteExecutorTests, LegacyFindRecordsRoutesThroughExecutor)
     SeedQueryableBeamRows(table, db);
 
     sc::SCRecordCursorPtr cursor;
-    EXPECT_EQ(table->FindRecords({L"Width", sc::SCValue::FromInt64(200)}, cursor), sc::SC_OK);
+    EXPECT_EQ(
+        table->FindRecords({L"Width", sc::SCValue::FromInt64(200)}, cursor),
+        sc::SC_OK);
 
     bool hasRow = false;
     EXPECT_EQ(cursor->MoveNext(&hasRow), sc::SC_OK);
@@ -101,7 +104,8 @@ TEST(QuerySqliteExecutorTests, LegacyFindRecordsRoutesThroughExecutor)
 
 TEST(QuerySqliteExecutorTests, SqliteExecutorReportsDirectAndPartialModes)
 {
-    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_QuerySqlite_Result.sqlite");
+    const fs::path dbPath =
+        MakeTempDbPath(L"StableCoreStorage_QuerySqlite_Result.sqlite");
 
     sc::SCDbPtr db;
     EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
@@ -117,13 +121,10 @@ TEST(QuerySqliteExecutorTests, SqliteExecutorReportsDirectAndPartialModes)
                   sc::QueryTarget{L"Beam", sc::QueryTargetType::Table},
                   {sc::QueryConditionGroup{
                       sc::QueryLogicOperator::And,
-                      {sc::QueryCondition{L"Width", sc::QueryConditionOperator::Equal, {sc::SCValue::FromInt64(200)}}}}},
-                  sc::QueryLogicOperator::And,
-                  {},
-                  {},
-                  {},
-                  {},
-                  &directPlan),
+                      {sc::QueryCondition{L"Width",
+                                          sc::QueryConditionOperator::Equal,
+                                          {sc::SCValue::FromInt64(200)}}}}},
+                  sc::QueryLogicOperator::And, {}, {}, {}, {}, &directPlan),
               sc::SC_OK);
 
     sc::SCRecordCursorPtr directCursor;
@@ -133,27 +134,27 @@ TEST(QuerySqliteExecutorTests, SqliteExecutorReportsDirectAndPartialModes)
     directContext.database = db.Get();
     directContext.backendHandle = db.Get();
     directContext.resultCursor = &directCursor;
-    EXPECT_EQ(sc::ExecuteQueryPlan(directPlan, directContext, &directResult), sc::SC_OK);
+    EXPECT_EQ(sc::ExecuteQueryPlan(directPlan, directContext, &directResult),
+              sc::SC_OK);
     EXPECT_EQ(directResult.mode, sc::QueryExecutionMode::DirectIndex);
     EXPECT_FALSE(directResult.fallbackTriggered);
     EXPECT_EQ(directResult.matchedRows, 1u);
     EXPECT_EQ(directResult.returnedRows, 1u);
     EXPECT_FALSE(directResult.usedIndexIds.empty());
-    EXPECT_NE(directResult.executionNote.find(L"SELECT record_id"), std::wstring::npos);
+    EXPECT_NE(directResult.executionNote.find(L"SELECT record_id"),
+              std::wstring::npos);
 
     sc::QueryPlan partialPlan;
-    EXPECT_EQ(planner->BuildPlan(
-                  sc::QueryTarget{L"Beam", sc::QueryTargetType::Table},
-                  {sc::QueryConditionGroup{
-                      sc::QueryLogicOperator::And,
-                      {sc::QueryCondition{L"Name", sc::QueryConditionOperator::StartsWith, {sc::SCValue::FromString(L"Al")}}}}},
-                  sc::QueryLogicOperator::And,
-                  {},
-                  {},
-                  {},
-                  {},
-                  &partialPlan),
-              sc::SC_OK);
+    EXPECT_EQ(
+        planner->BuildPlan(
+            sc::QueryTarget{L"Beam", sc::QueryTargetType::Table},
+            {sc::QueryConditionGroup{
+                sc::QueryLogicOperator::And,
+                {sc::QueryCondition{L"Name",
+                                    sc::QueryConditionOperator::StartsWith,
+                                    {sc::SCValue::FromString(L"Al")}}}}},
+            sc::QueryLogicOperator::And, {}, {}, {}, {}, &partialPlan),
+        sc::SC_OK);
 
     sc::SCRecordCursorPtr partialCursor;
     sc::QueryExecutionResult partialResult;
@@ -162,7 +163,8 @@ TEST(QuerySqliteExecutorTests, SqliteExecutorReportsDirectAndPartialModes)
     partialContext.database = db.Get();
     partialContext.backendHandle = db.Get();
     partialContext.resultCursor = &partialCursor;
-    EXPECT_EQ(sc::ExecuteQueryPlan(partialPlan, partialContext, &partialResult), sc::SC_OK);
+    EXPECT_EQ(sc::ExecuteQueryPlan(partialPlan, partialContext, &partialResult),
+              sc::SC_OK);
     EXPECT_EQ(partialResult.mode, sc::QueryExecutionMode::PartialIndex);
     EXPECT_FALSE(partialResult.fallbackTriggered);
     EXPECT_EQ(partialResult.matchedRows, 2u);
@@ -172,7 +174,8 @@ TEST(QuerySqliteExecutorTests, SqliteExecutorReportsDirectAndPartialModes)
 
 TEST(QuerySqliteExecutorTests, ExecutorRejectsRequireIndexOnPartialPlans)
 {
-    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_QuerySqlite_Unsupported.sqlite");
+    const fs::path dbPath =
+        MakeTempDbPath(L"StableCoreStorage_QuerySqlite_Unsupported.sqlite");
 
     sc::SCDbPtr db;
     EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
@@ -182,12 +185,11 @@ TEST(QuerySqliteExecutorTests, ExecutorRejectsRequireIndexOnPartialPlans)
 
     sc::QueryPlan plan;
     plan.target = sc::QueryTarget{L"Beam", sc::QueryTargetType::Table};
-    plan.conditionGroups = {
-        sc::QueryConditionGroup{
-            sc::QueryLogicOperator::And,
-            {sc::QueryCondition{L"Name", sc::QueryConditionOperator::StartsWith, {sc::SCValue::FromString(L"Al")}}}
-        }
-    };
+    plan.conditionGroups = {sc::QueryConditionGroup{
+        sc::QueryLogicOperator::And,
+        {sc::QueryCondition{L"Name",
+                            sc::QueryConditionOperator::StartsWith,
+                            {sc::SCValue::FromString(L"Al")}}}}};
     plan.conditionGroupLogic = sc::QueryLogicOperator::And;
     plan.state = sc::QueryPlanState::PartialIndex;
     plan.constraints.requireIndex = true;
@@ -201,14 +203,17 @@ TEST(QuerySqliteExecutorTests, ExecutorRejectsRequireIndexOnPartialPlans)
     context.database = db.Get();
     context.backendHandle = db.Get();
     context.resultCursor = &cursor;
-    EXPECT_EQ(sc::ExecuteQueryPlan(plan, context, &result), sc::SC_E_INVALIDARG);
+    EXPECT_EQ(sc::ExecuteQueryPlan(plan, context, &result),
+              sc::SC_E_INVALIDARG);
     EXPECT_EQ(result.mode, sc::QueryExecutionMode::Unsupported);
-    EXPECT_NE(result.executionNote.find(L"executor-unsupported:index-required"), std::wstring::npos);
+    EXPECT_NE(result.executionNote.find(L"executor-unsupported:index-required"),
+              std::wstring::npos);
 }
 
 TEST(QuerySqliteExecutorTests, SqliteExecutorRunsControlledFallbackScan)
 {
-    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_QuerySqlite_Fallback.sqlite");
+    const fs::path dbPath =
+        MakeTempDbPath(L"StableCoreStorage_QuerySqlite_Fallback.sqlite");
 
     sc::SCDbPtr db;
     EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
@@ -224,13 +229,10 @@ TEST(QuerySqliteExecutorTests, SqliteExecutorRunsControlledFallbackScan)
                   sc::QueryTarget{L"Beam", sc::QueryTargetType::Table},
                   {sc::QueryConditionGroup{
                       sc::QueryLogicOperator::And,
-                      {sc::QueryCondition{L"Name", sc::QueryConditionOperator::Contains, {sc::SCValue::FromString(L"Al")}}}}},
-                  sc::QueryLogicOperator::And,
-                  {},
-                  {},
-                  {},
-                  {},
-                  &plan),
+                      {sc::QueryCondition{L"Name",
+                                          sc::QueryConditionOperator::Contains,
+                                          {sc::SCValue::FromString(L"Al")}}}}},
+                  sc::QueryLogicOperator::And, {}, {}, {}, {}, &plan),
               sc::SC_OK);
     EXPECT_EQ(plan.state, sc::QueryPlanState::ScanFallback);
 
@@ -249,6 +251,6 @@ TEST(QuerySqliteExecutorTests, SqliteExecutorRunsControlledFallbackScan)
     EXPECT_EQ(result.scannedRows, 3u);
     EXPECT_EQ(result.matchedRows, 2u);
     EXPECT_EQ(result.returnedRows, 2u);
-    EXPECT_NE(result.executionNote.find(L"planner-fallback"), std::wstring::npos);
+    EXPECT_NE(result.executionNote.find(L"planner-fallback"),
+              std::wstring::npos);
 }
-

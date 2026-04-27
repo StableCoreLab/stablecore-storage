@@ -15,111 +15,129 @@
 namespace StableCore::Storage::Editor
 {
 
-class SCDatabaseSession final : public QObject
-{
-    Q_OBJECT
-
-public:
-    struct RelationCandidate
+    class SCDatabaseSession final : public QObject
     {
-        StableCore::Storage::RecordId recordId{0};
-        QString label;
-        QVector<QPair<QString, QString>> previewFields;
+        Q_OBJECT
+
+    public:
+        struct RelationCandidate
+        {
+            StableCore::Storage::RecordId recordId{0};
+            QString label;
+            QVector<QPair<QString, QString>> previewFields;
+        };
+
+        explicit SCDatabaseSession(QObject* parent = nullptr);
+
+        bool IsOpen() const noexcept;
+        QString DatabasePath() const;
+        QString CurrentTableName() const;
+        QStringList TableNames() const;
+
+        StableCore::Storage::ISCDatabase* Database() const noexcept;
+        StableCore::Storage::ISCTable* CurrentTable() const noexcept;
+        StableCore::Storage::ISCComputedTableView* CurrentTableView()
+            const noexcept;
+
+        bool CreateDatabase(const QString& filePath, QString* outError);
+        bool OpenDatabase(const QString& filePath, QString* outError);
+        bool GetEditLogState(StableCore::Storage::SCEditLogState* outState,
+                             QString* outError) const;
+        bool GetEditingState(
+            StableCore::Storage::SCEditingDatabaseState* outState,
+            QString* outError) const;
+        bool Refresh(QString* outError);
+        bool CreateTable(const QString& tableName, QString* outError);
+        bool SelectTable(const QString& tableName, QString* outError);
+        bool AddColumn(const StableCore::Storage::SCColumnDef& column,
+                       QString* outError);
+        bool AddRecord(QString* outError);
+        bool DeleteRecord(StableCore::Storage::RecordId recordId,
+                          QString* outError);
+        bool Undo(QString* outError);
+        bool Redo(QString* outError);
+        bool BeginImportSession(const QString& sessionName,
+                                std::size_t chunkSize, QString* outError);
+        bool AppendImportChunk(
+            const QVector<StableCore::Storage::SCBatchTableRequest>& requests,
+            QString* outError);
+        bool FinalizeImportSession(QString* outError);
+        bool CancelImportSession(QString* outError);
+        bool GetImportRecoveryState(
+            StableCore::Storage::SCImportRecoveryState* outState,
+            QString* outError) const;
+        bool ExportDebugPackage(
+            const QString& filePath,
+            const StableCore::Storage::SCExportRequest& request,
+            QString* outError) const;
+        bool SetCellValue(StableCore::Storage::RecordId recordId,
+                          const QString& columnName, const QVariant& SCValue,
+                          QString* outError);
+        bool GetColumnDef(const QString& columnName,
+                          StableCore::Storage::SCColumnDef* outColumn,
+                          QString* outError) const;
+        bool BuildRelationCandidates(const QString& targetTableName,
+                                     QVector<RelationCandidate>* outCandidates,
+                                     QString* outError) const;
+        bool AddSessionComputedColumn(
+            const StableCore::Storage::SCComputedColumnDef& column,
+            QString* outError);
+        bool UpdateSessionComputedColumn(
+            const QString& originalName,
+            const StableCore::Storage::SCComputedColumnDef& column,
+            QString* outError);
+        bool RemoveSessionComputedColumn(const QString& name,
+                                         QString* outError);
+        bool GetSessionComputedColumn(
+            const QString& name,
+            StableCore::Storage::SCComputedColumnDef* outColumn,
+            QString* outError) const;
+        QVector<StableCore::Storage::SCComputedColumnDef>
+        CurrentSessionComputedColumns() const;
+
+        QString BuildHealthSummary() const;
+        bool BuildSchemaSnapshot(
+            QVector<StableCore::Storage::SCColumnDef>* outColumns,
+            QString* outError) const;
+        bool BuildRecordSnapshot(StableCore::Storage::RecordId recordId,
+                                 QVector<QPair<QString, QString>>* outFields,
+                                 QString* outError) const;
+        void SetForceRebuildCurrentTableViewFailureForTest(bool enabled);
+
+    signals:
+        void DatabaseOpened();
+        void TablesChanged();
+        void CurrentTableChanged();
+        void RecordsChanged();
+
+    private:
+        QVector<StableCore::Storage::SCComputedColumnDef>*
+        CurrentSessionComputedColumnsStorage();
+        const QVector<StableCore::Storage::SCComputedColumnDef>*
+        CurrentSessionComputedColumnsStorage() const;
+        bool LoadTableNames(QString* outError);
+        bool RebuildCurrentTableView(QString* outError);
+        bool BeginAndCommitSingleAction(
+            const wchar_t* actionName,
+            const std::function<StableCore::Storage::ErrorCode()>& action,
+            QString* outError);
+        StableCore::Storage::ErrorCode ConvertVariantToValue(
+            const StableCore::Storage::SCColumnDef& column,
+            const QVariant& input,
+            StableCore::Storage::SCValue* outValue) const;
+        QString ErrorToString(StableCore::Storage::ErrorCode error) const;
+
+        StableCore::Storage::SCDbPtr db_;
+        StableCore::Storage::SCTablePtr currentTable_;
+        StableCore::Storage::SCComputedTableViewPtr currentTableView_;
+        StableCore::Storage::SCImportStagingArea importSession_;
+        bool importSessionActive_{false};
+        QString databasePath_;
+        QString currentTableName_;
+        QStringList tableNames_;
+        QHash<QString, QVector<StableCore::Storage::SCComputedColumnDef>>
+            sessionComputedColumnsByTable_;
+        bool forceRebuildCurrentTableViewFailureForTest_{false};
     };
-
-    explicit SCDatabaseSession(QObject* parent = nullptr);
-
-    bool IsOpen() const noexcept;
-    QString DatabasePath() const;
-    QString CurrentTableName() const;
-    QStringList TableNames() const;
-
-    StableCore::Storage::ISCDatabase* Database() const noexcept;
-    StableCore::Storage::ISCTable* CurrentTable() const noexcept;
-    StableCore::Storage::ISCComputedTableView* CurrentTableView() const noexcept;
-
-    bool CreateDatabase(const QString& filePath, QString* outError);
-    bool OpenDatabase(const QString& filePath, QString* outError);
-    bool GetEditLogState(StableCore::Storage::SCEditLogState* outState, QString* outError) const;
-    bool GetEditingState(StableCore::Storage::SCEditingDatabaseState* outState, QString* outError) const;
-    bool Refresh(QString* outError);
-    bool CreateTable(const QString& tableName, QString* outError);
-    bool SelectTable(const QString& tableName, QString* outError);
-    bool AddColumn(const StableCore::Storage::SCColumnDef& column, QString* outError);
-    bool AddRecord(QString* outError);
-    bool DeleteRecord(StableCore::Storage::RecordId recordId, QString* outError);
-    bool Undo(QString* outError);
-    bool Redo(QString* outError);
-    bool BeginImportSession(const QString& sessionName, std::size_t chunkSize, QString* outError);
-    bool AppendImportChunk(const QVector<StableCore::Storage::SCBatchTableRequest>& requests, QString* outError);
-    bool FinalizeImportSession(QString* outError);
-    bool CancelImportSession(QString* outError);
-    bool GetImportRecoveryState(StableCore::Storage::SCImportRecoveryState* outState, QString* outError) const;
-    bool ExportDebugPackage(
-        const QString& filePath,
-        const StableCore::Storage::SCExportRequest& request,
-        QString* outError) const;
-    bool SetCellValue(
-        StableCore::Storage::RecordId recordId,
-        const QString& columnName,
-        const QVariant& SCValue,
-        QString* outError);
-    bool GetColumnDef(const QString& columnName, StableCore::Storage::SCColumnDef* outColumn, QString* outError) const;
-    bool BuildRelationCandidates(
-        const QString& targetTableName,
-        QVector<RelationCandidate>* outCandidates,
-        QString* outError) const;
-    bool AddSessionComputedColumn(const StableCore::Storage::SCComputedColumnDef& column, QString* outError);
-    bool UpdateSessionComputedColumn(
-        const QString& originalName,
-        const StableCore::Storage::SCComputedColumnDef& column,
-        QString* outError);
-    bool RemoveSessionComputedColumn(const QString& name, QString* outError);
-    bool GetSessionComputedColumn(
-        const QString& name,
-        StableCore::Storage::SCComputedColumnDef* outColumn,
-        QString* outError) const;
-    QVector<StableCore::Storage::SCComputedColumnDef> CurrentSessionComputedColumns() const;
-
-    QString BuildHealthSummary() const;
-    bool BuildSchemaSnapshot(QVector<StableCore::Storage::SCColumnDef>* outColumns, QString* outError) const;
-    bool BuildRecordSnapshot(
-        StableCore::Storage::RecordId recordId,
-        QVector<QPair<QString, QString>>* outFields,
-        QString* outError) const;
-    void SetForceRebuildCurrentTableViewFailureForTest(bool enabled);
-
-signals:
-    void DatabaseOpened();
-    void TablesChanged();
-    void CurrentTableChanged();
-    void RecordsChanged();
-
-private:
-    QVector<StableCore::Storage::SCComputedColumnDef>* CurrentSessionComputedColumnsStorage();
-    const QVector<StableCore::Storage::SCComputedColumnDef>* CurrentSessionComputedColumnsStorage() const;
-    bool LoadTableNames(QString* outError);
-    bool RebuildCurrentTableView(QString* outError);
-    bool BeginAndCommitSingleAction(
-        const wchar_t* actionName,
-        const std::function<StableCore::Storage::ErrorCode()>& action,
-        QString* outError);
-    StableCore::Storage::ErrorCode ConvertVariantToValue(
-        const StableCore::Storage::SCColumnDef& column,
-        const QVariant& input,
-        StableCore::Storage::SCValue* outValue) const;
-    QString ErrorToString(StableCore::Storage::ErrorCode error) const;
-
-    StableCore::Storage::SCDbPtr db_;
-    StableCore::Storage::SCTablePtr currentTable_;
-    StableCore::Storage::SCComputedTableViewPtr currentTableView_;
-    StableCore::Storage::SCImportStagingArea importSession_;
-    bool importSessionActive_{false};
-    QString databasePath_;
-    QString currentTableName_;
-    QStringList tableNames_;
-    QHash<QString, QVector<StableCore::Storage::SCComputedColumnDef>> sessionComputedColumnsByTable_;
-    bool forceRebuildCurrentTableViewFailureForTest_{false};
-};
 
 }  // namespace StableCore::Storage::Editor

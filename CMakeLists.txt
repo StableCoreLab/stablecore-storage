@@ -68,6 +68,12 @@ function(SCStorageConfigureOutputDirs target_name)
     SCEnableUtf8ForTargets(${target_name})
 endfunction()
 
+function(SCStorageSourceGroupTree root_dir)
+    if (ARGC GREATER 1)
+        source_group(TREE "${root_dir}" FILES ${ARGN})
+    endif()
+endfunction()
+
 if (NOT DEFINED CMAKE_PREFIX_PATH AND DEFINED ENV{QT6_8_x64} AND NOT "$ENV{QT6_8_x64}" STREQUAL "")
     set(CMAKE_PREFIX_PATH "$ENV{QT6_8_x64}")
 endif()
@@ -76,7 +82,7 @@ if (NOT DEFINED Qt6_DIR AND DEFINED ENV{QT6_8_x64} AND NOT "$ENV{QT6_8_x64}" STR
     set(Qt6_DIR "$ENV{QT6_8_x64}/lib/cmake/Qt6")
 endif()
 
-add_library(${SCSTORAGE_TARGET} SHARED
+set(SCSTORAGE_LIBRARY_SOURCES
     Src/SCFactory.cpp
     Src/Batch/SCBatchOperations.cpp
     Src/Computed/SCComputedRuntime.cpp
@@ -91,9 +97,49 @@ add_library(${SCSTORAGE_TARGET} SHARED
     Src/Query/SCQuerySqliteExecutor.cpp
     Src/Query/SCQueryPlanner.cpp
     Src/Sqlite/SCSqliteAdapter.cpp
+)
+
+set(SCSTORAGE_LIBRARY_PRIVATE_HEADERS
+    Src/Query/SCQueryMemoryExecutor.h
+    Src/Query/SCQuerySqliteExecutor.h
+)
+
+set(SCSTORAGE_PUBLIC_HEADERS
+    Include/SCBatch.h
+    Include/ISCDebugPackage.h
+    Include/ISCComputed.h
+    Include/ISCDiagnostics.h
+    Include/ISCQuery.h
+    Include/SCErrors.h
+    Include/SCFactory.h
+    Include/ISCInterfaces.h
+    Include/SCMigration.h
+    Include/SCQuery.h
+    Include/SCRefCounted.h
+    Include/ISCRefPtr.h
+    Include/SCStorage.h
+    Include/ISCTableView.h
+    Include/SCTypes.h
+)
+
+add_library(${SCSTORAGE_TARGET} SHARED
+    ${SCSTORAGE_LIBRARY_SOURCES}
     ${CMAKE_CURRENT_SOURCE_DIR}/../ThirdParty/Sqlite/sqlite3.c
 )
 SCStorageConfigureOutputDirs(${SCSTORAGE_TARGET})
+
+target_sources(${SCSTORAGE_TARGET}
+    PRIVATE
+        ${SCSTORAGE_PUBLIC_HEADERS}
+        ${SCSTORAGE_LIBRARY_PRIVATE_HEADERS}
+)
+
+SCStorageSourceGroupTree("${CMAKE_CURRENT_SOURCE_DIR}"
+    ${SCSTORAGE_LIBRARY_SOURCES}
+    ${SCSTORAGE_LIBRARY_PRIVATE_HEADERS}
+    ${SCSTORAGE_PUBLIC_HEADERS}
+)
+source_group("ThirdParty\\Sqlite" FILES ${CMAKE_CURRENT_SOURCE_DIR}/../ThirdParty/Sqlite/sqlite3.c)
 
 target_include_directories(${SCSTORAGE_TARGET}
     PUBLIC
@@ -125,6 +171,7 @@ target_link_libraries(${SCSTORAGE_MEMORY_EXAMPLE_TARGET}
     PRIVATE
         ${SCSTORAGE_TARGET}
 )
+SCStorageSourceGroupTree("${CMAKE_CURRENT_SOURCE_DIR}" Examples/MemoryExample.cpp)
 
 add_executable(${SCSTORAGE_PRODUCT_EXAMPLE_TARGET}
     Examples/ProductIntegrationExample.cpp
@@ -138,6 +185,7 @@ target_link_libraries(${SCSTORAGE_PRODUCT_EXAMPLE_TARGET}
     PRIVATE
         ${SCSTORAGE_TARGET}
 )
+SCStorageSourceGroupTree("${CMAKE_CURRENT_SOURCE_DIR}" Examples/ProductIntegrationExample.cpp)
 
 if (SCSTORAGE_BUILD_DB_EDITOR)
     set(CMAKE_AUTOMOC ON)
@@ -147,24 +195,6 @@ if (SCSTORAGE_BUILD_DB_EDITOR)
     find_package(Qt6 6.8 REQUIRED COMPONENTS Widgets)
     add_subdirectory(Tools/DatabaseEditor)
 endif()
-
-set(SCSTORAGE_PUBLIC_HEADERS
-    Include/SCBatch.h
-    Include/ISCDebugPackage.h
-    Include/ISCComputed.h
-    Include/ISCDiagnostics.h
-    Include/ISCQuery.h
-    Include/SCErrors.h
-    Include/SCFactory.h
-    Include/ISCInterfaces.h
-    Include/SCMigration.h
-    Include/SCQuery.h
-    Include/SCRefCounted.h
-    Include/ISCRefPtr.h
-    Include/SCStorage.h
-    Include/ISCTableView.h
-    Include/SCTypes.h
-)
 
 option(SCSTORAGE_BUILD_TESTS "Build tests" ON)
 
@@ -208,6 +238,17 @@ if (SCSTORAGE_BUILD_TESTS)
             GTest::gtest
             GTest::gtest_main
     )
+    SCStorageSourceGroupTree("${CMAKE_CURRENT_SOURCE_DIR}"
+        Tests/ComputedTests.cpp
+        Tests/M1Tests.cpp
+        Tests/M2SqliteTests.cpp
+        Tests/M3Tests.cpp
+        Tests/QueryPlannerBridgeTests.cpp
+        Tests/QueryMemoryExecutorTests.cpp
+        Tests/QuerySqliteExecutorTests.cpp
+        Tests/PerformanceSmokeTests.cpp
+        Tests/TableViewTests.cpp
+    )
 
     include(GoogleTest)
     gtest_discover_tests(${SCSTORAGE_TESTS_TARGET} DISCOVERY_MODE PRE_TEST)
@@ -234,6 +275,11 @@ if (SCSTORAGE_BUILD_TESTS)
                 GTest::gtest
                 GTest::gtest_main
                 Qt6::Core
+        )
+        SCStorageSourceGroupTree("${CMAKE_CURRENT_SOURCE_DIR}"
+            Tests/DatabaseEditorSessionTests.cpp
+            Tools/DatabaseEditor/SCDatabaseSession.cpp
+            Tools/DatabaseEditor/SCDatabaseSession.h
         )
 
         target_compile_features(${SCSTORAGE_DB_EDITOR_TESTS_TARGET} PRIVATE cxx_std_20)

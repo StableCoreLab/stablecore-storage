@@ -10,29 +10,29 @@
 namespace StableCore::Storage::Editor
 {
 
-class SCRelationPickerDialog final : public QDialog
-{
-    Q_OBJECT
+    class SCRelationPickerDialog final : public QDialog
+    {
+        Q_OBJECT
 
-public:
-    SCRelationPickerDialog(
-        const QString& targetTableName,
-        const QVector<SCDatabaseSession::RelationCandidate>& candidates,
-        QWidget* parent = nullptr);
+    public:
+        SCRelationPickerDialog(
+            const QString& targetTableName,
+            const QVector<SCDatabaseSession::RelationCandidate>& candidates,
+            QWidget* parent = nullptr);
 
-    StableCore::Storage::RecordId SelectedRecordId() const noexcept;
+        StableCore::Storage::RecordId SelectedRecordId() const noexcept;
 
-private slots:
-    void ApplyFilter(const QString& text);
-    void AcceptCurrentSelection();
+    private slots:
+        void ApplyFilter(const QString& text);
+        void AcceptCurrentSelection();
 
-private:
-    void PopulateRows();
+    private:
+        void PopulateRows();
 
-    QString targetTableName_;
-    QVector<SCDatabaseSession::RelationCandidate> candidates_;
-    QLineEdit* filterEdit_{nullptr};
-    QTableWidget* tableWidget_{nullptr};
-};
+        QString targetTableName_;
+        QVector<SCDatabaseSession::RelationCandidate> candidates_;
+        QLineEdit* filterEdit_{nullptr};
+        QTableWidget* tableWidget_{nullptr};
+    };
 
 }  // namespace StableCore::Storage::Editor
