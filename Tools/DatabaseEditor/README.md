@@ -188,5 +188,11 @@ Build\StorageDbEditor\Release\SCStorageDatabaseEditor.exe
 
 ## 补充能力
 
+- `Add Column...` 和 `Edit Column...` 都在显式编辑事务中执行；Schema 变更会进入 journal，Undo / Redo 可恢复。
 - `Edit Column...` 可对选中的 Schema 字段做原地编辑，当前要求字段名保持不变。
 - `Create Backup Copy...` 可直接调用底层 `ISCDatabase::CreateBackupCopy` 生成数据库备份副本。
+## Edit Column Behavior
+
+- `Edit Column...` preserves the same field name and migrates compatible existing values when `valueKind` changes.
+- Incompatible conversions are rejected before any schema/data changes are committed.
+- The column edit runs inside an explicit database edit boundary so the session can commit or roll back the whole change consistently.

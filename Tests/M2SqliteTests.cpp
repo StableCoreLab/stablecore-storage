@@ -112,6 +112,62 @@ namespace
         return ExecSqliteScript(dbPath, sql.c_str());
     }
 
+    class SqliteReadTransactionLock
+    {
+    public:
+        explicit SqliteReadTransactionLock(const fs::path& dbPath)
+        {
+            const std::string narrowPath = dbPath.string();
+            if (sqlite3_open_v2(narrowPath.c_str(), &db_, SQLITE_OPEN_READWRITE,
+                                nullptr) != SQLITE_OK)
+            {
+                if (db_ != nullptr)
+                {
+                    sqlite3_close(db_);
+                    db_ = nullptr;
+                }
+                return;
+            }
+
+            if (sqlite3_exec(db_, "BEGIN;", nullptr, nullptr, nullptr) !=
+                SQLITE_OK)
+            {
+                sqlite3_close(db_);
+                db_ = nullptr;
+                return;
+            }
+
+            if (sqlite3_exec(db_, "SELECT COUNT(*) FROM metadata;", nullptr,
+                             nullptr, nullptr) != SQLITE_OK)
+            {
+                sqlite3_exec(db_, "ROLLBACK;", nullptr, nullptr, nullptr);
+                sqlite3_close(db_);
+                db_ = nullptr;
+                return;
+            }
+
+            held_ = true;
+        }
+
+        ~SqliteReadTransactionLock()
+        {
+            if (db_ != nullptr)
+            {
+                sqlite3_exec(db_, "ROLLBACK;", nullptr, nullptr, nullptr);
+                sqlite3_close(db_);
+            }
+        }
+
+        bool IsHeld() const
+        {
+            return held_;
+        }
+
+    private:
+        sqlite3* db_{nullptr};
+        bool held_{false};
+    };
+
     sc::SCTablePtr CreateBeamTable(sc::SCDbPtr& db)
     {
         sc::SCTablePtr table;
@@ -554,6 +610,66 @@ TEST(StorageM2Sqlite, OpenModeAndEditLogStateAreQueryable)
     EXPECT_EQ(reopenedLog.undoItems.front().version, secondCommittedVersion);
     EXPECT_EQ(reopenedLog.undoItems.front().kind,
               sc::SCEditLogActionKind::Commit);
+}
+
+TEST(StorageM2Sqlite,
+     ResetHistoryBaselineCommitFailureKeepsEditLogStateUnchanged)
+{
+    const fs::path dbPath =
+        MakeTempDbPath(L"StableCoreStorage_M2_ResetHistoryBaselineBusy.sqlite");
+
+    sc::SCDbPtr db;
+    EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
+    sc::SCTablePtr beamTable = CreateBeamTable(db);
+
+    sc::SCEditPtr createEdit;
+    EXPECT_EQ(db->BeginEdit(L"create", createEdit), sc::SC_OK);
+    sc::SCRecordPtr beam;
+    EXPECT_EQ(beamTable->CreateRecord(beam), sc::SC_OK);
+    EXPECT_EQ(beam->SetInt64(L"Width", 100), sc::SC_OK);
+    EXPECT_EQ(db->Commit(createEdit.Get()), sc::SC_OK);
+
+    sc::SCEditPtr modifyEdit;
+    EXPECT_EQ(db->BeginEdit(L"modify", modifyEdit), sc::SC_OK);
+    EXPECT_EQ(beam->SetInt64(L"Width", 250), sc::SC_OK);
+    EXPECT_EQ(db->Commit(modifyEdit.Get()), sc::SC_OK);
+
+    EXPECT_EQ(db->Undo(), sc::SC_OK);
+
+    sc::SCEditingDatabaseState editingStateBefore;
+    EXPECT_EQ(db->GetEditingState(&editingStateBefore), sc::SC_OK);
+    sc::SCEditLogState logStateBefore;
+    EXPECT_EQ(db->GetEditLogState(&logStateBefore), sc::SC_OK);
+    ASSERT_EQ(logStateBefore.undoItems.size(), 1u);
+    ASSERT_EQ(logStateBefore.redoItems.size(), 1u);
+
+    const sc::CommitId undoCommitIdBefore =
+        logStateBefore.undoItems.front().commitId;
+    const sc::CommitId redoCommitIdBefore =
+        logStateBefore.redoItems.front().commitId;
+
+    SqliteReadTransactionLock readLock(dbPath);
+    ASSERT_TRUE(readLock.IsHeld());
+
+    sc::SCBackupResult resetResult;
+    EXPECT_NE(db->ResetHistoryBaseline(&resetResult), sc::SC_OK);
+
+    sc::SCEditingDatabaseState editingStateAfter;
+    EXPECT_EQ(db->GetEditingState(&editingStateAfter), sc::SC_OK);
+    EXPECT_EQ(editingStateAfter.currentVersion,
+              editingStateBefore.currentVersion);
+    EXPECT_EQ(editingStateAfter.baselineVersion,
+              editingStateBefore.baselineVersion);
+    EXPECT_EQ(editingStateAfter.undoCount, editingStateBefore.undoCount);
+    EXPECT_EQ(editingStateAfter.redoCount, editingStateBefore.redoCount);
+
+    sc::SCEditLogState logStateAfter;
+    EXPECT_EQ(db->GetEditLogState(&logStateAfter), sc::SC_OK);
+    EXPECT_EQ(logStateAfter.baselineVersion, logStateBefore.baselineVersion);
+    ASSERT_EQ(logStateAfter.undoItems.size(), logStateBefore.undoItems.size());
+    ASSERT_EQ(logStateAfter.redoItems.size(), logStateBefore.redoItems.size());
+    EXPECT_EQ(logStateAfter.undoItems.front().commitId, undoCommitIdBefore);
+    EXPECT_EQ(logStateAfter.redoItems.front().commitId, redoCommitIdBefore);
 }
 
 TEST(StorageM2Sqlite, CreateBackupCopyPreservesOrTrimsJournalHistory)
@@ -1362,4 +1478,114 @@ TEST(StorageM2Sqlite, RemoveColumnCleansSqliteFootprint)
         "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_fv_" +
         std::to_string(tableId) + "_Width' LIMIT 1;";
     EXPECT_FALSE(QuerySqliteExists(dbPath, indexSql.c_str()));
+}
+
+TEST(StorageM2Sqlite,
+     UpdateColumnFailureDuringValueRewriteRestoresSchemaAndRecordValues)
+{
+    const fs::path dbPath =
+        MakeTempDbPath(L"StableCoreStorage_M2_UpdateColumnRewriteFail.sqlite");
+
+    sc::SCDbPtr db;
+    EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
+
+    sc::SCTablePtr beamTable = CreateBeamTable(db);
+
+    sc::SCEditPtr seedEdit;
+    EXPECT_EQ(db->BeginEdit(L"seed", seedEdit), sc::SC_OK);
+    sc::SCRecordPtr beam;
+    EXPECT_EQ(beamTable->CreateRecord(beam), sc::SC_OK);
+    const sc::RecordId beamId = beam->GetId();
+    EXPECT_EQ(beam->SetInt64(L"Width", 128), sc::SC_OK);
+    EXPECT_EQ(db->Commit(seedEdit.Get()), sc::SC_OK);
+
+    EXPECT_TRUE(ExecSqliteScript(
+        dbPath,
+        "CREATE TRIGGER fail_width_value_rewrite "
+        "BEFORE DELETE ON field_values "
+        "WHEN OLD.column_name = 'Width' "
+        "BEGIN "
+        "  SELECT RAISE(ABORT, 'forced field value rewrite failure'); "
+        "END;"));
+
+    sc::SCSchemaPtr schema;
+    EXPECT_EQ(beamTable->GetSchema(schema), sc::SC_OK);
+
+    sc::SCEditPtr edit;
+    EXPECT_EQ(db->BeginEdit(L"update width", edit), sc::SC_OK);
+
+    sc::SCColumnDef updated;
+    updated.name = L"Width";
+    updated.displayName = L"Width Label";
+    updated.valueKind = sc::ValueKind::String;
+    updated.defaultValue = sc::SCValue::FromString(L"0");
+    EXPECT_NE(schema->UpdateColumn(updated), sc::SC_OK);
+
+    sc::SCColumnDef loaded;
+    EXPECT_EQ(schema->FindColumn(L"Width", &loaded), sc::SC_OK);
+    EXPECT_EQ(loaded.displayName, L"Width");
+    EXPECT_EQ(loaded.valueKind, sc::ValueKind::Int64);
+
+    sc::SCRecordPtr reloaded;
+    EXPECT_EQ(beamTable->GetRecord(beamId, reloaded), sc::SC_OK);
+    std::int64_t width = 0;
+    EXPECT_EQ(reloaded->GetInt64(L"Width", &width), sc::SC_OK);
+    EXPECT_EQ(width, 128);
+
+    EXPECT_EQ(db->Rollback(edit.Get()), sc::SC_OK);
+
+    EXPECT_EQ(schema->FindColumn(L"Width", &loaded), sc::SC_OK);
+    EXPECT_EQ(loaded.displayName, L"Width");
+    EXPECT_EQ(loaded.valueKind, sc::ValueKind::Int64);
+    EXPECT_EQ(beamTable->GetRecord(beamId, reloaded), sc::SC_OK);
+    EXPECT_EQ(reloaded->GetInt64(L"Width", &width), sc::SC_OK);
+    EXPECT_EQ(width, 128);
+}
+
+TEST(StorageM2Sqlite, SchemaColumnJournalSurvivesReopenAndUndoRedo)
+{
+    const fs::path dbPath =
+        MakeTempDbPath(L"StableCoreStorage_M2_SchemaJournal.sqlite");
+
+    {
+        sc::SCDbPtr db;
+        EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
+
+        sc::SCTablePtr table = CreateBeamTable(db);
+        sc::SCSchemaPtr schema;
+        EXPECT_EQ(table->GetSchema(schema), sc::SC_OK);
+
+        sc::SCColumnDef height;
+        height.name = L"Height";
+        height.displayName = L"Height";
+        height.valueKind = sc::ValueKind::Int64;
+        height.defaultValue = sc::SCValue::FromInt64(0);
+
+        sc::SCEditPtr edit;
+        EXPECT_EQ(db->BeginEdit(L"add height", edit), sc::SC_OK);
+        EXPECT_EQ(schema->AddColumn(height), sc::SC_OK);
+        EXPECT_EQ(db->Commit(edit.Get()), sc::SC_OK);
+    }
+
+    {
+        sc::SCDbPtr db;
+        EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
+
+        sc::SCTablePtr table;
+        EXPECT_EQ(db->GetTable(L"Beam", table), sc::SC_OK);
+        sc::SCSchemaPtr schema;
+        EXPECT_EQ(table->GetSchema(schema), sc::SC_OK);
+
+        sc::SCColumnDef loaded;
+        EXPECT_EQ(schema->FindColumn(L"Height", &loaded), sc::SC_OK);
+        EXPECT_EQ(loaded.displayName, L"Height");
+
+        EXPECT_EQ(db->Undo(), sc::SC_OK);
+        EXPECT_EQ(schema->FindColumn(L"Height", &loaded),
+                  sc::SC_E_COLUMN_NOT_FOUND);
+
+        EXPECT_EQ(db->Redo(), sc::SC_OK);
+        EXPECT_EQ(schema->FindColumn(L"Height", &loaded), sc::SC_OK);
+        EXPECT_EQ(loaded.displayName, L"Height");
+    }
 }

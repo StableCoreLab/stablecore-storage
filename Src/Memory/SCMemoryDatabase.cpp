@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <map>
 #include <memory>
+#include <cwctype>
 #include <unordered_map>
 #include <typeindex>
 
@@ -85,9 +86,266 @@ namespace StableCore::Storage
             return SC_OK;
         }
 
+        std::wstring TrimCopy(const std::wstring& text)
+        {
+            const auto first = std::find_if_not(
+                text.begin(), text.end(),
+                [](wchar_t ch) { return std::iswspace(ch) != 0; });
+            const auto last = std::find_if_not(
+                text.rbegin(), text.rend(),
+                [](wchar_t ch) { return std::iswspace(ch) != 0; })
+                                  .base();
+            if (first >= last)
+            {
+                return {};
+            }
+            return std::wstring(first, last);
+        }
+
+        bool TryParseInt64Strict(const std::wstring& text,
+                                std::int64_t* outValue)
+        {
+            if (outValue == nullptr)
+            {
+                return false;
+            }
+
+            try
+            {
+                std::size_t parsed = 0;
+                const long long value = std::stoll(text, &parsed, 10);
+                if (parsed != text.size())
+                {
+                    return false;
+                }
+                *outValue = static_cast<std::int64_t>(value);
+                return true;
+            } catch (...)
+            {
+                return false;
+            }
+        }
+
+        bool TryParseDoubleStrict(const std::wstring& text, double* outValue)
+        {
+            if (outValue == nullptr)
+            {
+                return false;
+            }
+
+            try
+            {
+                std::size_t parsed = 0;
+                const double value = std::stod(text, &parsed);
+                if (parsed != text.size())
+                {
+                    return false;
+                }
+                *outValue = value;
+                return true;
+            } catch (...)
+            {
+                return false;
+            }
+        }
+
+        bool TryParseBoolStrict(const std::wstring& text, bool* outValue)
+        {
+            if (outValue == nullptr)
+            {
+                return false;
+            }
+
+            std::wstring normalized;
+            normalized.reserve(text.size());
+            for (wchar_t ch : text)
+            {
+                normalized.push_back(
+                    static_cast<wchar_t>(std::towlower(ch)));
+            }
+
+            if (normalized == L"true" || normalized == L"1")
+            {
+                *outValue = true;
+                return true;
+            }
+            if (normalized == L"false" || normalized == L"0")
+            {
+                *outValue = false;
+                return true;
+            }
+            return false;
+        }
+
+        ErrorCode ConvertColumnValue(const SCValue& source,
+                                     ValueKind targetKind, SCValue* outValue)
+        {
+            if (outValue == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+            if (source.IsNull())
+            {
+                *outValue = SCValue::Null();
+                return SC_OK;
+            }
+
+            switch (source.GetKind())
+            {
+                case ValueKind::Int64: {
+                    std::int64_t intValue = 0;
+                    const ErrorCode rc = source.AsInt64(&intValue);
+                    if (Failed(rc))
+                    {
+                        return rc;
+                    }
+                    switch (targetKind)
+                    {
+                        case ValueKind::Int64:
+                            *outValue = SCValue::FromInt64(intValue);
+                            return SC_OK;
+                        case ValueKind::Double:
+                            *outValue = SCValue::FromDouble(
+                                static_cast<double>(intValue));
+                            return SC_OK;
+                        case ValueKind::String:
+                            *outValue =
+                                SCValue::FromString(std::to_wstring(intValue));
+                            return SC_OK;
+                        default:
+                            return SC_E_TYPE_MISMATCH;
+                    }
+                }
+                case ValueKind::Double: {
+                    double doubleValue = 0.0;
+                    const ErrorCode rc = source.AsDouble(&doubleValue);
+                    if (Failed(rc))
+                    {
+                        return rc;
+                    }
+                    if (targetKind == ValueKind::Double)
+                    {
+                        *outValue = SCValue::FromDouble(doubleValue);
+                        return SC_OK;
+                    }
+                    return SC_E_TYPE_MISMATCH;
+                }
+                case ValueKind::Bool: {
+                    bool boolValue = false;
+                    const ErrorCode rc = source.AsBool(&boolValue);
+                    if (Failed(rc))
+                    {
+                        return rc;
+                    }
+                    if (targetKind == ValueKind::Bool)
+                    {
+                        *outValue = SCValue::FromBool(boolValue);
+                        return SC_OK;
+                    }
+                    if (targetKind == ValueKind::String)
+                    {
+                        *outValue = SCValue::FromString(
+                            boolValue ? L"true" : L"false");
+                        return SC_OK;
+                    }
+                    return SC_E_TYPE_MISMATCH;
+                }
+                case ValueKind::String: {
+                    std::wstring text;
+                    const ErrorCode rc = source.AsStringCopy(&text);
+                    if (Failed(rc))
+                    {
+                        return rc;
+                    }
+                    const std::wstring trimmed = TrimCopy(text);
+                    switch (targetKind)
+                    {
+                        case ValueKind::String:
+                            *outValue = SCValue::FromString(text);
+                            return SC_OK;
+                        case ValueKind::Int64: {
+                            std::int64_t intValue = 0;
+                            if (!TryParseInt64Strict(trimmed, &intValue))
+                            {
+                                return SC_E_TYPE_MISMATCH;
+                            }
+                            *outValue = SCValue::FromInt64(intValue);
+                            return SC_OK;
+                        }
+                        case ValueKind::Double: {
+                            double doubleValue = 0.0;
+                            if (!TryParseDoubleStrict(trimmed, &doubleValue))
+                            {
+                                return SC_E_TYPE_MISMATCH;
+                            }
+                            *outValue = SCValue::FromDouble(doubleValue);
+                            return SC_OK;
+                        }
+                        case ValueKind::Bool: {
+                            bool boolValue = false;
+                            if (!TryParseBoolStrict(trimmed, &boolValue))
+                            {
+                                return SC_E_TYPE_MISMATCH;
+                            }
+                            *outValue = SCValue::FromBool(boolValue);
+                            return SC_OK;
+                        }
+                        case ValueKind::RecordId: {
+                            std::int64_t recordId = 0;
+                            if (!TryParseInt64Strict(trimmed, &recordId))
+                            {
+                                return SC_E_TYPE_MISMATCH;
+                            }
+                            *outValue = SCValue::FromRecordId(recordId);
+                            return SC_OK;
+                        }
+                        default:
+                            return SC_E_TYPE_MISMATCH;
+                    }
+                }
+                case ValueKind::RecordId: {
+                    RecordId recordId = 0;
+                    const ErrorCode rc = source.AsRecordId(&recordId);
+                    if (Failed(rc))
+                    {
+                        return rc;
+                    }
+                    if (targetKind == ValueKind::RecordId)
+                    {
+                        *outValue = SCValue::FromRecordId(recordId);
+                        return SC_OK;
+                    }
+                    if (targetKind == ValueKind::String)
+                    {
+                        *outValue = SCValue::FromString(std::to_wstring(recordId));
+                        return SC_OK;
+                    }
+                    return SC_E_TYPE_MISMATCH;
+                }
+                case ValueKind::Enum:
+                    if (targetKind == ValueKind::Enum)
+                    {
+                        std::wstring text;
+                        const ErrorCode rc = source.AsEnumCopy(&text);
+                        if (Failed(rc))
+                        {
+                            return rc;
+                        }
+                        *outValue = SCValue::FromEnum(std::move(text));
+                        return SC_OK;
+                    }
+                    return SC_E_TYPE_MISMATCH;
+                case ValueKind::Null:
+                default:
+                    return SC_E_TYPE_MISMATCH;
+            }
+        }
+
         class MemorySchema final : public ISCSchema, public SCRefCountedObject
         {
         public:
+            explicit MemorySchema(MemoryTable* table) : table_(table) {}
+
             ErrorCode GetColumnCount(std::int32_t* outCount) override
             {
                 if (outCount == nullptr)
@@ -138,66 +396,57 @@ namespace StableCore::Storage
                 return SC_OK;
             }
 
-            ErrorCode AddColumn(const SCColumnDef& def) override
-            {
-                const ErrorCode validate = ValidateColumnDef(def);
-                if (Failed(validate))
-                {
-                    return validate;
-                }
-                if (columnsByName_.find(def.name) != columnsByName_.end())
-                {
-                    return SC_E_COLUMN_EXISTS;
-                }
+            ErrorCode AddColumn(const SCColumnDef& def) override;
 
-                columns_.push_back(def);
-                columnsByName_.emplace(def.name, def);
-                return SC_OK;
+            ErrorCode UpdateColumn(const SCColumnDef& def) override;
+
+            ErrorCode RemoveColumn(const wchar_t* name) override;
+
+            const SCColumnDef* FindColumnDef(
+                const std::wstring& name) const noexcept
+            {
+                const auto it = columnsByName_.find(name);
+                return it == columnsByName_.end() ? nullptr : &it->second;
             }
 
-            ErrorCode UpdateColumn(const SCColumnDef& def) override
+            MemoryTable* Table() const noexcept
             {
-                const ErrorCode validate = ValidateColumnDef(def);
-                if (Failed(validate))
-                {
-                    return validate;
-                }
+                return table_;
+            }
 
-                const auto existingIt = columnsByName_.find(def.name);
-                if (existingIt == columnsByName_.end())
-                {
-                    return SC_E_COLUMN_NOT_FOUND;
-                }
+            void LoadColumn(const SCColumnDef& def)
+            {
+                columns_.push_back(def);
+                columnsByName_[def.name] = def;
+            }
 
+            void ReplaceColumn(const SCColumnDef& def)
+            {
                 const auto vecIt =
                     std::find_if(columns_.begin(), columns_.end(),
                                  [&def](const SCColumnDef& existing) {
                                      return existing.name == def.name;
                                  });
-                if (vecIt == columns_.end())
+                if (vecIt != columns_.end())
                 {
-                    return SC_E_COLUMN_NOT_FOUND;
+                    *vecIt = def;
                 }
-
-                *vecIt = def;
-                existingIt->second = def;
-                return SC_OK;
+                columnsByName_[def.name] = def;
             }
 
-            ErrorCode RemoveColumn(const wchar_t* name) override
+            void UnloadColumn(const wchar_t* name)
             {
                 if (name == nullptr)
                 {
-                    return SC_E_INVALIDARG;
+                    return;
                 }
 
-                const auto it = columnsByName_.find(name);
-                if (it == columnsByName_.end())
+                const auto mapIt = columnsByName_.find(name);
+                if (mapIt != columnsByName_.end())
                 {
-                    return SC_E_COLUMN_NOT_FOUND;
+                    columnsByName_.erase(mapIt);
                 }
 
-                columnsByName_.erase(it);
                 const auto vecIt =
                     std::find_if(columns_.begin(), columns_.end(),
                                  [name](const SCColumnDef& def) {
@@ -207,17 +456,10 @@ namespace StableCore::Storage
                 {
                     columns_.erase(vecIt);
                 }
-                return SC_OK;
-            }
-
-            const SCColumnDef* FindColumnDef(
-                const std::wstring& name) const noexcept
-            {
-                const auto it = columnsByName_.find(name);
-                return it == columnsByName_.end() ? nullptr : &it->second;
             }
 
         private:
+            MemoryTable* table_{nullptr};
             std::vector<SCColumnDef> columns_;
             std::unordered_map<std::wstring, SCColumnDef> columnsByName_;
         };
@@ -354,7 +596,7 @@ namespace StableCore::Storage
             MemoryTable(MemoryDatabase* db, std::wstring name)
                 : db_(db),
                   name_(std::move(name)),
-                  schema_(SCMakeRef<MemorySchema>())
+                  schema_(SCMakeRef<MemorySchema>(this))
             {
             }
 
@@ -375,6 +617,11 @@ namespace StableCore::Storage
             const std::wstring& Name() const noexcept
             {
                 return name_;
+            }
+
+            MemoryDatabase* Database() const noexcept
+            {
+                return db_;
             }
 
             MemorySchema* Schema() const noexcept
@@ -513,6 +760,8 @@ namespace StableCore::Storage
                               const std::shared_ptr<MemoryRecordData>& data);
 
         private:
+            friend class MemorySchema;
+
             struct JournalLookup
             {
                 bool createdInActiveEdit{false};
@@ -534,6 +783,14 @@ namespace StableCore::Storage
                                            RecordId recordId);
             void RemoveAllJournalEntriesForRecord(const std::wstring& tableName,
                                                   RecordId recordId);
+            bool RecordColumnValueMigration(
+                MemoryTable* table, RecordId recordId,
+                const std::wstring& fieldName, const SCValue& oldValue,
+                const SCValue& newValue, ColumnKind columnKind);
+            void RecordSchemaJournal(const std::wstring& tableName,
+                                     const SCColumnDef& oldColumn,
+                                     const SCColumnDef& newColumn,
+                                     JournalOp op);
             void RecordJournal(const std::wstring& tableName, RecordId recordId,
                                const std::wstring& fieldName,
                                const SCValue& oldValue, const SCValue& newValue,
@@ -1206,6 +1463,225 @@ namespace StableCore::Storage
                 activeJournal_.entries.end());
         }
 
+        ErrorCode MemorySchema::AddColumn(const SCColumnDef& def)
+        {
+            const ErrorCode validate = ValidateColumnDef(def);
+            if (Failed(validate))
+            {
+                return validate;
+            }
+            if (columnsByName_.find(def.name) != columnsByName_.end())
+            {
+                return SC_E_COLUMN_EXISTS;
+            }
+
+            LoadColumn(def);
+            if (table_ != nullptr && table_->Database() != nullptr &&
+                table_->Database()->HasActiveEdit())
+            {
+                table_->Database()->RecordSchemaJournal(
+                    table_->Name(), SCColumnDef{}, def, JournalOp::AddColumn);
+            }
+            return SC_OK;
+        }
+
+        ErrorCode MemorySchema::RemoveColumn(const wchar_t* name)
+        {
+            if (name == nullptr)
+            {
+                return SC_E_INVALIDARG;
+            }
+
+            const auto it = columnsByName_.find(name);
+            if (it == columnsByName_.end())
+            {
+                return SC_E_COLUMN_NOT_FOUND;
+            }
+
+            const SCColumnDef removed = it->second;
+            if (table_ != nullptr)
+            {
+                for (const auto& [_, data] : table_->Records())
+                {
+                    if (data != nullptr)
+                    {
+                        data->values.erase(name);
+                    }
+                }
+            }
+            UnloadColumn(name);
+            if (table_ != nullptr && table_->Database() != nullptr &&
+                table_->Database()->HasActiveEdit())
+            {
+                table_->Database()->RecordSchemaJournal(
+                    table_->Name(), removed, SCColumnDef{},
+                    JournalOp::RemoveColumn);
+            }
+            return SC_OK;
+        }
+
+        ErrorCode MemorySchema::UpdateColumn(const SCColumnDef& def)
+        {
+            const ErrorCode validate = ValidateColumnDef(def);
+            if (Failed(validate))
+            {
+                return validate;
+            }
+
+            const auto existingIt = columnsByName_.find(def.name);
+            if (existingIt == columnsByName_.end())
+            {
+                return SC_E_COLUMN_NOT_FOUND;
+            }
+
+            const auto vecIt =
+                std::find_if(columns_.begin(), columns_.end(),
+                             [&def](const SCColumnDef& existing) {
+                                 return existing.name == def.name;
+                             });
+            if (vecIt == columns_.end())
+            {
+                return SC_E_COLUMN_NOT_FOUND;
+            }
+
+            const SCColumnDef previous = existingIt->second;
+            if (previous.valueKind != def.valueKind)
+            {
+                if (table_ == nullptr)
+                {
+                    return SC_E_FAIL;
+                }
+
+                struct ColumnValueUpdate
+                {
+                    RecordId recordId{0};
+                    SCValue oldValue;
+                    SCValue newValue;
+                };
+
+                std::vector<ColumnValueUpdate> updates;
+                updates.reserve(table_->Records().size());
+                for (const auto& [recordId, data] : table_->Records())
+                {
+                    if (data == nullptr)
+                    {
+                        continue;
+                    }
+
+                    const auto valueIt = data->values.find(def.name);
+                    if (valueIt == data->values.end())
+                    {
+                        continue;
+                    }
+
+                    SCValue converted;
+                    const ErrorCode convertRc =
+                        ConvertColumnValue(valueIt->second, def.valueKind,
+                                           &converted);
+                    if (Failed(convertRc))
+                    {
+                        return convertRc;
+                    }
+
+                    updates.push_back(ColumnValueUpdate{
+                        recordId, valueIt->second, std::move(converted)});
+                }
+
+                for (const auto& update : updates)
+                {
+                    auto data = table_->FindRecordData(update.recordId);
+                    if (data == nullptr)
+                    {
+                        continue;
+                    }
+
+                    const auto valueIt = data->values.find(def.name);
+                    if (valueIt == data->values.end())
+                    {
+                        continue;
+                    }
+
+                    if (update.newValue.IsNull())
+                    {
+                        data->values.erase(valueIt);
+                    } else
+                    {
+                        valueIt->second = update.newValue;
+                    }
+
+                    if (table_->Database() != nullptr)
+                    {
+                        table_->Database()->RecordColumnValueMigration(
+                            table_, update.recordId, def.name, update.oldValue,
+                            update.newValue, def.columnKind);
+                    }
+                }
+            }
+
+            ReplaceColumn(def);
+            if (table_ != nullptr && table_->Database() != nullptr &&
+                table_->Database()->HasActiveEdit())
+            {
+                table_->Database()->RecordSchemaJournal(
+                    table_->Name(), previous, def, JournalOp::UpdateColumn);
+            }
+            return SC_OK;
+        }
+
+        bool MemoryDatabase::RecordColumnValueMigration(
+            MemoryTable* table, RecordId recordId,
+            const std::wstring& fieldName, const SCValue& oldValue,
+            const SCValue& newValue, ColumnKind columnKind)
+        {
+            if (table == nullptr || !HasActiveEdit())
+            {
+                return false;
+            }
+
+            RecordJournal(table->Name(), recordId, fieldName, oldValue, newValue,
+                          false, false,
+                          columnKind == ColumnKind::Relation
+                              ? JournalOp::SetRelation
+                              : JournalOp::SetValue);
+            return true;
+        }
+
+        void MemoryDatabase::RecordSchemaJournal(
+            const std::wstring& tableName, const SCColumnDef& oldColumn,
+            const SCColumnDef& newColumn, JournalOp op)
+        {
+            if (!HasActiveEdit())
+            {
+                return;
+            }
+
+            const std::wstring& fieldName =
+                !newColumn.name.empty() ? newColumn.name : oldColumn.name;
+            for (auto& entry : activeJournal_.entries)
+            {
+                if (entry.op == op && entry.tableName == tableName &&
+                    entry.fieldName == fieldName)
+                {
+                    entry.oldColumn = oldColumn;
+                    entry.newColumn = newColumn;
+                    return;
+                }
+            }
+
+            activeJournal_.entries.push_back(JournalEntry{
+                op,
+                tableName,
+                0,
+                fieldName,
+                SCValue::Null(),
+                SCValue::Null(),
+                false,
+                false,
+                oldColumn,
+                newColumn,
+            });
+        }
+
         ErrorCode MemoryDatabase::WriteValue(
             MemoryTable* table, const std::shared_ptr<MemoryRecordData>& data,
             const std::wstring& fieldName, const SCValue& value)
@@ -1758,46 +2234,131 @@ namespace StableCore::Storage
             }
 
             auto* table = static_cast<MemoryTable*>(tableIt->second.Get());
-            auto data = table->FindRecordData(entry.recordId);
-            if (!data)
-            {
-                data = std::make_shared<MemoryRecordData>(entry.recordId);
-                table->Records().emplace(entry.recordId, data);
-            }
-
             switch (entry.op)
             {
-                case JournalOp::CreateRecord:
-                case JournalOp::DeleteRecord:
-                    data->state = reverse
-                                      ? (entry.oldDeleted ? RecordState::Deleted
-                                                          : RecordState::Alive)
-                                      : (entry.newDeleted ? RecordState::Deleted
-                                                          : RecordState::Alive);
-                    if (reverse && entry.op == JournalOp::CreateRecord)
+                case JournalOp::AddColumn: {
+                    auto* schema = table->Schema();
+                    if (schema == nullptr)
                     {
-                        data->values.clear();
+                        break;
                     }
-                    break;
-
-                case JournalOp::SetRelation:
-                case JournalOp::SetValue:
                     if (reverse)
                     {
-                        if (entry.oldValue.IsNull())
-                        {
-                            data->values.erase(entry.fieldName);
-                        } else
-                        {
-                            data->values[entry.fieldName] = entry.oldValue;
-                        }
-                    } else if (entry.newValue.IsNull())
-                    {
-                        data->values.erase(entry.fieldName);
+                        schema->UnloadColumn(entry.fieldName.c_str());
                     } else
                     {
-                        data->values[entry.fieldName] = entry.newValue;
+                        SCColumnDef def = entry.newColumn;
+                        if (def.name.empty())
+                        {
+                            def.name = entry.fieldName;
+                        }
+                        schema->LoadColumn(def);
                     }
+                    break;
+                }
+                case JournalOp::CreateRecord:
+                case JournalOp::DeleteRecord:
+                case JournalOp::SetRelation:
+                case JournalOp::SetValue: {
+                    auto data = table->FindRecordData(entry.recordId);
+                    if (!data)
+                    {
+                        data = std::make_shared<MemoryRecordData>(
+                            entry.recordId);
+                        table->Records().emplace(entry.recordId, data);
+                    }
+
+                    switch (entry.op)
+                    {
+                        case JournalOp::CreateRecord:
+                        case JournalOp::DeleteRecord:
+                            data->state = reverse
+                                              ? (entry.oldDeleted
+                                                     ? RecordState::Deleted
+                                                     : RecordState::Alive)
+                                              : (entry.newDeleted
+                                                     ? RecordState::Deleted
+                                                     : RecordState::Alive);
+                            if (reverse &&
+                                entry.op == JournalOp::CreateRecord)
+                            {
+                                data->values.clear();
+                            }
+                            break;
+                        case JournalOp::SetRelation:
+                        case JournalOp::SetValue:
+                            if (reverse)
+                            {
+                                if (entry.oldValue.IsNull())
+                                {
+                                    data->values.erase(entry.fieldName);
+                                } else
+                                {
+                                    data->values[entry.fieldName] =
+                                        entry.oldValue;
+                                }
+                            } else if (entry.newValue.IsNull())
+                            {
+                                data->values.erase(entry.fieldName);
+                            } else
+                            {
+                                data->values[entry.fieldName] = entry.newValue;
+                            }
+                            break;
+                        default:
+                            break;
+                    }
+                    break;
+                }
+                case JournalOp::UpdateColumn: {
+                    auto* schema = table->Schema();
+                    if (schema == nullptr)
+                    {
+                        break;
+                    }
+                    SCColumnDef def = reverse ? entry.oldColumn
+                                              : entry.newColumn;
+                    if (def.name.empty())
+                    {
+                        def.name = entry.fieldName;
+                    }
+                    if (reverse)
+                    {
+                        schema->ReplaceColumn(def);
+                    } else
+                    {
+                        schema->ReplaceColumn(def);
+                    }
+                    break;
+                }
+                case JournalOp::RemoveColumn: {
+                    auto* schema = table->Schema();
+                    if (schema == nullptr)
+                    {
+                        break;
+                    }
+                    if (reverse)
+                    {
+                        SCColumnDef def = entry.oldColumn;
+                        if (def.name.empty())
+                        {
+                            def.name = entry.fieldName;
+                        }
+                        schema->LoadColumn(def);
+                    } else
+                    {
+                        for (const auto& [_, data] : table->Records())
+                        {
+                            if (data != nullptr)
+                            {
+                                data->values.erase(entry.fieldName);
+                            }
+                        }
+                        schema->UnloadColumn(entry.fieldName.c_str());
+                    }
+                    break;
+                }
+                default:
                     break;
             }
         }
@@ -1845,7 +2406,10 @@ namespace StableCore::Storage
                                       : entry.newValue;
                 change.structuralChange =
                     (entry.op == JournalOp::CreateRecord ||
-                     entry.op == JournalOp::DeleteRecord);
+                     entry.op == JournalOp::DeleteRecord ||
+                     entry.op == JournalOp::AddColumn ||
+                     entry.op == JournalOp::UpdateColumn ||
+                     entry.op == JournalOp::RemoveColumn);
                 change.relationChange = (entry.op == JournalOp::SetRelation);
 
                 switch (entry.op)
@@ -1863,6 +2427,9 @@ namespace StableCore::Storage
                     case JournalOp::SetRelation:
                         change.kind = ChangeKind::RelationUpdated;
                         break;
+                    case JournalOp::AddColumn:
+                    case JournalOp::UpdateColumn:
+                    case JournalOp::RemoveColumn:
                     case JournalOp::SetValue:
                     default:
                         change.kind = ChangeKind::FieldUpdated;

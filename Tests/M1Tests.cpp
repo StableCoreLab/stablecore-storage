@@ -149,6 +149,147 @@ TEST(StorageM1, SchemaUpdateColumnReplacesDefinitionInMemory)
     EXPECT_EQ(loaded.valueKind, sc::ValueKind::String);
 }
 
+TEST(StorageM1, SchemaUpdateColumnMigratesCompatibleValuesInMemory)
+{
+    sc::SCDbPtr db;
+    EXPECT_EQ(sc::CreateInMemoryDatabase(db), sc::SC_OK);
+
+    sc::SCTablePtr beamTable = CreateBeamTable(db);
+
+    sc::SCEditPtr edit;
+    EXPECT_EQ(db->BeginEdit(L"seed", edit), sc::SC_OK);
+
+    sc::SCRecordPtr beam;
+    EXPECT_EQ(beamTable->CreateRecord(beam), sc::SC_OK);
+    const sc::RecordId beamId = beam->GetId();
+    EXPECT_EQ(beam->SetInt64(L"Width", 42), sc::SC_OK);
+    EXPECT_EQ(db->Commit(edit.Get()), sc::SC_OK);
+
+    sc::SCSchemaPtr schema;
+    EXPECT_EQ(beamTable->GetSchema(schema), sc::SC_OK);
+
+    sc::SCColumnDef updated;
+    updated.name = L"Width";
+    updated.displayName = L"Width";
+    updated.valueKind = sc::ValueKind::String;
+    updated.defaultValue = sc::SCValue::FromString(L"0");
+    EXPECT_EQ(schema->UpdateColumn(updated), sc::SC_OK);
+
+    sc::SCRecordPtr reloaded;
+    EXPECT_EQ(beamTable->GetRecord(beamId, reloaded), sc::SC_OK);
+
+    std::wstring width;
+    EXPECT_EQ(reloaded->GetStringCopy(L"Width", &width), sc::SC_OK);
+    EXPECT_EQ(width, L"42");
+
+    sc::SCColumnDef loaded;
+    EXPECT_EQ(schema->FindColumn(L"Width", &loaded), sc::SC_OK);
+    EXPECT_EQ(loaded.valueKind, sc::ValueKind::String);
+}
+
+TEST(StorageM1, SchemaUpdateColumnRejectsIncompatibleValuesInMemory)
+{
+    sc::SCDbPtr db;
+    EXPECT_EQ(sc::CreateInMemoryDatabase(db), sc::SC_OK);
+
+    sc::SCTablePtr beamTable = CreateBeamTable(db);
+
+    sc::SCEditPtr edit;
+    EXPECT_EQ(db->BeginEdit(L"seed", edit), sc::SC_OK);
+
+    sc::SCRecordPtr beam;
+    EXPECT_EQ(beamTable->CreateRecord(beam), sc::SC_OK);
+    const sc::RecordId beamId = beam->GetId();
+    EXPECT_EQ(beam->SetString(L"Name", L"abc"), sc::SC_OK);
+    EXPECT_EQ(db->Commit(edit.Get()), sc::SC_OK);
+
+    sc::SCSchemaPtr schema;
+    EXPECT_EQ(beamTable->GetSchema(schema), sc::SC_OK);
+
+    sc::SCColumnDef updated;
+    updated.name = L"Name";
+    updated.displayName = L"Name";
+    updated.valueKind = sc::ValueKind::Int64;
+    updated.defaultValue = sc::SCValue::FromInt64(0);
+    EXPECT_EQ(schema->UpdateColumn(updated), sc::SC_E_TYPE_MISMATCH);
+
+    sc::SCRecordPtr reloaded;
+    EXPECT_EQ(beamTable->GetRecord(beamId, reloaded), sc::SC_OK);
+
+    std::wstring name;
+    EXPECT_EQ(reloaded->GetStringCopy(L"Name", &name), sc::SC_OK);
+    EXPECT_EQ(name, L"abc");
+
+    sc::SCColumnDef loaded;
+    EXPECT_EQ(schema->FindColumn(L"Name", &loaded), sc::SC_OK);
+    EXPECT_EQ(loaded.valueKind, sc::ValueKind::String);
+}
+
+TEST(StorageM1, SchemaColumnJournalSupportsAddUpdateRemoveUndoRedo)
+{
+    sc::SCDbPtr db;
+    EXPECT_EQ(sc::CreateInMemoryDatabase(db), sc::SC_OK);
+
+    sc::SCTablePtr table = CreateBeamTable(db);
+
+    sc::SCSchemaPtr schema;
+    EXPECT_EQ(table->GetSchema(schema), sc::SC_OK);
+
+    sc::SCColumnDef height;
+    height.name = L"Height";
+    height.displayName = L"Height";
+    height.valueKind = sc::ValueKind::Int64;
+    height.defaultValue = sc::SCValue::FromInt64(0);
+
+    sc::SCEditPtr edit;
+    EXPECT_EQ(db->BeginEdit(L"add height", edit), sc::SC_OK);
+    EXPECT_EQ(schema->AddColumn(height), sc::SC_OK);
+    EXPECT_EQ(db->Commit(edit.Get()), sc::SC_OK);
+
+    sc::SCColumnDef loaded;
+    EXPECT_EQ(schema->FindColumn(L"Height", &loaded), sc::SC_OK);
+
+    EXPECT_EQ(db->Undo(), sc::SC_OK);
+    EXPECT_EQ(schema->FindColumn(L"Height", &loaded), sc::SC_E_COLUMN_NOT_FOUND);
+
+    EXPECT_EQ(db->Redo(), sc::SC_OK);
+    EXPECT_EQ(schema->FindColumn(L"Height", &loaded), sc::SC_OK);
+
+    sc::SCColumnDef updated = height;
+    updated.displayName = L"Height Label";
+    updated.indexed = true;
+
+    EXPECT_EQ(db->BeginEdit(L"update height", edit), sc::SC_OK);
+    EXPECT_EQ(schema->UpdateColumn(updated), sc::SC_OK);
+    EXPECT_EQ(db->Commit(edit.Get()), sc::SC_OK);
+
+    EXPECT_EQ(schema->FindColumn(L"Height", &loaded), sc::SC_OK);
+    EXPECT_EQ(loaded.displayName, L"Height Label");
+    EXPECT_TRUE(loaded.indexed);
+
+    EXPECT_EQ(db->Undo(), sc::SC_OK);
+    EXPECT_EQ(schema->FindColumn(L"Height", &loaded), sc::SC_OK);
+    EXPECT_EQ(loaded.displayName, L"Height");
+    EXPECT_FALSE(loaded.indexed);
+
+    EXPECT_EQ(db->Redo(), sc::SC_OK);
+    EXPECT_EQ(schema->FindColumn(L"Height", &loaded), sc::SC_OK);
+    EXPECT_EQ(loaded.displayName, L"Height Label");
+    EXPECT_TRUE(loaded.indexed);
+
+    EXPECT_EQ(db->BeginEdit(L"remove height", edit), sc::SC_OK);
+    EXPECT_EQ(schema->RemoveColumn(L"Height"), sc::SC_OK);
+    EXPECT_EQ(db->Commit(edit.Get()), sc::SC_OK);
+    EXPECT_EQ(schema->FindColumn(L"Height", &loaded), sc::SC_E_COLUMN_NOT_FOUND);
+
+    EXPECT_EQ(db->Undo(), sc::SC_OK);
+    EXPECT_EQ(schema->FindColumn(L"Height", &loaded), sc::SC_OK);
+    EXPECT_EQ(loaded.displayName, L"Height Label");
+
+    EXPECT_EQ(db->Redo(), sc::SC_OK);
+    EXPECT_EQ(schema->FindColumn(L"Height", &loaded), sc::SC_E_COLUMN_NOT_FOUND);
+}
+
 TEST(StorageM1, TransactionCommitAndQuery)
 {
     sc::SCDbPtr db;

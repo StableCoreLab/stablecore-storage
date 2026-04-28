@@ -167,6 +167,7 @@ QHash<QString, QVector<SCComputedColumnDef>> sessionComputedColumnsByTable_
 - 事实记录编辑后可 Undo/Redo。
 - 新增、编辑、删除会话计算列后，不进入数据库事务历史。
 - 普通字段与计算列互转时，只对持久数据部分做必要的显式事务处理。
+- 结构性删列不作为用户可撤销能力暴露；`RemoveColumn()` 仅保留给转换/回滚收口使用。
 
 会话计算列属于编辑器级临时视图状态，而不是数据库中的持久事实。
 

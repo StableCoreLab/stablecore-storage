@@ -83,6 +83,9 @@ namespace StableCore::Storage
         CreateRecord,
         DeleteRecord,
         SetRelation,
+        AddColumn,
+        UpdateColumn,
+        RemoveColumn,
     };
 
     enum class RecordState
@@ -399,6 +402,8 @@ namespace StableCore::Storage
         SCValue newValue;
         bool oldDeleted{false};
         bool newDeleted{false};
+        SCColumnDef oldColumn;
+        SCColumnDef newColumn;
     };
 
     struct JournalTransaction

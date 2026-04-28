@@ -1,4 +1,4 @@
-#include "SCDatabaseSession.h"
+﻿#include "SCDatabaseSession.h"
 
 #include <algorithm>
 
@@ -16,6 +16,299 @@ namespace StableCore::Storage::Editor
         QString ToQString(const std::wstring& text)
         {
             return QString::fromStdWString(text);
+        }
+
+        class PreviewSchema final : public sc::ISCSchema,
+                                    public sc::SCRefCountedObject
+        {
+        public:
+            explicit PreviewSchema(std::vector<sc::SCColumnDef> columns)
+                : columns_(std::move(columns))
+            {
+            }
+
+            sc::ErrorCode GetColumnCount(std::int32_t* outCount) override
+            {
+                if (outCount == nullptr)
+                {
+                    return sc::SC_E_POINTER;
+                }
+                *outCount = static_cast<std::int32_t>(columns_.size());
+                return sc::SC_OK;
+            }
+
+            sc::ErrorCode GetColumn(std::int32_t index,
+                                    sc::SCColumnDef* outDef) override
+            {
+                if (outDef == nullptr)
+                {
+                    return sc::SC_E_POINTER;
+                }
+                if (index < 0 ||
+                    static_cast<std::size_t>(index) >= columns_.size())
+                {
+                    return sc::SC_E_INVALIDARG;
+                }
+                *outDef = columns_[static_cast<std::size_t>(index)];
+                return sc::SC_OK;
+            }
+
+            sc::ErrorCode FindColumn(const wchar_t* name,
+                                     sc::SCColumnDef* outDef) override
+            {
+                if (name == nullptr)
+                {
+                    return sc::SC_E_INVALIDARG;
+                }
+                if (outDef == nullptr)
+                {
+                    return sc::SC_E_POINTER;
+                }
+
+                const QString requestedName = QString::fromWCharArray(name);
+                for (const sc::SCColumnDef& column : columns_)
+                {
+                    if (ToQString(column.name)
+                            .compare(requestedName, Qt::CaseInsensitive) == 0)
+                    {
+                        *outDef = column;
+                        return sc::SC_OK;
+                    }
+                }
+
+                return sc::SC_E_COLUMN_NOT_FOUND;
+            }
+
+            sc::ErrorCode AddColumn(const sc::SCColumnDef&) override
+            {
+                return sc::SC_E_NOTIMPL;
+            }
+
+            sc::ErrorCode UpdateColumn(const sc::SCColumnDef&) override
+            {
+                return sc::SC_E_NOTIMPL;
+            }
+
+            sc::ErrorCode RemoveColumn(const wchar_t*) override
+            {
+                return sc::SC_E_NOTIMPL;
+            }
+
+        private:
+            std::vector<sc::SCColumnDef> columns_;
+        };
+
+        class PreviewTable final : public sc::ISCTable,
+                                  public sc::SCRefCountedObject
+        {
+        public:
+            PreviewTable(sc::SCTablePtr inner, sc::SCSchemaPtr schema)
+                : inner_(std::move(inner)), schema_(std::move(schema))
+            {
+            }
+
+            sc::ErrorCode GetRecord(sc::RecordId id,
+                                    sc::SCRecordPtr& outRecord) override
+            {
+                return inner_->GetRecord(id, outRecord);
+            }
+            sc::ErrorCode CreateRecord(sc::SCRecordPtr& outRecord) override
+            {
+                return inner_->CreateRecord(outRecord);
+            }
+            sc::ErrorCode DeleteRecord(sc::RecordId id) override
+            {
+                return inner_->DeleteRecord(id);
+            }
+            sc::ErrorCode GetSchema(sc::SCSchemaPtr& outSchema) override
+            {
+                outSchema = schema_;
+                return sc::SC_OK;
+            }
+            sc::ErrorCode EnumerateRecords(sc::SCRecordCursorPtr& outCursor) override
+            {
+                return inner_->EnumerateRecords(outCursor);
+            }
+            sc::ErrorCode FindRecords(const sc::SCQueryCondition& condition,
+                                      sc::SCRecordCursorPtr& outCursor) override
+            {
+                return inner_->FindRecords(condition, outCursor);
+            }
+
+        private:
+            sc::SCTablePtr inner_;
+            sc::SCSchemaPtr schema_;
+        };
+
+        class PreviewDatabase final : public sc::ISCDatabase,
+                                      public sc::SCRefCountedObject
+        {
+        public:
+            PreviewDatabase(sc::SCDbPtr inner, std::wstring tableName,
+                            sc::SCTablePtr previewTable)
+                : inner_(std::move(inner)),
+                  tableName_(std::move(tableName)),
+                  previewTable_(std::move(previewTable))
+            {
+            }
+
+            sc::ErrorCode BeginEdit(const wchar_t* name,
+                                    sc::SCEditPtr& outEdit) override
+            {
+                return inner_->BeginEdit(name, outEdit);
+            }
+            sc::ErrorCode Commit(sc::ISCEditSession* edit) override
+            {
+                return inner_->Commit(edit);
+            }
+            sc::ErrorCode Rollback(sc::ISCEditSession* edit) override
+            {
+                return inner_->Rollback(edit);
+            }
+            sc::ErrorCode Undo() override { return inner_->Undo(); }
+            sc::ErrorCode Redo() override { return inner_->Redo(); }
+            sc::ErrorCode GetTableCount(std::int32_t* outCount) override
+            {
+                return inner_->GetTableCount(outCount);
+            }
+            sc::ErrorCode GetTableName(std::int32_t index,
+                                       std::wstring* outName) override
+            {
+                return inner_->GetTableName(index, outName);
+            }
+            sc::ErrorCode GetTable(const wchar_t* name,
+                                   sc::SCTablePtr& outTable) override
+            {
+                if (name != nullptr && tableName_ == name)
+                {
+                    outTable = previewTable_;
+                    return sc::SC_OK;
+                }
+                return inner_->GetTable(name, outTable);
+            }
+            sc::ErrorCode CreateTable(const wchar_t* name,
+                                      sc::SCTablePtr& outTable) override
+            {
+                return inner_->CreateTable(name, outTable);
+            }
+            sc::ErrorCode ClearColumnValues(sc::ISCTable* table,
+                                            const wchar_t* name) override
+            {
+                return inner_->ClearColumnValues(table, name);
+            }
+            sc::ErrorCode ExecuteUpgradePlan(
+                const sc::SCUpgradePlan& plan, bool confirmed,
+                sc::SCUpgradeResult* outResult) override
+            {
+                return inner_->ExecuteUpgradePlan(plan, confirmed, outResult);
+            }
+            sc::ErrorCode BeginImportSession(
+                const sc::SCImportSessionOptions& options,
+                sc::SCImportStagingArea* outSession) override
+            {
+                return inner_->BeginImportSession(options, outSession);
+            }
+            sc::ErrorCode AppendImportChunk(
+                sc::SCImportStagingArea* session,
+                const sc::SCImportChunk& chunk,
+                sc::SCImportCheckpoint* outCheckpoint) override
+            {
+                return inner_->AppendImportChunk(session, chunk, outCheckpoint);
+            }
+            sc::ErrorCode LoadImportRecoveryState(
+                std::uint64_t sessionId, sc::SCImportRecoveryState* outState) override
+            {
+                return inner_->LoadImportRecoveryState(sessionId, outState);
+            }
+            sc::ErrorCode FinalizeImportSession(
+                const sc::SCImportFinalizeCommit& commit,
+                sc::SCImportRecoveryState* outState) override
+            {
+                return inner_->FinalizeImportSession(commit, outState);
+            }
+            sc::ErrorCode AbortImportSession(std::uint64_t sessionId) override
+            {
+                return inner_->AbortImportSession(sessionId);
+            }
+            sc::ErrorCode AddObserver(sc::ISCDatabaseObserver* observer) override
+            {
+                return inner_->AddObserver(observer);
+            }
+            sc::ErrorCode RemoveObserver(sc::ISCDatabaseObserver* observer) override
+            {
+                return inner_->RemoveObserver(observer);
+            }
+            sc::ErrorCode CreateBackupCopy(const wchar_t* targetPath,
+                                           const sc::SCBackupOptions& options,
+                                           sc::SCBackupResult* outResult) override
+            {
+                return inner_->CreateBackupCopy(targetPath, options, outResult);
+            }
+            sc::VersionId GetCurrentVersion() const noexcept override
+            {
+                return inner_->GetCurrentVersion();
+            }
+            std::int32_t GetSchemaVersion() const noexcept override
+            {
+                return inner_->GetSchemaVersion();
+            }
+
+        private:
+            sc::SCDbPtr inner_;
+            std::wstring tableName_;
+            sc::SCTablePtr previewTable_;
+        };
+
+        bool BuildComputedTableView(
+            sc::ISCDatabase* database, const std::wstring& tableName,
+            const QVector<sc::SCComputedColumnDef>& computedColumns,
+            const std::function<QString(sc::ErrorCode)>& errorToString,
+            sc::SCComputedTableViewPtr* outView, QString* outError)
+        {
+            if (database == nullptr || tableName.empty())
+            {
+                if (outError != nullptr)
+                {
+                    *outError = QStringLiteral("No database is open.");
+                }
+                return false;
+            }
+            if (outView == nullptr)
+            {
+                if (outError != nullptr)
+                {
+                    *outError = QStringLiteral("Output view is null.");
+                }
+                return false;
+            }
+
+            sc::SCComputedTableViewPtr view;
+            sc::ErrorCode rc = sc::CreateComputedTableView(
+                database, tableName.c_str(), nullptr, view);
+            if (sc::Failed(rc))
+            {
+                if (outError != nullptr)
+                {
+                    *outError = errorToString(rc);
+                }
+                return false;
+            }
+
+            for (const sc::SCComputedColumnDef& column : computedColumns)
+            {
+                rc = view->AddComputedColumn(column);
+                if (sc::Failed(rc))
+                {
+                    if (outError != nullptr)
+                    {
+                        *outError = errorToString(rc);
+                    }
+                    return false;
+                }
+            }
+
+            *outView = view;
+            return true;
         }
 
         bool HasComputedColumnNameConflict(
@@ -344,6 +637,43 @@ namespace StableCore::Storage::Editor
             return true;
         }
 
+        bool RollbackEditAndReport(
+            sc::SCDbPtr db, sc::ISCEditSession* edit,
+            const QString& primaryError, const QString& context,
+            const std::function<QString(sc::ErrorCode)>& formatError,
+            QString* outError)
+        {
+            if (db == nullptr || edit == nullptr)
+            {
+                if (outError != nullptr)
+                {
+                    *outError = primaryError +
+                                QStringLiteral(" (rollback unavailable)");
+                }
+                return false;
+            }
+
+            const sc::ErrorCode rollbackRc = db->Rollback(edit);
+            if (sc::Failed(rollbackRc))
+            {
+                if (outError != nullptr)
+                {
+                    *outError = (context.isEmpty() ? primaryError
+                                                   : context + QStringLiteral(": ") +
+                                                         primaryError) +
+                                QStringLiteral(" (rollback failed: ") +
+                                formatError(rollbackRc) + QStringLiteral(")");
+                }
+                return false;
+            }
+
+            if (outError != nullptr)
+            {
+                *outError = primaryError;
+            }
+            return true;
+        }
+
     }  // namespace
 
     SCDatabaseSession::SCDatabaseSession(QObject* parent) : QObject(parent)
@@ -625,50 +955,24 @@ namespace StableCore::Storage::Editor
             return false;
         }
 
-        sc::SCSchemaPtr schema;
-        sc::ErrorCode rc = currentTable_->GetSchema(schema);
-        if (sc::Failed(rc))
-        {
-            if (outError != nullptr)
-            {
-                *outError = ErrorToString(rc);
-            }
-            return false;
-        }
-
-        rc = schema->AddColumn(column);
-        if (sc::Failed(rc))
-        {
-            if (outError != nullptr)
-            {
-                *outError = ErrorToString(rc);
-            }
-            return false;
-        }
-
-        const sc::SCComputedTableViewPtr previousTableView = currentTableView_;
-        if (currentTableView_)
-        {
-            if (!RebuildCurrentTableView(outError))
-            {
-                const sc::ErrorCode rollbackRc =
-                    schema->RemoveColumn(column.name.c_str());
-                if (sc::Succeeded(rollbackRc))
+        return ApplyColumnMutation(
+            L"Add Column",
+            [this, column](sc::SCSchemaPtr& schema,
+                           sc::SCComputedTableViewPtr* outPreviewView,
+                           QString* outError) -> sc::ErrorCode {
+                const sc::ErrorCode addRc = schema->AddColumn(column);
+                if (sc::Failed(addRc))
                 {
-                    currentTableView_ = previousTableView;
-                } else if (outError != nullptr)
-                {
-                    *outError = ErrorToString(rollbackRc);
+                    return addRc;
                 }
-                emit CurrentTableChanged();
-                emit RecordsChanged();
-                return false;
-            }
-        }
-
-        emit CurrentTableChanged();
-        emit RecordsChanged();
-        return true;
+                if (!BuildCurrentTableViewPreview(outPreviewView, outError))
+                {
+                    return sc::SC_E_FAIL;
+                }
+                return sc::SC_OK;
+            },
+            []() {},
+            outError);
     }
 
     bool SCDatabaseSession::UpdateColumn(
@@ -716,9 +1020,9 @@ namespace StableCore::Storage::Editor
             return false;
         }
 
-        sc::SCColumnDef previousColumn;
+        sc::SCColumnDef existingColumn;
         rc = schema->FindColumn(originalKey.toStdWString().c_str(),
-                                &previousColumn);
+                                &existingColumn);
         if (sc::Failed(rc))
         {
             if (outError != nullptr)
@@ -727,39 +1031,24 @@ namespace StableCore::Storage::Editor
             }
             return false;
         }
-
-        const sc::SCComputedTableViewPtr previousTableView = currentTableView_;
-        rc = schema->UpdateColumn(column);
-        if (sc::Failed(rc))
-        {
-            if (outError != nullptr)
-            {
-                *outError = ErrorToString(rc);
-            }
-            return false;
-        }
-
-        if (currentTableView_)
-        {
-            if (!RebuildCurrentTableView(outError))
-            {
-                const sc::ErrorCode restoreRc = schema->UpdateColumn(previousColumn);
-                if (sc::Succeeded(restoreRc))
+        return ApplyColumnMutation(
+            L"Edit Column",
+            [this, column](sc::SCSchemaPtr& schema,
+                           sc::SCComputedTableViewPtr* outPreviewView,
+                           QString* outError) -> sc::ErrorCode {
+                const sc::ErrorCode updateRc = schema->UpdateColumn(column);
+                if (sc::Failed(updateRc))
                 {
-                    currentTableView_ = previousTableView;
-                } else if (outError != nullptr)
-                {
-                    *outError = ErrorToString(restoreRc);
+                    return updateRc;
                 }
-                emit CurrentTableChanged();
-                emit RecordsChanged();
-                return false;
-            }
-        }
-
-        emit CurrentTableChanged();
-        emit RecordsChanged();
-        return true;
+                if (!BuildCurrentTableViewPreview(outPreviewView, outError))
+                {
+                    return sc::SC_E_FAIL;
+                }
+                return sc::SC_OK;
+            },
+            []() {},
+            outError);
     }
 
     bool SCDatabaseSession::ConvertColumnToComputed(
@@ -844,117 +1133,47 @@ namespace StableCore::Storage::Editor
                 }
                 return false;
             };
-        if (referencesSourceColumn(computedColumn.dependencies.factFields) ||
-            referencesSourceColumn(computedColumn.dependencies.relationFields))
-        {
-            if (outError != nullptr)
-            {
-                *outError = QStringLiteral(
-                    "Computed column cannot depend on the converted field itself.");
-            }
-            return false;
-        }
 
-        sc::SCSchemaPtr schema;
-        sc::ErrorCode rc = currentTable_->GetSchema(schema);
-        if (sc::Failed(rc))
-        {
-            if (outError != nullptr)
-            {
-                *outError = ErrorToString(rc);
-            }
-            return false;
-        }
+        bool computedColumnApplied = false;
+        return ApplyColumnMutation(
+            L"Convert Column To Computed",
+            [this, &columns, computedColumn, sourceName,
+             &computedColumnApplied](
+                sc::SCSchemaPtr& schema, sc::SCComputedTableViewPtr* outPreviewView,
+                QString* outError) -> sc::ErrorCode {
+                const sc::ErrorCode clearRc =
+                    db_->ClearColumnValues(currentTable_.Get(),
+                                           sourceName.toStdWString().c_str());
+                if (sc::Failed(clearRc))
+                {
+                    return clearRc;
+                }
 
-        sc::SCColumnDef previousColumn;
-        rc = schema->FindColumn(sourceName.toStdWString().c_str(),
-                                &previousColumn);
-        if (sc::Failed(rc))
-        {
-            if (outError != nullptr)
-            {
-                *outError = ErrorToString(rc);
-            }
-            return false;
-        }
+                const sc::ErrorCode removeRc =
+                    schema->RemoveColumn(sourceName.toStdWString().c_str());
+                if (sc::Failed(removeRc))
+                {
+                    return removeRc;
+                }
 
-        const sc::SCComputedTableViewPtr previousTableView = currentTableView_;
-        sc::SCEditPtr edit;
-        rc = db_->BeginEdit(L"Convert Column To Computed", edit);
-        if (sc::Failed(rc))
-        {
-            if (outError != nullptr)
-            {
-                *outError = ErrorToString(rc);
-            }
-            return false;
-        }
-
-        rc = db_->ClearColumnValues(currentTable_.Get(),
-                                    sourceName.toStdWString().c_str());
-        if (sc::Failed(rc))
-        {
-            db_->Rollback(edit.Get());
-            if (outError != nullptr)
-            {
-                *outError = ErrorToString(rc);
-            }
-            return false;
-        }
-
-        rc = schema->RemoveColumn(sourceName.toStdWString().c_str());
-        if (sc::Failed(rc))
-        {
-            db_->Rollback(edit.Get());
-            if (outError != nullptr)
-            {
-                *outError = ErrorToString(rc);
-            }
-            return false;
-        }
-
-        columns->push_back(computedColumn);
-
-        if (!RebuildCurrentTableView(outError))
-        {
-            columns->removeLast();
-            const sc::ErrorCode restoreSchemaRc =
-                schema->AddColumn(previousColumn);
-            db_->Rollback(edit.Get());
-            currentTableView_ = previousTableView;
-            if (sc::Failed(restoreSchemaRc) && outError != nullptr)
-            {
-                *outError = ErrorToString(restoreSchemaRc);
-            }
-            emit CurrentTableChanged();
-            emit RecordsChanged();
-            return false;
-        }
-
-        rc = db_->Commit(edit.Get());
-        if (sc::Failed(rc))
-        {
-            columns->removeLast();
-            const sc::ErrorCode restoreSchemaRc =
-                schema->AddColumn(previousColumn);
-            db_->Rollback(edit.Get());
-            currentTableView_ = previousTableView;
-            if (sc::Failed(restoreSchemaRc) && outError != nullptr)
-            {
-                *outError = ErrorToString(restoreSchemaRc);
-            }
-            else if (outError != nullptr)
-            {
-                *outError = ErrorToString(rc);
-            }
-            emit CurrentTableChanged();
-            emit RecordsChanged();
-            return false;
-        }
-
-        emit CurrentTableChanged();
-        emit RecordsChanged();
-        return true;
+                columns->push_back(computedColumn);
+                computedColumnApplied = true;
+                if (!BuildCurrentTableViewPreview(outPreviewView, outError))
+                {
+                    columns->removeLast();
+                    computedColumnApplied = false;
+                    return sc::SC_E_FAIL;
+                }
+                return sc::SC_OK;
+            },
+            [&columns, &computedColumnApplied]() {
+                if (computedColumnApplied && !columns->isEmpty())
+                {
+                    columns->removeLast();
+                    computedColumnApplied = false;
+                }
+            },
+            outError);
     }
 
     bool SCDatabaseSession::ConvertComputedToColumn(
@@ -1047,71 +1266,44 @@ namespace StableCore::Storage::Editor
             return false;
         }
 
-        const sc::SCComputedTableViewPtr previousTableView = currentTableView_;
-        sc::SCEditPtr edit;
-        rc = db_->BeginEdit(L"Convert Computed To Column", edit);
-        if (sc::Failed(rc))
-        {
-            if (outError != nullptr)
-            {
-                *outError = ErrorToString(rc);
-            }
-            return false;
-        }
+        bool computedColumnRemoved = false;
+        return ApplyColumnMutation(
+            L"Convert Computed To Column",
+            [this, &computedColumns, removedComputed, targetIndex, column,
+             &computedColumnRemoved](
+                sc::SCSchemaPtr& schema, sc::SCComputedTableViewPtr* outPreviewView,
+                QString* outError) -> sc::ErrorCode {
+                computedColumns->removeAt(targetIndex);
+                computedColumnRemoved = true;
 
-        computedColumns->removeAt(targetIndex);
-        rc = schema->AddColumn(column);
-        if (sc::Failed(rc))
-        {
-            computedColumns->insert(targetIndex, removedComputed);
-            db_->Rollback(edit.Get());
-            if (outError != nullptr)
-            {
-                *outError = ErrorToString(rc);
-            }
-            return false;
-        }
+                const sc::ErrorCode addRc = schema->AddColumn(column);
+                if (sc::Failed(addRc))
+                {
+                    computedColumns->insert(targetIndex, removedComputed);
+                    computedColumnRemoved = false;
+                    return addRc;
+                }
 
-        if (!RebuildCurrentTableView(outError))
-        {
-            const sc::ErrorCode restoreSchemaRc =
-                schema->RemoveColumn(column.name.c_str());
-            computedColumns->insert(targetIndex, removedComputed);
-            db_->Rollback(edit.Get());
-            currentTableView_ = previousTableView;
-            if (sc::Failed(restoreSchemaRc) && outError != nullptr)
-            {
-                *outError = ErrorToString(restoreSchemaRc);
-            }
-            emit CurrentTableChanged();
-            emit RecordsChanged();
-            return false;
-        }
-
-        rc = db_->Commit(edit.Get());
-        if (sc::Failed(rc))
-        {
-            const sc::ErrorCode restoreSchemaRc =
-                schema->RemoveColumn(column.name.c_str());
-            computedColumns->insert(targetIndex, removedComputed);
-            db_->Rollback(edit.Get());
-            currentTableView_ = previousTableView;
-            if (sc::Failed(restoreSchemaRc) && outError != nullptr)
-            {
-                *outError = ErrorToString(restoreSchemaRc);
-            }
-            else if (outError != nullptr)
-            {
-                *outError = ErrorToString(rc);
-            }
-            emit CurrentTableChanged();
-            emit RecordsChanged();
-            return false;
-        }
-
-        emit CurrentTableChanged();
-        emit RecordsChanged();
-        return true;
+                if (!BuildCurrentTableViewPreview(outPreviewView, outError))
+                {
+                    const sc::ErrorCode removeRc =
+                        schema->RemoveColumn(column.name.c_str());
+                    (void)removeRc;
+                    computedColumns->insert(targetIndex, removedComputed);
+                    computedColumnRemoved = false;
+                    return sc::SC_E_FAIL;
+                }
+                return sc::SC_OK;
+            },
+            [&computedColumns, removedComputed, targetIndex,
+             &computedColumnRemoved]() {
+                if (computedColumnRemoved)
+                {
+                    computedColumns->insert(targetIndex, removedComputed);
+                    computedColumnRemoved = false;
+                }
+            },
+            outError);
     }
 
     bool SCDatabaseSession::AddRecord(QString* outError)
@@ -1229,6 +1421,7 @@ namespace StableCore::Storage::Editor
             return false;
         }
 
+        emit CurrentTableChanged();
         emit RecordsChanged();
         return true;
     }
@@ -1254,6 +1447,7 @@ namespace StableCore::Storage::Editor
             return false;
         }
 
+        emit CurrentTableChanged();
         emit RecordsChanged();
         return true;
     }
@@ -1963,6 +2157,29 @@ namespace StableCore::Storage::Editor
 
     bool SCDatabaseSession::RebuildCurrentTableView(QString* outError)
     {
+        sc::SCComputedTableViewPtr view;
+        if (!BuildCurrentTableViewPreview(&view, outError))
+        {
+            return false;
+        }
+
+        currentTableView_ = view;
+        return true;
+    }
+
+    bool SCDatabaseSession::BuildCurrentTableViewPreview(
+        sc::SCComputedTableViewPtr* outView, QString* outError) const
+    {
+        if (outView == nullptr)
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("Output view is null.");
+            }
+            return false;
+        }
+        outView->Reset();
+
         if (forceRebuildCurrentTableViewFailureForTest_)
         {
             if (outError != nullptr)
@@ -1972,11 +2189,46 @@ namespace StableCore::Storage::Editor
             return false;
         }
 
-        currentTableView_.Reset();
+        if (!db_ || !currentTable_ || currentTableName_.isEmpty())
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("No table is selected.");
+            }
+            return false;
+        }
 
-        sc::SCComputedTableViewPtr view;
-        sc::ErrorCode rc = sc::CreateComputedTableView(
-            db_.Get(), currentTableName_.toStdWString().c_str(), nullptr, view);
+        const QVector<sc::SCComputedColumnDef> computedColumns =
+            sessionComputedColumnsByTable_.value(currentTableName_);
+        return BuildComputedTableView(
+            db_.Get(), currentTableName_.toStdWString(), computedColumns,
+            [this](sc::ErrorCode error) { return ErrorToString(error); },
+            outView, outError);
+    }
+
+    bool SCDatabaseSession::ApplyColumnMutation(
+        const wchar_t* actionName,
+        const std::function<sc::ErrorCode(
+            sc::SCSchemaPtr& schema, sc::SCComputedTableViewPtr* outPreviewView,
+            QString* outError)>& mutation,
+        const std::function<void()>& rollbackState, QString* outError)
+    {
+        if (outError != nullptr)
+        {
+            outError->clear();
+        }
+
+        if (!currentTable_)
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("No table is selected.");
+            }
+            return false;
+        }
+
+        sc::SCEditPtr edit;
+        sc::ErrorCode rc = db_->BeginEdit(actionName, edit);
         if (sc::Failed(rc))
         {
             if (outError != nullptr)
@@ -1986,22 +2238,69 @@ namespace StableCore::Storage::Editor
             return false;
         }
 
-        const QVector<sc::SCComputedColumnDef> computedColumns =
-            sessionComputedColumnsByTable_.value(currentTableName_);
-        for (const sc::SCComputedColumnDef& column : computedColumns)
+        sc::SCSchemaPtr schema;
+        rc = currentTable_->GetSchema(schema);
+        if (sc::Failed(rc))
         {
-            rc = view->AddComputedColumn(column);
-            if (sc::Failed(rc))
-            {
-                if (outError != nullptr)
-                {
-                    *outError = ErrorToString(rc);
-                }
-                return false;
-            }
+            RollbackEditAndReport(
+                db_, edit.Get(), ErrorToString(rc),
+                QStringLiteral("Column mutation"),
+                [this](sc::ErrorCode error) { return ErrorToString(error); },
+                outError);
+            return false;
         }
 
-        currentTableView_ = view;
+        const sc::SCComputedTableViewPtr previousTableView = currentTableView_;
+        sc::SCComputedTableViewPtr previewView;
+        rc = mutation(schema, &previewView, outError);
+        if (sc::Failed(rc))
+        {
+            const QString primaryError =
+                (outError != nullptr && !outError->isEmpty())
+                    ? *outError
+                    : ErrorToString(rc);
+            RollbackEditAndReport(
+                db_, edit.Get(), primaryError, QStringLiteral("Column mutation"),
+                [this](sc::ErrorCode error) { return ErrorToString(error); },
+                outError);
+            rollbackState();
+            currentTableView_ = previousTableView;
+            return false;
+        }
+
+        if (!previewView)
+        {
+            RollbackEditAndReport(
+                db_, edit.Get(),
+                QStringLiteral("Column mutation did not build a preview view."),
+                QStringLiteral("Column mutation"),
+                [this](sc::ErrorCode error) { return ErrorToString(error); },
+                outError);
+            rollbackState();
+            currentTableView_ = previousTableView;
+            return false;
+        }
+
+        rc = db_->Commit(edit.Get());
+        if (sc::Failed(rc))
+        {
+            RollbackEditAndReport(
+                db_, edit.Get(), ErrorToString(rc),
+                QStringLiteral("Column commit"),
+                [this](sc::ErrorCode error) { return ErrorToString(error); },
+                outError);
+            rollbackState();
+            currentTableView_ = previousTableView;
+            return false;
+        }
+
+        if (previewView)
+        {
+            currentTableView_ = previewView;
+        }
+
+        emit CurrentTableChanged();
+        emit RecordsChanged();
         return true;
     }
 
@@ -2023,21 +2322,22 @@ namespace StableCore::Storage::Editor
         rc = action();
         if (sc::Failed(rc))
         {
-            db_->Rollback(edit.Get());
-            if (outError != nullptr)
-            {
-                *outError = ErrorToString(rc);
-            }
+            RollbackEditAndReport(
+                db_, edit.Get(), ErrorToString(rc),
+                QStringLiteral("Edit action"),
+                [this](sc::ErrorCode error) { return ErrorToString(error); },
+                outError);
             return false;
         }
 
         rc = db_->Commit(edit.Get());
         if (sc::Failed(rc))
         {
-            if (outError != nullptr)
-            {
-                *outError = ErrorToString(rc);
-            }
+            RollbackEditAndReport(
+                db_, edit.Get(), ErrorToString(rc),
+                QStringLiteral("Edit commit"),
+                [this](sc::ErrorCode error) { return ErrorToString(error); },
+                outError);
             return false;
         }
 

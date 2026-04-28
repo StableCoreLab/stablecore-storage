@@ -76,7 +76,15 @@ namespace StableCore::Storage
             }
             return *this;
         }
+        bool operator==(std::nullptr_t) const noexcept
+        {
+            return ptr_ == nullptr;
+        }
 
+        bool operator!=(std::nullptr_t) const noexcept
+        {
+            return ptr_ != nullptr;
+        }
         T* Get() const noexcept
         {
             return ptr_;

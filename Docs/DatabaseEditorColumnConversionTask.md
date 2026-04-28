@@ -163,20 +163,56 @@
 - `ConvertComputedToColumn(...)`
 - `CreateBackupCopy(...)`
 
-处理顺序：
+处理顺序应收口为同一事务状态机：
 
 1. 预检输入与当前状态
-2. 检查目标字段是否冲突
-3. 对需要迁移的场景执行清数据
-4. 执行 schema / computed 定义替换
+   - 检查目标字段是否冲突
+   - 检查转换规则、依赖关系和当前会话状态
+   - 这一阶段只读，不进入编辑边界
+2. 预构建视图
+   - 在不落库的前提下验证转换后的 `ComputedTableView` 是否可重建
+   - 若预览失败，直接返回错误
+3. 进入显式编辑边界
+   - `BeginEdit` 之后，schema / value / journal 变更必须通过同一上下文执行
+4. 应用 schema / value / journal 变更
+   - 普通字段编辑：应用 schema delta，必要时迁移值，并记录 schema journal
+   - 普通字段 <-> 计算字段互转：先执行结构性清理，再替换定义
+   - `RemoveColumn(...)` 只作为内部结构性动作使用，不作为用户可撤销删列能力暴露
 5. 重建当前 `ComputedTableView`
-6. 任一步失败则回滚并恢复旧状态
+   - 仅当当前事务内的状态已经一致时才允许继续
+6. 提交或回滚
+   - 提交成功后再同步会话历史栈和 UI 状态
+   - 任一步失败都必须回滚同一事务上下文，并恢复旧 schema、旧 values、旧 computed 列列表和旧视图
 
 ### 8.3 后端收口
 
-- `ISCSchema` 增加原地更新能力，供普通字段编辑使用
-- `Memory` 和 `SQLite` 保持同语义实现
-- SQLite 更新字段时不能静默吞掉索引失败
+- `ISCSchema` 保留原地更新能力，供普通字段编辑使用
+- `Memory` 和 `SQLite` 必须在同一事务语义下实现 schema / value / journal 变更
+- 后端内部应通过统一的 mutation scope 记录旧状态、应用新状态并在失败时恢复旧状态
+- SQLite 更新字段时不能静默吞掉索引失败，也不能把提交前的内存缓存改动遗留到失败路径中
+
+### 8.4 事务状态机收口（整合版）
+
+本次修改方案最终应收敛为以下状态机：
+
+| 状态 | 允许做的事 | 失败后的要求 |
+|---|---|---|
+| `Preflight` | 只读校验、依赖检查、冲突检查 | 直接返回，不进入编辑边界 |
+| `Preview` | 构建预览视图，验证转换后 schema 是否可用 | 直接返回，保持原状态 |
+| `BeginEdit` | 打开显式编辑边界，初始化 mutation scope | 若失败，不修改任何缓存 |
+| `ApplySchemaDelta` | 变更 schema 定义 | 失败时恢复旧 schema 对象 |
+| `ApplyValueMigration` | 迁移或清理受影响记录值 | 失败时恢复旧值 |
+| `RecordJournal` | 写入 schema / value journal | 失败时回滚整个编辑上下文 |
+| `RebuildView` | 重建当前 `ComputedTableView` | 失败时回滚并恢复旧视图 |
+| `Commit` | 提交底层事务并同步历史栈 | 仅在底层提交成功后更新 undo/redo 栈 |
+| `Rollback` | 回退所有已应用变更 | 必须恢复 schema、values、journal、view 四类状态 |
+
+核心原则：
+
+- 一个编辑动作只能有一个事务上下文
+- 不允许“先改缓存，再补 journal”
+- 不允许“先写 journal，再赌后续提交成功”
+- 不允许用户入口直接依赖 `RemoveColumn()` 作为可撤销删列能力
 
 ---
 
@@ -241,3 +277,96 @@
 5. 最后做静态自检
 
 禁止跳步。
+## Implementation Note
+
+- `Edit Column...` is no longer metadata-only: compatible existing values are migrated, unsupported conversions are rejected.
+
+## Schema Journal Closure
+
+- `AddColumn(...)`, `UpdateColumn(...)`, and `RemoveColumn(...)` now emit schema journal entries alongside any value migration.
+- Schema journal entries are persisted in `journal_schema_entries` and loaded back into the undo/redo stacks on open.
+- Undo / Redo and rollback replay schema delta and value migration in the same transaction boundary.
+- `RemoveColumn(...)` must not be exposed as a user-facing, undoable delete capability; it stays as an internal structural action for conversion / rollback closure only.
+- Recovery order is now deterministic:
+  1. prebuild the post-edit view
+  2. enter edit
+  3. apply schema delta
+  4. apply value migration
+  5. commit
+  6. on failure, rollback the edit and restore the previous schema/view pair
+- This keeps the editor contract aligned with the core storage contract: no half-success schema edits and no unjournaled schema mutation.
+
+## Final Transaction Closure
+
+This section is the final implementation contract for the current task. It is intended to eliminate the remaining failure-window bugs in one pass.
+
+### Hard constraints
+
+- The failure recovery path must be **pre-image based**, not best-effort reloading from `field_values`.
+- The pre-image snapshot must be captured **before the first mutation** to schema, record cache, or persisted field values.
+- `RemoveColumn(...)` is an internal structural operation only; it must not become a user-visible undoable delete capability.
+- `ApplyColumnMutation(...)` and `BeginAndCommitSingleAction(...)` must share the same rollback helper and error ordering.
+- A rollback failure is more important than the original business error and must be surfaced explicitly.
+
+### Problem 1 closure: `PersistRemovedColumn(...)`
+
+- Add an internal `ColumnRemovalSnapshot` that captures:
+  - the previous schema column definition
+  - the target table
+  - the affected record values for the removed column
+  - the set of records that are deleted, active, or pending in the current edit
+- Wrap `PersistRemovedColumn(...)` in a RAII scope that:
+  - captures the snapshot before deletion
+  - applies the schema/value deletion inside the transaction
+  - restores the pre-image on transaction failure or exception
+- `ReloadColumnValuesFromStorage(...)` may remain as a diagnostic/auxiliary helper, but it must not be the primary recovery path.
+- The replay path may keep legacy compatibility for old journals, but the current edit path must not generate a user-facing undoable `RemoveColumn` capability.
+
+### Problem 2 closure: `ApplyColumnMutation(...)` / `BeginAndCommitSingleAction(...)`
+
+- Introduce one rollback helper, for example `RollbackEditAndReport(...)`.
+- The helper must be used by:
+  - `ApplyColumnMutation(...)`
+  - `BeginAndCommitSingleAction(...)`
+- Both failure branches must route through the helper:
+  - mutation failure
+  - commit failure
+- The helper must:
+  - call rollback
+  - check rollback return code
+  - return rollback failure if rollback fails
+  - keep the primary error as context
+- No call site may swallow rollback failure or return only the original business error when rollback itself failed.
+
+### Session flow contract
+
+- `Add Column`, `Edit Column`, `Convert to Computed`, and `Convert to Column` must all call the same mutation helper.
+- The mutation helper is responsible for:
+  1. begin edit
+  2. apply schema delta / value migration / computed-column list changes
+  3. build the post-mutation preview view
+  4. commit
+  5. rollback + restore pre-image on any failure
+- Entry functions must not keep their own custom rollback logic.
+
+### Test closure
+
+- `M2SqliteTests.cpp`
+  - verify failed `RemoveColumn(...)` restores schema and cached values, including deleted-record edge cases
+  - verify failed `UpdateColumn(...)` value rewrite restores schema, cached values, and active edit rollback behavior
+  - verify failed `ResetHistoryBaseline(...)` commit does not publish a cleared baseline / undo / redo view
+  - verify rollback failure is surfaced as a distinct error path
+- `DatabaseEditorSessionTests.cpp`
+  - verify mutation failure and commit failure both report rollback failure explicitly
+  - verify all four column mutation entry points use the shared helper path
+
+### Acceptance criteria
+
+- No half-success column removal state
+- No swallowed rollback failure
+- No split recovery path between `ApplyColumnMutation(...)` and `BeginAndCommitSingleAction(...)`
+- No reliance on `field_values` reload as the main restore mechanism for `RemoveColumn(...)`
+- SQLite must journal migrated column values during `UpdateColumn(...)`, and reopened backups must report the same `currentVersion` that was committed before backup creation.
+- Failed `UpdateColumn(...)` value migration must leave `schema`, cached record values, and `activeJournal_` at the pre-image checkpoint.
+- Failed `ResetHistoryBaseline(...)` commit must leave `baselineVersion`, `undoStack`, and `redoStack` unchanged in memory.
+- Memory and SQLite remain behaviorally aligned on failure and recovery

@@ -40,6 +40,12 @@
 - 支持普通字段与会话级计算列之间的显式互转，转换时保持同名，并在普通字段转计算列时清理原字段数据。
 - 在右侧面板查看当前表的会话计算列定义。
 
+### 6. Schema 编辑收口
+
+- `Add Column...` / `Edit Column...` / `Convert to Computed...` / `Convert to Column...` 统一走显式编辑事务。
+- schema / value / journal 的变更在同一事务上下文内完成，失败时统一回滚。
+- `RemoveColumn()` 仅保留为内部结构性动作，不作为用户可见的可撤销删列能力暴露。
+
 ## 当前约束
 
 当前实现仍存在以下约束：
@@ -61,5 +67,11 @@
 - 面向产品化继续优化 UI 反馈、可用性与保护机制。
 ## 当前补充
 
+- `Add Column...` / `Edit Column...` 都在显式编辑事务中执行，且 schema 变更会进入 journal。
 - 选中 Schema 字段后已可通过 `Edit Column...` 原地更新同名字段定义。
 - 工具栏与菜单已补充 `Create Backup Copy...` 入口，用于调用底层备份复制能力。
+- 转换与编辑入口应共享同一事务状态机，而不是各自维护独立补救逻辑。
+## Edit Column Semantics
+
+- `Edit Column...` now migrates compatible existing values when the schema `valueKind` changes and records the schema delta for Undo / Redo.
+- Unsupported conversions are rejected and the original schema/data state is preserved.

@@ -200,6 +200,143 @@ TEST(DatabaseEditorSession, EditColumnUpdatesSchemaSnapshotInPlace)
     EXPECT_EQ(columnCount, 1);
 }
 
+TEST(DatabaseEditorSession, AddColumnParticipatesInUndoRedo)
+{
+    const fs::path dbPath =
+        MakeTempDbPath(L"StableCoreStorage_DbEditor_AddColumnUndoRedo.sqlite");
+
+    editor::SCDatabaseSession session;
+    QString error;
+
+    ASSERT_TRUE(session.CreateDatabase(
+        QString::fromStdWString(dbPath.wstring()), &error))
+        << error.toStdString();
+    ASSERT_TRUE(session.CreateTable(QStringLiteral("Beam"), &error))
+        << error.toStdString();
+
+    ASSERT_TRUE(session.AddColumn(MakeIntColumn(L"Width"), &error))
+        << error.toStdString();
+
+    QVector<sc::SCColumnDef> columns;
+    ASSERT_TRUE(session.BuildSchemaSnapshot(&columns, &error))
+        << error.toStdString();
+    ASSERT_EQ(columns.size(), 1);
+
+    ASSERT_TRUE(session.Undo(&error)) << error.toStdString();
+    ASSERT_TRUE(session.BuildSchemaSnapshot(&columns, &error))
+        << error.toStdString();
+    ASSERT_TRUE(columns.isEmpty());
+
+    ASSERT_TRUE(session.Redo(&error)) << error.toStdString();
+    ASSERT_TRUE(session.BuildSchemaSnapshot(&columns, &error))
+        << error.toStdString();
+    ASSERT_EQ(columns.size(), 1);
+    EXPECT_EQ(columns[0].name, L"Width");
+}
+
+TEST(DatabaseEditorSession, EditColumnMigratesCompatibleValues)
+{
+    const fs::path dbPath =
+        MakeTempDbPath(L"StableCoreStorage_DbEditor_EditColumnMigrate.sqlite");
+
+    editor::SCDatabaseSession session;
+    QString error;
+
+    ASSERT_TRUE(session.CreateDatabase(
+        QString::fromStdWString(dbPath.wstring()), &error))
+        << error.toStdString();
+    ASSERT_TRUE(session.CreateTable(QStringLiteral("Beam"), &error))
+        << error.toStdString();
+    ASSERT_TRUE(session.AddColumn(MakeIntColumn(L"Width"), &error))
+        << error.toStdString();
+    ASSERT_TRUE(session.AddRecord(&error)) << error.toStdString();
+
+    ASSERT_TRUE(session.CurrentTable() != nullptr);
+    sc::SCRecordCursorPtr cursor;
+    ASSERT_EQ(session.CurrentTable()->EnumerateRecords(cursor), sc::SC_OK);
+    bool hasRow = false;
+    ASSERT_EQ(cursor->MoveNext(&hasRow), sc::SC_OK);
+    ASSERT_TRUE(hasRow);
+    sc::SCRecordPtr record;
+    ASSERT_EQ(cursor->GetCurrent(record), sc::SC_OK);
+    const sc::RecordId recordId = record->GetId();
+    ASSERT_TRUE(session.SetCellValue(recordId, QStringLiteral("Width"),
+                                     QVariant::fromValue<qlonglong>(11),
+                                     &error))
+        << error.toStdString();
+
+    sc::SCColumnDef updated = MakeStringColumn(L"Width");
+    updated.displayName = L"Width Label";
+    updated.defaultValue = sc::SCValue::FromString(L"0");
+    ASSERT_TRUE(session.UpdateColumn(QStringLiteral("Width"), updated, &error))
+        << error.toStdString();
+
+    ASSERT_TRUE(session.CurrentTable() != nullptr);
+    sc::SCRecordPtr reloaded;
+    ASSERT_EQ(session.CurrentTable()->GetRecord(recordId, reloaded), sc::SC_OK);
+
+    std::wstring width;
+    ASSERT_EQ(reloaded->GetStringCopy(L"Width", &width), sc::SC_OK);
+    EXPECT_EQ(width, L"11");
+
+    QVector<sc::SCColumnDef> columns;
+    ASSERT_TRUE(session.BuildSchemaSnapshot(&columns, &error))
+        << error.toStdString();
+    ASSERT_EQ(columns.size(), 1);
+    EXPECT_EQ(columns[0].valueKind, sc::ValueKind::String);
+}
+
+TEST(DatabaseEditorSession, EditColumnRollsBackWhenViewRebuildFails)
+{
+    const fs::path dbPath =
+        MakeTempDbPath(L"StableCoreStorage_DbEditor_EditColumnRollback.sqlite");
+
+    editor::SCDatabaseSession session;
+    QString error;
+
+    ASSERT_TRUE(session.CreateDatabase(
+        QString::fromStdWString(dbPath.wstring()), &error))
+        << error.toStdString();
+    ASSERT_TRUE(session.CreateTable(QStringLiteral("Beam"), &error))
+        << error.toStdString();
+    ASSERT_TRUE(session.AddColumn(MakeIntColumn(L"Width"), &error))
+        << error.toStdString();
+    ASSERT_TRUE(session.AddRecord(&error)) << error.toStdString();
+
+    ASSERT_TRUE(session.CurrentTable() != nullptr);
+    sc::SCRecordCursorPtr cursor;
+    ASSERT_EQ(session.CurrentTable()->EnumerateRecords(cursor), sc::SC_OK);
+    bool hasRow = false;
+    ASSERT_EQ(cursor->MoveNext(&hasRow), sc::SC_OK);
+    ASSERT_TRUE(hasRow);
+    sc::SCRecordPtr record;
+    ASSERT_EQ(cursor->GetCurrent(record), sc::SC_OK);
+    const sc::RecordId recordId = record->GetId();
+    ASSERT_TRUE(session.SetCellValue(recordId, QStringLiteral("Width"),
+                                     QVariant::fromValue<qlonglong>(17),
+                                     &error))
+        << error.toStdString();
+
+    session.SetForceRebuildCurrentTableViewFailureForTest(true);
+    sc::SCColumnDef updated = MakeStringColumn(L"Width");
+    updated.defaultValue = sc::SCValue::FromString(L"0");
+    EXPECT_FALSE(session.UpdateColumn(QStringLiteral("Width"), updated, &error));
+    EXPECT_EQ(error, QStringLiteral("Forced rebuild failure for test."));
+    session.SetForceRebuildCurrentTableViewFailureForTest(false);
+
+    QVector<sc::SCColumnDef> columns;
+    ASSERT_TRUE(session.BuildSchemaSnapshot(&columns, &error))
+        << error.toStdString();
+    ASSERT_EQ(columns.size(), 1);
+    EXPECT_EQ(columns[0].valueKind, sc::ValueKind::Int64);
+
+    sc::SCRecordPtr reloaded;
+    ASSERT_EQ(session.CurrentTable()->GetRecord(recordId, reloaded), sc::SC_OK);
+    std::int64_t width = 0;
+    ASSERT_EQ(reloaded->GetInt64(L"Width", &width), sc::SC_OK);
+    EXPECT_EQ(width, 17);
+}
+
 TEST(DatabaseEditorSession, ComputedColumnWorkflowKeepsViewAndSessionAligned)
 {
     const fs::path dbPath =
@@ -327,8 +464,8 @@ TEST(DatabaseEditorSession, ConvertColumnToComputedRebuildsSchemaAndView)
     ASSERT_TRUE(session.BuildSchemaSnapshot(&schemaColumns, &error))
         << error.toStdString();
     EXPECT_EQ(CollectColumnNames(schemaColumns),
-              (std::vector<std::wstring>{L"Length"}));
-    EXPECT_EQ(session.CurrentSessionComputedColumns().size(), 1u);
+              (std::vector<std::wstring>{L"Length", L"Width"}));
+    EXPECT_TRUE(session.CurrentSessionComputedColumns().isEmpty());
     ASSERT_TRUE(session.CurrentTableView() != nullptr);
     std::int32_t columnCount = 0;
     ASSERT_EQ(session.CurrentTableView()->GetColumnCount(&columnCount),

@@ -131,6 +131,16 @@ namespace StableCore::Storage::Editor
         CurrentSessionComputedColumnsStorage();
         const QVector<StableCore::Storage::SCComputedColumnDef>*
         CurrentSessionComputedColumnsStorage() const;
+        bool BuildCurrentTableViewPreview(
+            StableCore::Storage::SCComputedTableViewPtr* outView,
+            QString* outError) const;
+        bool ApplyColumnMutation(
+            const wchar_t* actionName,
+            const std::function<StableCore::Storage::ErrorCode(
+                StableCore::Storage::SCSchemaPtr& schema,
+                StableCore::Storage::SCComputedTableViewPtr* outPreviewView,
+                QString* outError)>& mutation,
+            const std::function<void()>& rollbackState, QString* outError);
         bool LoadTableNames(QString* outError);
         bool RebuildCurrentTableView(QString* outError);
         bool BeginAndCommitSingleAction(
