@@ -3,11 +3,12 @@
 #include <QDockWidget>
 #include <QLineEdit>
 #include <QLabel>
-#include <QListWidget>
 #include <QMainWindow>
 #include <QModelIndex>
 #include <QPlainTextEdit>
 #include <QTableView>
+#include <QToolBar>
+#include <QTabWidget>
 #include <QTreeWidgetItem>
 #include <QTreeWidget>
 
@@ -51,13 +52,17 @@ namespace StableCore::Storage::Editor
         void ExportDebugPackage();
         void OnTableSelectionChanged();
         void OnGridSelectionChanged();
+        void OnGridHeaderClicked(int logicalIndex);
         void OnFilterTextChanged(const QString& text);
         void UpdateSchemaInspector();
         void UpdateRecordInspector();
         void UpdateComputedColumnsPanel();
+        void UpdateRelationInspector();
         void UpdateGridSummary();
         void UpdateEditLogPanel();
+        void UpdateDatabaseStatusBar();
         void RefreshOverviewPanels();
+        void RefreshObjectExplorer();
 
     private:
         QModelIndex CurrentSourceIndex() const;
@@ -74,17 +79,34 @@ namespace StableCore::Storage::Editor
         SCRecordTableModel* recordModel_{nullptr};
         SCRecordFilterProxyModel* filterModel_{nullptr};
 
-        QListWidget* tablesList_{nullptr};
+        QDockWidget* objectExplorerDock_{nullptr};
+        QTreeWidget* objectTree_{nullptr};
+        QWidget* databaseStatusBar_{nullptr};
+        QLabel* databasePathLabel_{nullptr};
+        QLabel* openModeLabel_{nullptr};
+        QLabel* currentTableLabel_{nullptr};
+        QLabel* tableStatsLabel_{nullptr};
+        QLabel* filterStateLabel_{nullptr};
+        QLabel* transactionStateLabel_{nullptr};
+        QWidget* tablePage_{nullptr};
+        QLabel* tableTitleLabel_{nullptr};
+        QToolBar* tableToolBar_{nullptr};
         QTableView* dataTable_{nullptr};
         QLineEdit* filterEdit_{nullptr};
-        QLabel* tableSummaryLabel_{nullptr};
+        QDockWidget* inspectorDock_{nullptr};
+        QTabWidget* inspectorTabs_{nullptr};
         QTreeWidget* schemaTree_{nullptr};
         QTreeWidget* recordTree_{nullptr};
         QTreeWidget* computedColumnsTree_{nullptr};
-        QDockWidget* editLogDock_{nullptr};
-        QPlainTextEdit* editStateText_{nullptr};
-        QTreeWidget* editLogTree_{nullptr};
+        QTreeWidget* relationTree_{nullptr};
+        QDockWidget* bottomDock_{nullptr};
+        QTabWidget* bottomTabs_{nullptr};
         QPlainTextEdit* diagnosticsText_{nullptr};
+        QTreeWidget* editLogTree_{nullptr};
+        QPlainTextEdit* editStateText_{nullptr};
+        QPlainTextEdit* healthSummaryText_{nullptr};
+        QPlainTextEdit* sqlPreviewText_{nullptr};
+        QPlainTextEdit* debugPackageText_{nullptr};
         QLabel* statusLabel_{nullptr};
     };
 

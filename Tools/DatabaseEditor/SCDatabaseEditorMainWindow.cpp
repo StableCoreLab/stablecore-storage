@@ -1,6 +1,7 @@
 #include "SCDatabaseEditorMainWindow.h"
 
 #include <QAction>
+#include <QAbstractItemView>
 #include <QDateTime>
 #include <QFileDialog>
 #include <QHBoxLayout>
@@ -16,6 +17,7 @@
 #include <QSplitter>
 #include <QStatusBar>
 #include <QToolBar>
+#include <QTabWidget>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -27,16 +29,36 @@ namespace StableCore::Storage::Editor
 {
     namespace
     {
+        constexpr int kInspectorSchemaTab = 0;
+        constexpr int kInspectorRecordTab = 1;
+        constexpr int kInspectorComputedTab = 2;
+        constexpr int kInspectorRelationTab = 3;
+
+        constexpr int kBottomDiagnosticsTab = 0;
+        constexpr int kBottomEditLogTab = 1;
+        constexpr int kBottomHealthSummaryTab = 2;
+        constexpr int kBottomSqlPreviewTab = 3;
+        constexpr int kBottomDebugPackageTab = 4;
+
+        constexpr int kExplorerNodeTypeRole = Qt::UserRole;
+        constexpr int kExplorerNodeNameRole = Qt::UserRole + 1;
+
+        enum class ExplorerNodeType
+        {
+            Database,
+            TablesRoot,
+            Table,
+            ComputedRoot,
+            ComputedColumn,
+            EditLog,
+            Journal,
+            Snapshots,
+            Diagnostics,
+        };
 
         QString ToQString(const std::wstring& text)
         {
             return QString::fromStdWString(text);
-        }
-
-        QString ColumnKindToText(sc::ColumnKind kind)
-        {
-            return kind == sc::ColumnKind::Relation ? QStringLiteral("Relation")
-                                                    : QStringLiteral("Fact");
         }
 
         QString ValueKindToText(sc::ValueKind kind)
@@ -61,6 +83,77 @@ namespace StableCore::Storage::Editor
             }
         }
 
+        QString SCValueToText(const sc::SCValue& value)
+        {
+            if (value.IsNull())
+            {
+                return QStringLiteral("-");
+            }
+
+            switch (value.GetKind())
+            {
+                case sc::ValueKind::Int64: {
+                    std::int64_t v = 0;
+                    if (value.AsInt64(&v) == sc::SC_OK)
+                    {
+                        return QString::number(v);
+                    }
+                    break;
+                }
+                case sc::ValueKind::Double: {
+                    double v = 0.0;
+                    if (value.AsDouble(&v) == sc::SC_OK)
+                    {
+                        return QString::number(v);
+                    }
+                    break;
+                }
+                case sc::ValueKind::Bool: {
+                    bool v = false;
+                    if (value.AsBool(&v) == sc::SC_OK)
+                    {
+                        return v ? QStringLiteral("Yes")
+                                 : QStringLiteral("No");
+                    }
+                    break;
+                }
+                case sc::ValueKind::String: {
+                    std::wstring v;
+                    if (value.AsStringCopy(&v) == sc::SC_OK)
+                    {
+                        return ToQString(v);
+                    }
+                    break;
+                }
+                case sc::ValueKind::RecordId: {
+                    sc::RecordId v = 0;
+                    if (value.AsRecordId(&v) == sc::SC_OK)
+                    {
+                        return QString::number(static_cast<qulonglong>(v));
+                    }
+                    break;
+                }
+                case sc::ValueKind::Enum: {
+                    std::wstring v;
+                    if (value.AsEnumCopy(&v) == sc::SC_OK)
+                    {
+                        return ToQString(v);
+                    }
+                    break;
+                }
+                case sc::ValueKind::Null:
+                default:
+                    break;
+            }
+
+            return QStringLiteral("<value>");
+        }
+
+        QString BoolToText(bool value)
+        {
+            return value ? QStringLiteral("Yes") : QStringLiteral("No");
+        }
+
         QString OpenModeToText(sc::SCDatabaseOpenMode mode)
         {
             switch (mode)
@@ -71,6 +164,33 @@ namespace StableCore::Storage::Editor
                     return QStringLiteral("NoHistory");
                 case sc::SCDatabaseOpenMode::ReadOnly:
                     return QStringLiteral("ReadOnly");
+                default:
+                    return QStringLiteral("Unknown");
+            }
+        }
+
+        QString ExplorerNodeTypeToText(ExplorerNodeType type)
+        {
+            switch (type)
+            {
+                case ExplorerNodeType::Database:
+                    return QStringLiteral("Database");
+                case ExplorerNodeType::TablesRoot:
+                    return QStringLiteral("Tables");
+                case ExplorerNodeType::Table:
+                    return QStringLiteral("Table");
+                case ExplorerNodeType::ComputedRoot:
+                    return QStringLiteral("Computed Columns");
+                case ExplorerNodeType::ComputedColumn:
+                    return QStringLiteral("Computed Column");
+                case ExplorerNodeType::EditLog:
+                    return QStringLiteral("Edit Log");
+                case ExplorerNodeType::Journal:
+                    return QStringLiteral("Journal");
+                case ExplorerNodeType::Snapshots:
+                    return QStringLiteral("Snapshots");
+                case ExplorerNodeType::Diagnostics:
+                    return QStringLiteral("Diagnostics");
                 default:
                     return QStringLiteral("Unknown");
             }
@@ -152,60 +272,35 @@ namespace StableCore::Storage::Editor
         filterModel_->setSourceModel(recordModel_);
         BuildUi();
         BuildMenus();
+        RefreshObjectExplorer();
+        UpdateDatabaseStatusBar();
+        RefreshOverviewPanels();
+        UpdateGridSummary();
 
         connect(session_, &SCDatabaseSession::DatabaseOpened, this, [this]() {
-            const QSignalBlocker blocker(tablesList_);
-            const QString current = session_->CurrentTableName();
-            tablesList_->clear();
-            tablesList_->addItems(session_->TableNames());
-            if (!current.isEmpty())
-            {
-                const QList<QListWidgetItem*> matches =
-                    tablesList_->findItems(current, Qt::MatchExactly);
-                if (!matches.isEmpty())
-                {
-                    tablesList_->setCurrentItem(matches.front());
-                }
-            }
+            RefreshObjectExplorer();
+            UpdateDatabaseStatusBar();
             RefreshOverviewPanels();
             UpdateGridSummary();
             SetStatusMessage(QStringLiteral("Database opened."));
         });
         connect(session_, &SCDatabaseSession::TablesChanged, this, [this]() {
-            const QSignalBlocker blocker(tablesList_);
-            const QString current = session_->CurrentTableName();
-            tablesList_->clear();
-            tablesList_->addItems(session_->TableNames());
-            if (!current.isEmpty())
-            {
-                const QList<QListWidgetItem*> matches =
-                    tablesList_->findItems(current, Qt::MatchExactly);
-                if (!matches.isEmpty())
-                {
-                    tablesList_->setCurrentItem(matches.front());
-                }
-            }
+            RefreshObjectExplorer();
+            UpdateDatabaseStatusBar();
             RefreshOverviewPanels();
+            UpdateGridSummary();
         });
         connect(session_, &SCDatabaseSession::CurrentTableChanged, this,
                 [this]() {
-                    const QString current = session_->CurrentTableName();
-                    if (!current.isEmpty())
-                    {
-                        const QSignalBlocker blocker(tablesList_);
-                        const QList<QListWidgetItem*> matches =
-                            tablesList_->findItems(current, Qt::MatchExactly);
-                        if (!matches.isEmpty())
-                        {
-                            tablesList_->setCurrentItem(matches.front());
-                        }
-                    }
+                    RefreshObjectExplorer();
                     UpdateSchemaInspector();
                     UpdateRecordInspector();
                     UpdateComputedColumnsPanel();
+                    UpdateRelationInspector();
+                    UpdateDatabaseStatusBar();
+                    UpdateGridSummary();
                     RefreshOverviewPanels();
                     dataTable_->resizeColumnsToContents();
-                    UpdateGridSummary();
                     SetStatusMessage(QStringLiteral("Table selected: ") +
                                      session_->CurrentTableName());
                 });
@@ -214,56 +309,94 @@ namespace StableCore::Storage::Editor
         connect(dataTable_->selectionModel(),
                 &QItemSelectionModel::selectionChanged, this,
                 &SCDatabaseEditorMainWindow::OnGridSelectionChanged);
+        connect(dataTable_->horizontalHeader(), &QHeaderView::sectionClicked,
+                this, &SCDatabaseEditorMainWindow::OnGridHeaderClicked);
         connect(session_, &SCDatabaseSession::RecordsChanged, this,
-                &SCDatabaseEditorMainWindow::RefreshOverviewPanels);
+                [this]() {
+                    UpdateGridSummary();
+                    UpdateRecordInspector();
+                    UpdateRelationInspector();
+                    RefreshOverviewPanels();
+                });
     }
 
     void SCDatabaseEditorMainWindow::BuildUi()
     {
         setWindowTitle(QStringLiteral("StableCore Database Editor"));
-        resize(1400, 860);
+        resize(1540, 920);
 
-        auto* splitter = new QSplitter(this);
-        setCentralWidget(splitter);
+        auto* centralWidget = new QWidget(this);
+        auto* centralLayout = new QVBoxLayout(centralWidget);
+        centralLayout->setContentsMargins(0, 0, 0, 0);
+        centralLayout->setSpacing(6);
 
-        tablesList_ = new QListWidget(splitter);
-        tablesList_->setMinimumWidth(220);
-        connect(tablesList_, &QListWidget::itemSelectionChanged, this,
-                &SCDatabaseEditorMainWindow::OnTableSelectionChanged);
+        databaseStatusBar_ = new QWidget(centralWidget);
+        auto* databaseStatusLayout = new QHBoxLayout(databaseStatusBar_);
+        databaseStatusLayout->setContentsMargins(8, 6, 8, 6);
+        databaseStatusLayout->setSpacing(12);
 
-        auto* centerWidget = new QWidget(splitter);
-        auto* centerLayout = new QVBoxLayout(centerWidget);
-        centerLayout->setContentsMargins(0, 0, 0, 0);
+        databasePathLabel_ = new QLabel(QStringLiteral("Database: -"), databaseStatusBar_);
+        openModeLabel_ = new QLabel(QStringLiteral("Mode: Closed"), databaseStatusBar_);
+        currentTableLabel_ = new QLabel(QStringLiteral("Table: -"), databaseStatusBar_);
+        tableStatsLabel_ = new QLabel(QStringLiteral("Records: 0"), databaseStatusBar_);
+        filterStateLabel_ = new QLabel(QStringLiteral("Filter: Off"), databaseStatusBar_);
+        transactionStateLabel_ =
+            new QLabel(QStringLiteral("Transaction: Idle"), databaseStatusBar_);
 
-        auto* toolsLayout = new QHBoxLayout();
-        tableSummaryLabel_ =
-            new QLabel(QStringLiteral("No table selected"), centerWidget);
-        filterEdit_ = new QLineEdit(centerWidget);
+        databaseStatusLayout->addWidget(databasePathLabel_);
+        databaseStatusLayout->addWidget(openModeLabel_);
+        databaseStatusLayout->addWidget(currentTableLabel_);
+        databaseStatusLayout->addWidget(tableStatsLabel_);
+        databaseStatusLayout->addWidget(filterStateLabel_);
+        databaseStatusLayout->addWidget(transactionStateLabel_);
+        databaseStatusLayout->addStretch(1);
+        centralLayout->addWidget(databaseStatusBar_);
+
+        tablePage_ = new QWidget(centralWidget);
+        auto* tableLayout = new QVBoxLayout(tablePage_);
+        tableLayout->setContentsMargins(0, 0, 0, 0);
+        tableLayout->setSpacing(6);
+
+        tableTitleLabel_ =
+            new QLabel(QStringLiteral("No table selected"), tablePage_);
+        tableTitleLabel_->setObjectName(QStringLiteral("tableTitleLabel"));
+        tableTitleLabel_->setStyleSheet(
+            QStringLiteral("font-size: 16px; font-weight: 600;"));
+        tableLayout->addWidget(tableTitleLabel_);
+
+        tableToolBar_ = new QToolBar(QStringLiteral("Table Tools"), tablePage_);
+        tableToolBar_->setMovable(false);
+        tableToolBar_->addAction(QStringLiteral("Add Record"), this,
+                                &SCDatabaseEditorMainWindow::AddRecord);
+        tableToolBar_->addAction(QStringLiteral("Delete Record"), this,
+                                &SCDatabaseEditorMainWindow::DeleteSelectedRecord);
+        tableToolBar_->addSeparator();
+        tableToolBar_->addAction(QStringLiteral("Refresh"), this,
+                                &SCDatabaseEditorMainWindow::RefreshCurrentView);
+        tableToolBar_->addSeparator();
+        tableToolBar_->addAction(QStringLiteral("Add Column"), this,
+                                &SCDatabaseEditorMainWindow::AddColumn);
+        tableToolBar_->addAction(QStringLiteral("Edit Column"), this,
+                                &SCDatabaseEditorMainWindow::EditSelectedColumn);
+        tableToolBar_->addAction(QStringLiteral("Pick Relation"), this,
+                                &SCDatabaseEditorMainWindow::EditSelectedRelation);
+        tableToolBar_->addSeparator();
+        tableToolBar_->addAction(QStringLiteral("Add Computed"), this,
+                                &SCDatabaseEditorMainWindow::AddSessionComputedColumn);
+        tableToolBar_->addAction(QStringLiteral("Edit Computed"), this,
+                                &SCDatabaseEditorMainWindow::EditSelectedComputedColumn);
+        tableLayout->addWidget(tableToolBar_);
+
+        auto* filterLayout = new QHBoxLayout();
+        filterEdit_ = new QLineEdit(tablePage_);
         filterEdit_->setPlaceholderText(QStringLiteral("Filter current table"));
-        auto* clearFilterButton =
-            new QPushButton(QStringLiteral("Clear"), centerWidget);
-        auto* relationButton =
-            new QPushButton(QStringLiteral("Pick Relation"), centerWidget);
-        auto* computedButton = new QPushButton(
-            QStringLiteral("Add Computed Column"), centerWidget);
-        auto* editComputedButton =
-            new QPushButton(QStringLiteral("Edit Computed"), centerWidget);
-        auto* convertComputedButton =
-            new QPushButton(QStringLiteral("Convert To Computed"), centerWidget);
-        auto* deleteComputedButton =
-            new QPushButton(QStringLiteral("Delete Computed"), centerWidget);
+        auto* clearFilterButton = new QPushButton(QStringLiteral("Clear"), tablePage_);
+        filterLayout->addWidget(new QLabel(QStringLiteral("Filter:"), tablePage_));
+        filterLayout->addWidget(filterEdit_, 1);
+        filterLayout->addWidget(clearFilterButton);
+        tableLayout->addLayout(filterLayout);
 
-        toolsLayout->addWidget(tableSummaryLabel_, 1);
-        toolsLayout->addWidget(filterEdit_, 2);
-        toolsLayout->addWidget(clearFilterButton);
-        toolsLayout->addWidget(relationButton);
-        toolsLayout->addWidget(computedButton);
-        toolsLayout->addWidget(editComputedButton);
-        toolsLayout->addWidget(convertComputedButton);
-        toolsLayout->addWidget(deleteComputedButton);
-        centerLayout->addLayout(toolsLayout);
-
-        dataTable_ = new QTableView(centerWidget);
+        dataTable_ = new QTableView(tablePage_);
         dataTable_->setModel(filterModel_);
         dataTable_->horizontalHeader()->setStretchLastSection(true);
         dataTable_->horizontalHeader()->setSectionsMovable(true);
@@ -272,75 +405,86 @@ namespace StableCore::Storage::Editor
         dataTable_->setSelectionMode(QAbstractItemView::SingleSelection);
         dataTable_->setSortingEnabled(true);
         dataTable_->setWordWrap(false);
-        centerLayout->addWidget(dataTable_, 1);
+        tableLayout->addWidget(dataTable_, 1);
+
+        centralLayout->addWidget(tablePage_, 1);
+        setCentralWidget(centralWidget);
 
         connect(filterEdit_, &QLineEdit::textChanged, this,
                 &SCDatabaseEditorMainWindow::OnFilterTextChanged);
         connect(clearFilterButton, &QPushButton::clicked, filterEdit_,
                 &QLineEdit::clear);
-        connect(relationButton, &QPushButton::clicked, this,
-                &SCDatabaseEditorMainWindow::EditSelectedRelation);
-        connect(computedButton, &QPushButton::clicked, this,
-                &SCDatabaseEditorMainWindow::AddSessionComputedColumn);
-        connect(editComputedButton, &QPushButton::clicked, this,
-                &SCDatabaseEditorMainWindow::EditSelectedComputedColumn);
-        connect(convertComputedButton, &QPushButton::clicked, this,
-                &SCDatabaseEditorMainWindow::ConvertSelectedColumnToComputed);
-        connect(deleteComputedButton, &QPushButton::clicked, this,
-                &SCDatabaseEditorMainWindow::DeleteSelectedComputedColumn);
 
-        splitter->addWidget(centerWidget);
+        objectExplorerDock_ =
+            new QDockWidget(QStringLiteral("Object Explorer"), this);
+        objectExplorerDock_->setObjectName(QStringLiteral("objectExplorerDock"));
+        objectExplorerDock_->setAllowedAreas(Qt::LeftDockWidgetArea |
+                                            Qt::RightDockWidgetArea);
+        objectTree_ = new QTreeWidget(objectExplorerDock_);
+        objectTree_->setHeaderLabels(
+            {QStringLiteral("Object"), QStringLiteral("Type")});
+        objectTree_->setSelectionMode(QAbstractItemView::SingleSelection);
+        objectTree_->setAlternatingRowColors(true);
+        objectExplorerDock_->setWidget(objectTree_);
+        addDockWidget(Qt::LeftDockWidgetArea, objectExplorerDock_);
+        connect(objectTree_, &QTreeWidget::itemSelectionChanged, this,
+                &SCDatabaseEditorMainWindow::OnTableSelectionChanged);
 
-        auto* inspectorDock =
-            new QDockWidget(QStringLiteral("Inspector"), this);
-        auto* inspectorWidget = new QWidget(inspectorDock);
-        auto* inspectorLayout = new QVBoxLayout(inspectorWidget);
+        inspectorDock_ = new QDockWidget(QStringLiteral("Inspector"), this);
+        inspectorDock_->setObjectName(QStringLiteral("inspectorDock"));
+        inspectorDock_->setAllowedAreas(Qt::RightDockWidgetArea);
+        inspectorTabs_ = new QTabWidget(inspectorDock_);
 
-        schemaTree_ = new QTreeWidget(inspectorWidget);
+        schemaTree_ = new QTreeWidget(inspectorTabs_);
         schemaTree_->setHeaderLabels(
-            {QStringLiteral("Schema Field"), QStringLiteral("SCValue")});
-        inspectorLayout->addWidget(
-            new QLabel(QStringLiteral("Schema"), inspectorWidget));
-        inspectorLayout->addWidget(schemaTree_, 1);
+            {QStringLiteral("Name"), QStringLiteral("Type"),
+             QStringLiteral("Nullable"), QStringLiteral("Default"),
+             QStringLiteral("Reference Table"), QStringLiteral("User Defined"),
+             QStringLiteral("Computed")});
+        inspectorTabs_->addTab(schemaTree_, QStringLiteral("Schema"));
 
-        recordTree_ = new QTreeWidget(inspectorWidget);
+        recordTree_ = new QTreeWidget(inspectorTabs_);
         recordTree_->setHeaderLabels(
-            {QStringLiteral("Record Field"), QStringLiteral("SCValue")});
-        inspectorLayout->addWidget(
-            new QLabel(QStringLiteral("Selected Record"), inspectorWidget));
-        inspectorLayout->addWidget(recordTree_, 1);
+            {QStringLiteral("Field"), QStringLiteral("Value")});
+        inspectorTabs_->addTab(recordTree_, QStringLiteral("Current Record"));
 
-        inspectorDock->setWidget(inspectorWidget);
-        addDockWidget(Qt::RightDockWidgetArea, inspectorDock);
-
-        auto* computedDock =
-            new QDockWidget(QStringLiteral("Session Computed Columns"), this);
-        computedColumnsTree_ = new QTreeWidget(computedDock);
+        computedColumnsTree_ = new QTreeWidget(inspectorTabs_);
         computedColumnsTree_->setHeaderLabels(
-            {QStringLiteral("Column"), QStringLiteral("Definition")});
-        computedDock->setWidget(computedColumnsTree_);
-        addDockWidget(Qt::RightDockWidgetArea, computedDock);
+            {QStringLiteral("Name"), QStringLiteral("Kind"),
+             QStringLiteral("Expression"), QStringLiteral("Cacheable")});
+        inspectorTabs_->addTab(computedColumnsTree_,
+                               QStringLiteral("Computed"));
 
-        auto* diagnosticsDock =
-            new QDockWidget(QStringLiteral("Diagnostics"), this);
-        diagnosticsText_ = new QPlainTextEdit(diagnosticsDock);
+        relationTree_ = new QTreeWidget(inspectorTabs_);
+        relationTree_->setHeaderLabels(
+            {QStringLiteral("Field"), QStringLiteral("Target Table"),
+             QStringLiteral("Target Field"), QStringLiteral("Status")});
+        inspectorTabs_->addTab(relationTree_, QStringLiteral("Relation"));
+
+        inspectorDock_->setWidget(inspectorTabs_);
+        addDockWidget(Qt::RightDockWidgetArea, inspectorDock_);
+
+        bottomDock_ = new QDockWidget(QStringLiteral("Bottom Panel"), this);
+        bottomDock_->setObjectName(QStringLiteral("bottomDock"));
+        bottomDock_->setAllowedAreas(Qt::BottomDockWidgetArea);
+        bottomTabs_ = new QTabWidget(bottomDock_);
+
+        diagnosticsText_ = new QPlainTextEdit(bottomTabs_);
         diagnosticsText_->setReadOnly(true);
-        diagnosticsDock->setWidget(diagnosticsText_);
-        addDockWidget(Qt::BottomDockWidgetArea, diagnosticsDock);
         diagnosticsText_->setPlainText(QStringLiteral("No database opened."));
+        bottomTabs_->addTab(diagnosticsText_, QStringLiteral("Diagnostics"));
 
-        editLogDock_ =
-            new QDockWidget(QStringLiteral("Edit Log / State Summary"), this);
-        auto* editLogWidget = new QWidget(editLogDock_);
+        auto* editLogWidget = new QWidget(bottomTabs_);
         auto* editLogLayout = new QVBoxLayout(editLogWidget);
-
+        editLogLayout->setContentsMargins(6, 6, 6, 6);
+        editLogLayout->setSpacing(6);
         editStateText_ = new QPlainTextEdit(editLogWidget);
         editStateText_->setReadOnly(true);
         editStateText_->setMinimumHeight(110);
+        editStateText_->setPlainText(QStringLiteral("No database opened."));
         editLogLayout->addWidget(
             new QLabel(QStringLiteral("State Summary"), editLogWidget));
         editLogLayout->addWidget(editStateText_);
-
         editLogTree_ = new QTreeWidget(editLogWidget);
         editLogTree_->setHeaderLabels(
             {QStringLiteral("Side"), QStringLiteral("Version"),
@@ -350,14 +494,28 @@ namespace StableCore::Storage::Editor
         editLogLayout->addWidget(
             new QLabel(QStringLiteral("Edit Log Items"), editLogWidget));
         editLogLayout->addWidget(editLogTree_, 1);
+        bottomTabs_->addTab(editLogWidget, QStringLiteral("Edit Log"));
 
-        editLogDock_->setWidget(editLogWidget);
-        addDockWidget(Qt::BottomDockWidgetArea, editLogDock_);
-        tabifyDockWidget(diagnosticsDock, editLogDock_);
-        editLogDock_->raise();
-        editStateText_->setPlainText(QStringLiteral("No database opened."));
+        healthSummaryText_ = new QPlainTextEdit(bottomTabs_);
+        healthSummaryText_->setReadOnly(true);
+        healthSummaryText_->setPlainText(QStringLiteral("No database opened."));
+        bottomTabs_->addTab(healthSummaryText_, QStringLiteral("Health Summary"));
 
-        statusLabel_ = new QLabel(QStringLiteral("No database opened."), this);
+        sqlPreviewText_ = new QPlainTextEdit(bottomTabs_);
+        sqlPreviewText_->setReadOnly(true);
+        sqlPreviewText_->setPlainText(
+            QStringLiteral("SQL preview is not available until a table is open."));
+        bottomTabs_->addTab(sqlPreviewText_, QStringLiteral("SQL Preview"));
+
+        debugPackageText_ = new QPlainTextEdit(bottomTabs_);
+        debugPackageText_->setReadOnly(true);
+        debugPackageText_->setPlainText(QStringLiteral("No debug package exported."));
+        bottomTabs_->addTab(debugPackageText_, QStringLiteral("Debug Package"));
+
+        bottomDock_->setWidget(bottomTabs_);
+        addDockWidget(Qt::BottomDockWidgetArea, bottomDock_);
+
+        statusLabel_ = new QLabel(QStringLiteral("Ready."), this);
         statusBar()->addPermanentWidget(statusLabel_, 1);
     }
 
@@ -370,6 +528,16 @@ namespace StableCore::Storage::Editor
                             &SCDatabaseEditorMainWindow::OpenDatabase);
         fileMenu->addAction(QStringLiteral("Create Backup Copy..."), this,
                             &SCDatabaseEditorMainWindow::CreateBackupCopy);
+        fileMenu->addAction(QStringLiteral("Export Debug Package..."), this,
+                            &SCDatabaseEditorMainWindow::ExportDebugPackage);
+
+        auto* editMenu = menuBar()->addMenu(QStringLiteral("&Edit"));
+        editMenu->addAction(QStringLiteral("Undo"), this,
+                            &SCDatabaseEditorMainWindow::UndoLastAction);
+        editMenu->addAction(QStringLiteral("Redo"), this,
+                            &SCDatabaseEditorMainWindow::RedoLastAction);
+        editMenu->addAction(QStringLiteral("Refresh"), this,
+                            &SCDatabaseEditorMainWindow::RefreshCurrentView);
 
         auto* tableMenu = menuBar()->addMenu(QStringLiteral("&Table"));
         tableMenu->addAction(QStringLiteral("Create Table..."), this,
@@ -378,43 +546,53 @@ namespace StableCore::Storage::Editor
                              &SCDatabaseEditorMainWindow::AddColumn);
         tableMenu->addAction(QStringLiteral("Edit Selected Column..."), this,
                              &SCDatabaseEditorMainWindow::EditSelectedColumn);
-        tableMenu->addAction(
-            QStringLiteral("Add Session Computed Column..."), this,
-            &SCDatabaseEditorMainWindow::AddSessionComputedColumn);
-        tableMenu->addAction(
-            QStringLiteral("Edit Selected Computed Column..."), this,
-            &SCDatabaseEditorMainWindow::EditSelectedComputedColumn);
-        tableMenu->addAction(
-            QStringLiteral("Convert Selected Column To Computed..."), this,
-            &SCDatabaseEditorMainWindow::ConvertSelectedColumnToComputed);
-        tableMenu->addAction(
-            QStringLiteral("Convert Selected Computed Column To Column..."),
-            this, &SCDatabaseEditorMainWindow::ConvertSelectedComputedToColumn);
-        tableMenu->addAction(
-            QStringLiteral("Delete Selected Computed Column"), this,
-            &SCDatabaseEditorMainWindow::DeleteSelectedComputedColumn);
         tableMenu->addAction(QStringLiteral("Add Record"), this,
                              &SCDatabaseEditorMainWindow::AddRecord);
         tableMenu->addAction(QStringLiteral("Delete Selected Record"), this,
                              &SCDatabaseEditorMainWindow::DeleteSelectedRecord);
         tableMenu->addAction(QStringLiteral("Pick Selected Relation..."), this,
                              &SCDatabaseEditorMainWindow::EditSelectedRelation);
-        tableMenu->addSeparator();
-        tableMenu->addAction(QStringLiteral("Undo"), this,
-                             &SCDatabaseEditorMainWindow::UndoLastAction);
-        tableMenu->addAction(QStringLiteral("Redo"), this,
-                             &SCDatabaseEditorMainWindow::RedoLastAction);
-        tableMenu->addAction(QStringLiteral("Refresh"), this,
-                             &SCDatabaseEditorMainWindow::RefreshCurrentView);
+
+        auto* computedMenu =
+            menuBar()->addMenu(QStringLiteral("&Computed Column"));
+        computedMenu->addAction(QStringLiteral("Add Session Computed Column..."),
+                                this,
+                                &SCDatabaseEditorMainWindow::AddSessionComputedColumn);
+        computedMenu->addAction(
+            QStringLiteral("Edit Selected Computed Column..."), this,
+            &SCDatabaseEditorMainWindow::EditSelectedComputedColumn);
+        computedMenu->addAction(
+            QStringLiteral("Convert Selected Column To Computed..."), this,
+            &SCDatabaseEditorMainWindow::ConvertSelectedColumnToComputed);
+        computedMenu->addAction(
+            QStringLiteral("Convert Selected Computed Column To Column..."),
+            this, &SCDatabaseEditorMainWindow::ConvertSelectedComputedToColumn);
+        computedMenu->addAction(
+            QStringLiteral("Delete Selected Computed Column"), this,
+            &SCDatabaseEditorMainWindow::DeleteSelectedComputedColumn);
 
         auto* toolsMenu = menuBar()->addMenu(QStringLiteral("&Tools"));
-        toolsMenu->addAction(QStringLiteral("Show Health Summary"), this,
+        toolsMenu->addAction(QStringLiteral("Health Check"), this,
                              &SCDatabaseEditorMainWindow::ShowHealthSummary);
         toolsMenu->addAction(QStringLiteral("Show Edit Log / State Summary"),
                              this,
                              &SCDatabaseEditorMainWindow::ShowEditLogSummary);
         toolsMenu->addAction(QStringLiteral("Export Debug Package..."), this,
                              &SCDatabaseEditorMainWindow::ExportDebugPackage);
+
+        auto* viewMenu = menuBar()->addMenu(QStringLiteral("&View"));
+        viewMenu->addAction(objectExplorerDock_->toggleViewAction());
+        viewMenu->addAction(inspectorDock_->toggleViewAction());
+        viewMenu->addAction(bottomDock_->toggleViewAction());
+        viewMenu->addSeparator();
+        viewMenu->addAction(QStringLiteral("Reset Layout"), this, [this]() {
+            objectExplorerDock_->show();
+            inspectorDock_->show();
+            bottomDock_->show();
+            objectExplorerDock_->raise();
+            inspectorDock_->raise();
+            bottomDock_->raise();
+        });
 
         auto* toolbar = addToolBar(QStringLiteral("Main"));
         toolbar->addAction(QStringLiteral("Open"), this,
@@ -423,41 +601,18 @@ namespace StableCore::Storage::Editor
                            &SCDatabaseEditorMainWindow::CreateDatabase);
         toolbar->addAction(QStringLiteral("Backup Copy"), this,
                            &SCDatabaseEditorMainWindow::CreateBackupCopy);
+        toolbar->addAction(QStringLiteral("Refresh"), this,
+                           &SCDatabaseEditorMainWindow::RefreshCurrentView);
         toolbar->addSeparator();
-        toolbar->addAction(QStringLiteral("New Table"), this,
-                           &SCDatabaseEditorMainWindow::CreateTable);
-        toolbar->addAction(QStringLiteral("Add Column"), this,
-                           &SCDatabaseEditorMainWindow::AddColumn);
-        toolbar->addAction(QStringLiteral("Edit Column"), this,
-                           &SCDatabaseEditorMainWindow::EditSelectedColumn);
-        toolbar->addAction(
-            QStringLiteral("Add Computed"), this,
-            &SCDatabaseEditorMainWindow::AddSessionComputedColumn);
-        toolbar->addAction(
-            QStringLiteral("Edit Computed"), this,
-            &SCDatabaseEditorMainWindow::EditSelectedComputedColumn);
-        toolbar->addAction(
-            QStringLiteral("To Computed"), this,
-            &SCDatabaseEditorMainWindow::ConvertSelectedColumnToComputed);
-        toolbar->addAction(
-            QStringLiteral("To Column"), this,
-            &SCDatabaseEditorMainWindow::ConvertSelectedComputedToColumn);
-        toolbar->addAction(
-            QStringLiteral("Delete Computed"), this,
-            &SCDatabaseEditorMainWindow::DeleteSelectedComputedColumn);
-        toolbar->addAction(QStringLiteral("Add Record"), this,
-                           &SCDatabaseEditorMainWindow::AddRecord);
-        toolbar->addAction(QStringLiteral("Delete Record"), this,
-                           &SCDatabaseEditorMainWindow::DeleteSelectedRecord);
-        toolbar->addAction(QStringLiteral("Pick Relation"), this,
-                           &SCDatabaseEditorMainWindow::EditSelectedRelation);
         toolbar->addAction(QStringLiteral("Undo"), this,
                            &SCDatabaseEditorMainWindow::UndoLastAction);
         toolbar->addAction(QStringLiteral("Redo"), this,
                            &SCDatabaseEditorMainWindow::RedoLastAction);
         toolbar->addSeparator();
-        toolbar->addAction(QStringLiteral("Refresh"), this,
-                           &SCDatabaseEditorMainWindow::RefreshCurrentView);
+        toolbar->addAction(QStringLiteral("Health Check"), this,
+                           &SCDatabaseEditorMainWindow::ShowHealthSummary);
+        toolbar->addAction(QStringLiteral("Debug Package"), this,
+                           &SCDatabaseEditorMainWindow::ExportDebugPackage);
     }
 
     void SCDatabaseEditorMainWindow::CreateDatabase()
@@ -566,6 +721,7 @@ namespace StableCore::Storage::Editor
         UpdateSchemaInspector();
         SelectSchemaColumnByName(ToQString(column.name));
         recordModel_->Refresh();
+        UpdateRelationInspector();
         RefreshOverviewPanels();
         SetStatusMessage(QStringLiteral("Column added: ") +
                          ToQString(column.name));
@@ -612,6 +768,7 @@ namespace StableCore::Storage::Editor
         UpdateSchemaInspector();
         SelectSchemaColumnByName(ToQString(updated.name));
         recordModel_->Refresh();
+        UpdateRelationInspector();
         RefreshOverviewPanels();
         SetStatusMessage(QStringLiteral("Column updated: ") +
                          ToQString(updated.name));
@@ -661,6 +818,7 @@ namespace StableCore::Storage::Editor
         UpdateComputedColumnsPanel();
         SelectComputedColumnByName(ToQString(definition.name));
         recordModel_->Refresh();
+        UpdateRelationInspector();
         RefreshOverviewPanels();
         SetStatusMessage(QStringLiteral("Converted to computed column: ") +
                          ToQString(definition.name));
@@ -698,6 +856,7 @@ namespace StableCore::Storage::Editor
         recordModel_->Refresh();
         UpdateComputedColumnsPanel();
         SelectComputedColumnByName(ToQString(definition.name));
+        UpdateRelationInspector();
         RefreshOverviewPanels();
         SetStatusMessage(QStringLiteral("Computed column added: ") +
                          ToQString(definition.name));
@@ -745,6 +904,7 @@ namespace StableCore::Storage::Editor
         recordModel_->Refresh();
         UpdateComputedColumnsPanel();
         SelectComputedColumnByName(ToQString(updated.name));
+        UpdateRelationInspector();
         RefreshOverviewPanels();
         SetStatusMessage(QStringLiteral("Computed column updated: ") +
                          ToQString(updated.name));
@@ -793,6 +953,7 @@ namespace StableCore::Storage::Editor
         UpdateComputedColumnsPanel();
         SelectSchemaColumnByName(ToQString(definition.name));
         recordModel_->Refresh();
+        UpdateRelationInspector();
         RefreshOverviewPanels();
         SetStatusMessage(QStringLiteral("Converted to column: ") +
                          ToQString(definition.name));
@@ -851,6 +1012,7 @@ namespace StableCore::Storage::Editor
         recordModel_->Refresh();
         UpdateComputedColumnsPanel();
         SelectComputedColumnByName(fallbackSelection);
+        UpdateRelationInspector();
         RefreshOverviewPanels();
         SetStatusMessage(QStringLiteral("Computed column deleted: ") +
                          columnName);
@@ -975,7 +1137,9 @@ namespace StableCore::Storage::Editor
 
         recordModel_->Refresh();
         UpdateRecordInspector();
-        diagnosticsText_->setPlainText(session_->BuildHealthSummary());
+        UpdateRelationInspector();
+        RefreshOverviewPanels();
+        UpdateGridSummary();
     }
 
     void SCDatabaseEditorMainWindow::RedoLastAction()
@@ -989,7 +1153,9 @@ namespace StableCore::Storage::Editor
 
         recordModel_->Refresh();
         UpdateRecordInspector();
-        diagnosticsText_->setPlainText(session_->BuildHealthSummary());
+        UpdateRelationInspector();
+        RefreshOverviewPanels();
+        UpdateGridSummary();
     }
 
     void SCDatabaseEditorMainWindow::RefreshCurrentView()
@@ -1005,20 +1171,25 @@ namespace StableCore::Storage::Editor
         UpdateSchemaInspector();
         UpdateRecordInspector();
         UpdateComputedColumnsPanel();
+        UpdateRelationInspector();
         RefreshOverviewPanels();
+        UpdateGridSummary();
     }
 
     void SCDatabaseEditorMainWindow::ShowHealthSummary()
     {
-        diagnosticsText_->setPlainText(session_->BuildHealthSummary());
+        if (bottomTabs_ != nullptr)
+        {
+            bottomTabs_->setCurrentIndex(kBottomHealthSummaryTab);
+        }
+        RefreshOverviewPanels();
     }
 
     void SCDatabaseEditorMainWindow::ShowEditLogSummary()
     {
-        if (editLogDock_ != nullptr)
+        if (bottomTabs_ != nullptr)
         {
-            editLogDock_->show();
-            editLogDock_->raise();
+            bottomTabs_->setCurrentIndex(kBottomEditLogTab);
         }
         UpdateEditLogPanel();
     }
@@ -1046,13 +1217,34 @@ namespace StableCore::Storage::Editor
             return;
         }
 
+        if (bottomTabs_ != nullptr)
+        {
+            bottomTabs_->setCurrentIndex(kBottomDebugPackageTab);
+        }
+        if (debugPackageText_ != nullptr)
+        {
+            debugPackageText_->setPlainText(
+                QStringLiteral("Exported debug package:\n") + filePath);
+        }
         SetStatusMessage(QStringLiteral("Debug package exported: ") + filePath);
     }
 
     void SCDatabaseEditorMainWindow::RefreshOverviewPanels()
     {
         diagnosticsText_->setPlainText(session_->BuildHealthSummary());
+        if (healthSummaryText_ != nullptr)
+        {
+            healthSummaryText_->setPlainText(session_->BuildHealthSummary());
+        }
+        if (sqlPreviewText_ != nullptr)
+        {
+            sqlPreviewText_->setPlainText(
+                QStringLiteral("SQL preview is not populated in this phase.\n"
+                               "Use schema and record actions to inspect "
+                               "changes."));
+        }
         UpdateEditLogPanel();
+        UpdateDatabaseStatusBar();
     }
 
     void SCDatabaseEditorMainWindow::UpdateEditLogPanel()
@@ -1144,26 +1336,109 @@ namespace StableCore::Storage::Editor
 
     void SCDatabaseEditorMainWindow::OnTableSelectionChanged()
     {
-        const QListWidgetItem* item = tablesList_->currentItem();
+        if (objectTree_ == nullptr)
+        {
+            return;
+        }
+
+        QTreeWidgetItem* item = objectTree_->currentItem();
         if (item == nullptr)
         {
             return;
         }
 
-        QString error;
-        if (!session_->SelectTable(item->text(), &error))
+        const ExplorerNodeType nodeType = static_cast<ExplorerNodeType>(
+            item->data(0, kExplorerNodeTypeRole).toInt());
+        const QString nodeName = item->data(0, kExplorerNodeNameRole).toString();
+
+        switch (nodeType)
         {
-            ShowError(QStringLiteral("Select Table Failed"), error);
-            return;
+            case ExplorerNodeType::Table:
+                if (nodeName.compare(session_->CurrentTableName(),
+                                    Qt::CaseInsensitive) != 0)
+                {
+                    QString error;
+                    if (!session_->SelectTable(nodeName, &error))
+                    {
+                        ShowError(QStringLiteral("Select Table Failed"),
+                                  error);
+                        return;
+                    }
+                }
+                if (inspectorTabs_ != nullptr)
+                {
+                    inspectorTabs_->setCurrentIndex(kInspectorSchemaTab);
+                }
+                break;
+            case ExplorerNodeType::ComputedColumn:
+                if (inspectorTabs_ != nullptr)
+                {
+                    inspectorTabs_->setCurrentIndex(kInspectorComputedTab);
+                }
+                SelectComputedColumnByName(nodeName);
+                break;
+            case ExplorerNodeType::Diagnostics:
+                if (bottomTabs_ != nullptr)
+                {
+                    bottomTabs_->setCurrentIndex(kBottomDiagnosticsTab);
+                }
+                break;
+            case ExplorerNodeType::EditLog:
+            case ExplorerNodeType::Journal:
+                if (bottomTabs_ != nullptr)
+                {
+                    bottomTabs_->setCurrentIndex(kBottomEditLogTab);
+                }
+                break;
+            case ExplorerNodeType::Snapshots:
+                if (bottomTabs_ != nullptr)
+                {
+                    bottomTabs_->setCurrentIndex(kBottomHealthSummaryTab);
+                }
+                break;
+            case ExplorerNodeType::ComputedRoot:
+                if (inspectorTabs_ != nullptr)
+                {
+                    inspectorTabs_->setCurrentIndex(kInspectorComputedTab);
+                }
+                break;
+            case ExplorerNodeType::TablesRoot:
+                if (inspectorTabs_ != nullptr)
+                {
+                    inspectorTabs_->setCurrentIndex(kInspectorSchemaTab);
+                }
+                break;
+            case ExplorerNodeType::Database:
+            default:
+                break;
         }
 
-        recordModel_->Refresh();
+        UpdateDatabaseStatusBar();
+        UpdateGridSummary();
     }
 
     void SCDatabaseEditorMainWindow::OnGridSelectionChanged()
     {
         UpdateRecordInspector();
+        UpdateRelationInspector();
         UpdateGridSummary();
+    }
+
+    void SCDatabaseEditorMainWindow::OnGridHeaderClicked(int logicalIndex)
+    {
+        const sc::SCTableViewColumnDef column = recordModel_->ColumnAt(logicalIndex);
+        if (column.name.empty())
+        {
+            return;
+        }
+
+        if (inspectorTabs_ != nullptr)
+        {
+            inspectorTabs_->setCurrentIndex(kInspectorSchemaTab);
+        }
+        SelectSchemaColumnByName(ToQString(column.name));
+        SetStatusMessage(QStringLiteral("Schema field selected: ") +
+                         ToQString(column.name));
     }
 
     void SCDatabaseEditorMainWindow::OnFilterTextChanged(const QString& text)
@@ -1171,11 +1446,13 @@ namespace StableCore::Storage::Editor
         filterModel_->setFilterRegularExpression(
             QRegularExpression(QRegularExpression::escape(text),
                                QRegularExpression::CaseInsensitiveOption));
+        UpdateDatabaseStatusBar();
         UpdateGridSummary();
     }
 
     void SCDatabaseEditorMainWindow::UpdateSchemaInspector()
     {
+        const QString selectedName = CurrentSchemaColumnName();
         schemaTree_->clear();
 
         QVector<sc::SCColumnDef> columns;
@@ -1189,37 +1466,39 @@ namespace StableCore::Storage::Editor
 
         for (const sc::SCColumnDef& column : columns)
         {
-            auto* root = new QTreeWidgetItem(
-                schemaTree_,
-                {ToQString(column.name), ColumnKindToText(column.columnKind)});
-            root->setData(0, Qt::UserRole, ToQString(column.name));
-            root->addChild(
-                new QTreeWidgetItem({QStringLiteral("Display Name"),
-                                     ToQString(column.displayName)}));
-            root->addChild(
-                new QTreeWidgetItem({QStringLiteral("SCValue Kind"),
-                                     ValueKindToText(column.valueKind)}));
-            root->addChild(new QTreeWidgetItem(
-                {QStringLiteral("Nullable"), column.nullable
-                                                 ? QStringLiteral("true")
-                                                 : QStringLiteral("false")}));
-            root->addChild(new QTreeWidgetItem(
-                {QStringLiteral("Editable"), column.editable
-                                                 ? QStringLiteral("true")
-                                                 : QStringLiteral("false")}));
-            root->addChild(new QTreeWidgetItem(
-                {QStringLiteral("Indexed"), column.indexed
-                                                ? QStringLiteral("true")
-                                                : QStringLiteral("false")}));
-            root->addChild(
-                new QTreeWidgetItem({QStringLiteral("Reference Table"),
-                                     ToQString(column.referenceTable)}));
+            auto* row = new QTreeWidgetItem(schemaTree_);
+            row->setText(0, ToQString(column.displayName.empty()
+                                          ? column.name
+                                          : column.displayName));
+            row->setText(1, ValueKindToText(column.valueKind));
+            row->setText(2, BoolToText(column.nullable));
+            row->setText(3, SCValueToText(column.defaultValue));
+            row->setText(4, ToQString(column.referenceTable));
+            row->setText(5, BoolToText(column.userDefined));
+            row->setText(6, BoolToText(column.participatesInCalc));
+            row->setData(0, Qt::UserRole, ToQString(column.name));
         }
-        schemaTree_->expandAll();
+        schemaTree_->resizeColumnToContents(0);
+        schemaTree_->resizeColumnToContents(1);
+        schemaTree_->resizeColumnToContents(2);
+        schemaTree_->resizeColumnToContents(3);
+        schemaTree_->resizeColumnToContents(4);
+        schemaTree_->resizeColumnToContents(5);
+        schemaTree_->resizeColumnToContents(6);
+        SelectSchemaColumnByName(selectedName);
     }
 
     void SCDatabaseEditorMainWindow::UpdateRecordInspector()
     {
+        if (recordTree_ == nullptr)
+        {
+            return;
+        }
+
+        const QString selectedField =
+            recordTree_->currentItem() != nullptr
+                ? recordTree_->currentItem()->text(0)
+                : QString();
         recordTree_->clear();
 
         const QModelIndex index = CurrentSourceIndex();
@@ -1240,10 +1519,26 @@ namespace StableCore::Storage::Editor
 
         for (const auto& pair : fields)
         {
-            recordTree_->addTopLevelItem(
-                new QTreeWidgetItem({pair.first, pair.second}));
+            auto* row = new QTreeWidgetItem(recordTree_);
+            row->setText(0, pair.first);
+            row->setText(1, pair.second);
         }
-        recordTree_->expandAll();
+        recordTree_->resizeColumnToContents(0);
+        recordTree_->resizeColumnToContents(1);
+        if (!selectedField.isEmpty())
+        {
+            for (int index = 0; index < recordTree_->topLevelItemCount(); ++index)
+            {
+                QTreeWidgetItem* item = recordTree_->topLevelItem(index);
+                if (item != nullptr &&
+                    item->text(0).compare(selectedField, Qt::CaseInsensitive) ==
+                        0)
+                {
+                    recordTree_->setCurrentItem(item);
+                    break;
+                }
+            }
+        }
     }
 
     void SCDatabaseEditorMainWindow::UpdateComputedColumnsPanel()
@@ -1259,12 +1554,11 @@ namespace StableCore::Storage::Editor
             switch (column.kind)
             {
                 case sc::ComputedFieldKind::Expression:
-                    definition = QStringLiteral("Expression: ") +
-                                 ToQString(column.expression);
+                    definition = ToQString(column.expression);
                     break;
                 case sc::ComputedFieldKind::Rule:
-                    definition =
-                        QStringLiteral("Rule: ") + ToQString(column.ruleId);
+                    definition = QStringLiteral("Rule: ") +
+                                 ToQString(column.ruleId);
                     break;
                 case sc::ComputedFieldKind::Aggregate:
                     definition = QStringLiteral("Aggregate: ") +
@@ -1276,28 +1570,85 @@ namespace StableCore::Storage::Editor
                     }
                     break;
                 default:
-                    definition = QStringLiteral("Unknown");
+                    definition = QStringLiteral("-");
                     break;
             }
 
-            auto* root = new QTreeWidgetItem(
-                computedColumnsTree_,
-                {ToQString(column.displayName.empty() ? column.name
-                                                      : column.displayName),
-                 definition});
-            root->setData(0, Qt::UserRole, ToQString(column.name));
-            root->addChild(new QTreeWidgetItem(
-                {QStringLiteral("Name"), ToQString(column.name)}));
-            root->addChild(
-                new QTreeWidgetItem({QStringLiteral("SCValue Kind"),
-                                     ValueKindToText(column.valueKind)}));
-            root->addChild(new QTreeWidgetItem(
-                {QStringLiteral("Cacheable"), column.cacheable
-                                                  ? QStringLiteral("true")
-                                                  : QStringLiteral("false")}));
+            auto* row = new QTreeWidgetItem(computedColumnsTree_);
+            row->setText(0, ToQString(column.displayName.empty()
+                                          ? column.name
+                                          : column.displayName));
+            row->setText(1, ValueKindToText(column.valueKind));
+            row->setText(2, definition);
+            row->setText(3, BoolToText(column.cacheable));
+            row->setData(0, Qt::UserRole, ToQString(column.name));
         }
-        computedColumnsTree_->expandAll();
+        computedColumnsTree_->resizeColumnToContents(0);
+        computedColumnsTree_->resizeColumnToContents(1);
+        computedColumnsTree_->resizeColumnToContents(2);
+        computedColumnsTree_->resizeColumnToContents(3);
         SelectComputedColumnByName(selectedName);
+    }
+
+    void SCDatabaseEditorMainWindow::UpdateRelationInspector()
+    {
+        if (relationTree_ == nullptr)
+        {
+            return;
+        }
+
+        const QString selectedName =
+            relationTree_->currentItem() != nullptr
+                ? relationTree_->currentItem()->data(0, Qt::UserRole).toString()
+                : QString();
+        relationTree_->clear();
+
+        QVector<sc::SCColumnDef> columns;
+        QString error;
+        if (!session_->BuildSchemaSnapshot(&columns, &error))
+        {
+            relationTree_->addTopLevelItem(
+                new QTreeWidgetItem({QStringLiteral("Error"), error}));
+            return;
+        }
+
+        for (const sc::SCColumnDef& column : columns)
+        {
+            if (column.columnKind != sc::ColumnKind::Relation)
+            {
+                continue;
+            }
+
+            auto* row = new QTreeWidgetItem(relationTree_);
+            row->setText(0, ToQString(column.displayName.empty()
+                                          ? column.name
+                                          : column.displayName));
+            row->setText(1, ToQString(column.referenceTable));
+            row->setText(2, QStringLiteral("-"));
+            row->setText(3, column.referenceTable.empty()
+                                 ? QStringLiteral("Unbound")
+                                 : QStringLiteral("OK"));
+            row->setData(0, Qt::UserRole, ToQString(column.name));
+        }
+        relationTree_->resizeColumnToContents(0);
+        relationTree_->resizeColumnToContents(1);
+        relationTree_->resizeColumnToContents(2);
+        relationTree_->resizeColumnToContents(3);
+        if (!selectedName.isEmpty())
+        {
+            for (int index = 0; index < relationTree_->topLevelItemCount(); ++index)
+            {
+                QTreeWidgetItem* item = relationTree_->topLevelItem(index);
+                if (item != nullptr &&
+                    item->data(0, Qt::UserRole)
+                            .toString()
+                            .compare(selectedName, Qt::CaseInsensitive) == 0)
+                {
+                    relationTree_->setCurrentItem(item);
+                    break;
+                }
+            }
+        }
     }
 
     void SCDatabaseEditorMainWindow::UpdateGridSummary()
@@ -1305,22 +1656,214 @@ namespace StableCore::Storage::Editor
         const QString tableName = session_->CurrentTableName();
         if (tableName.isEmpty())
         {
-            tableSummaryLabel_->setText(QStringLiteral("No table selected"));
+            if (tableTitleLabel_ != nullptr)
+            {
+                tableTitleLabel_->setText(QStringLiteral("No table selected"));
+            }
+            if (tableStatsLabel_ != nullptr)
+            {
+                tableStatsLabel_->setText(QStringLiteral("Records: 0 | Fields: 0"));
+            }
+            UpdateDatabaseStatusBar();
             return;
         }
 
         const QModelIndex current = CurrentSourceIndex();
-        const QString selected =
-            current.isValid()
-                ? QStringLiteral(" | Selected RecordId=%1")
-                      .arg(recordModel_->RecordIdAt(current.row()))
-                : QString();
+        const sc::RecordId selectedRecordId =
+            current.isValid() ? recordModel_->RecordIdAt(current.row()) : 0;
 
-        tableSummaryLabel_->setText(QStringLiteral("%1 | Rows %2/%3%4")
-                                        .arg(tableName)
-                                        .arg(filterModel_->rowCount())
-                                        .arg(recordModel_->RowCountValue())
-                                        .arg(selected));
+        if (tableTitleLabel_ != nullptr)
+        {
+            tableTitleLabel_->setText(QStringLiteral("Current table: %1")
+                                          .arg(tableName));
+        }
+        if (tableStatsLabel_ != nullptr)
+        {
+            tableStatsLabel_->setText(
+                QStringLiteral("Records: %1 / %2 | Fields: %3%4")
+                    .arg(filterModel_->rowCount())
+                    .arg(recordModel_->RowCountValue())
+                    .arg(recordModel_->columnCount())
+                    .arg(selectedRecordId != 0
+                             ? QStringLiteral(" | Selected: %1")
+                                   .arg(static_cast<qulonglong>(selectedRecordId))
+                             : QString()));
+        }
+        UpdateDatabaseStatusBar();
+    }
+
+    void SCDatabaseEditorMainWindow::RefreshObjectExplorer()
+    {
+        if (objectTree_ == nullptr)
+        {
+            return;
+        }
+
+        const QSignalBlocker blocker(objectTree_);
+        objectTree_->clear();
+        const QStringList tableNames = session_->TableNames();
+        const QVector<sc::SCComputedColumnDef> computedColumns =
+            session_->CurrentSessionComputedColumns();
+
+        auto* databaseRoot = new QTreeWidgetItem(objectTree_);
+        databaseRoot->setText(0, QStringLiteral("Database"));
+        databaseRoot->setText(1,
+                             session_->IsOpen() ? QStringLiteral("Open")
+                                                : QStringLiteral("Closed"));
+        databaseRoot->setData(0, kExplorerNodeTypeRole,
+                              static_cast<int>(ExplorerNodeType::Database));
+        databaseRoot->setData(0, kExplorerNodeNameRole, QStringLiteral("Database"));
+
+        auto* tablesRoot = new QTreeWidgetItem(databaseRoot);
+        tablesRoot->setText(0, QStringLiteral("Tables"));
+        tablesRoot->setText(1, QString::number(tableNames.size()));
+        tablesRoot->setData(0, kExplorerNodeTypeRole,
+                            static_cast<int>(ExplorerNodeType::TablesRoot));
+        tablesRoot->setData(0, kExplorerNodeNameRole, QStringLiteral("Tables"));
+
+        QTreeWidgetItem* selectedItem = databaseRoot;
+        const QString currentTable = session_->CurrentTableName();
+        for (const QString& tableName : tableNames)
+        {
+            auto* tableItem = new QTreeWidgetItem(tablesRoot);
+            tableItem->setText(0, tableName);
+            tableItem->setText(1, QStringLiteral("Table"));
+            tableItem->setData(0, kExplorerNodeTypeRole,
+                               static_cast<int>(ExplorerNodeType::Table));
+            tableItem->setData(0, kExplorerNodeNameRole, tableName);
+            if (!currentTable.isEmpty() &&
+                tableName.compare(currentTable, Qt::CaseInsensitive) == 0)
+            {
+                selectedItem = tableItem;
+            }
+        }
+
+        auto* computedRoot = new QTreeWidgetItem(databaseRoot);
+        computedRoot->setText(0, QStringLiteral("Computed Columns"));
+        computedRoot->setText(1, QString::number(computedColumns.size()));
+        computedRoot->setData(
+            0, kExplorerNodeTypeRole,
+            static_cast<int>(ExplorerNodeType::ComputedRoot));
+        computedRoot->setData(0, kExplorerNodeNameRole,
+                              QStringLiteral("Computed Columns"));
+
+        for (const sc::SCComputedColumnDef& column : computedColumns)
+        {
+            auto* computedItem = new QTreeWidgetItem(computedRoot);
+            computedItem->setText(0, ToQString(column.displayName.empty()
+                                                   ? column.name
+                                                   : column.displayName));
+            computedItem->setText(1, QStringLiteral("Computed"));
+            computedItem->setData(
+                0, kExplorerNodeTypeRole,
+                static_cast<int>(ExplorerNodeType::ComputedColumn));
+            computedItem->setData(0, kExplorerNodeNameRole,
+                                  ToQString(column.name));
+        }
+
+        auto* systemRoot = new QTreeWidgetItem(databaseRoot);
+        systemRoot->setText(0, QStringLiteral("System"));
+        systemRoot->setText(1, QStringLiteral("Navigation"));
+        systemRoot->setData(0, kExplorerNodeTypeRole,
+                            static_cast<int>(ExplorerNodeType::Database));
+        systemRoot->setData(0, kExplorerNodeNameRole, QStringLiteral("System"));
+
+        const auto addSystemNode =
+            [&](const QString& text, ExplorerNodeType type) {
+                auto* item = new QTreeWidgetItem(systemRoot);
+                item->setText(0, text);
+                item->setText(1, ExplorerNodeTypeToText(type));
+                item->setData(0, kExplorerNodeTypeRole,
+                              static_cast<int>(type));
+                item->setData(0, kExplorerNodeNameRole, text);
+                return item;
+            };
+
+        addSystemNode(QStringLiteral("Edit Log"), ExplorerNodeType::EditLog);
+        addSystemNode(QStringLiteral("Journal"), ExplorerNodeType::Journal);
+        addSystemNode(QStringLiteral("Snapshots"), ExplorerNodeType::Snapshots);
+        addSystemNode(QStringLiteral("Diagnostics"),
+                      ExplorerNodeType::Diagnostics);
+
+        databaseRoot->setExpanded(true);
+        tablesRoot->setExpanded(true);
+        computedRoot->setExpanded(true);
+        systemRoot->setExpanded(true);
+        objectTree_->resizeColumnToContents(0);
+        objectTree_->resizeColumnToContents(1);
+        objectTree_->setCurrentItem(selectedItem);
+    }
+
+    void SCDatabaseEditorMainWindow::UpdateDatabaseStatusBar()
+    {
+        sc::SCEditingDatabaseState editingState;
+        QString error;
+        const bool stateLoaded = session_->GetEditingState(&editingState, &error);
+
+        if (databasePathLabel_ != nullptr)
+        {
+            databasePathLabel_->setText(QStringLiteral("Database: %1")
+                                            .arg(session_->DatabasePath().isEmpty()
+                                                     ? QStringLiteral("-")
+                                                     : session_->DatabasePath()));
+        }
+
+        if (openModeLabel_ != nullptr)
+        {
+            openModeLabel_->setText(
+                QStringLiteral("Mode: %1")
+                    .arg(stateLoaded ? OpenModeToText(editingState.openMode)
+                                     : QStringLiteral("Closed")));
+        }
+
+        if (currentTableLabel_ != nullptr)
+        {
+            currentTableLabel_->setText(QStringLiteral("Table: %1")
+                                            .arg(session_->CurrentTableName().isEmpty()
+                                                     ? QStringLiteral("-")
+                                                     : session_->CurrentTableName()));
+        }
+
+        if (tableStatsLabel_ != nullptr)
+        {
+            tableStatsLabel_->setText(
+                QStringLiteral("Records: %1 / %2 | Fields: %3")
+                    .arg(filterModel_->rowCount())
+                    .arg(recordModel_->RowCountValue())
+                    .arg(recordModel_->columnCount()));
+        }
+
+        if (filterStateLabel_ != nullptr)
+        {
+            const QString filterText = filterEdit_ != nullptr ? filterEdit_->text()
+                                                             : QString();
+            filterStateLabel_->setText(
+                filterText.isEmpty()
+                    ? QStringLiteral("Filter: Off")
+                    : QStringLiteral("Filter: %1").arg(filterText));
+        }
+
+        if (transactionStateLabel_ != nullptr)
+        {
+            QString transactionState = QStringLiteral("Transaction: Closed");
+            if (stateLoaded)
+            {
+                transactionState = QStringLiteral("Transaction: ");
+                if (editingState.openMode == sc::SCDatabaseOpenMode::ReadOnly)
+                {
+                    transactionState += QStringLiteral("ReadOnly");
+                }
+                else if (editingState.dirty)
+                {
+                    transactionState += QStringLiteral("Dirty");
+                }
+                else
+                {
+                    transactionState += QStringLiteral("Idle");
+                }
+            }
+            transactionStateLabel_->setText(transactionState);
+        }
     }
 
     QModelIndex SCDatabaseEditorMainWindow::CurrentSourceIndex() const
@@ -1337,11 +1880,6 @@ namespace StableCore::Storage::Editor
         {
             return {};
         }
-
-        while (item->parent() != nullptr)
-        {
-            item = item->parent();
-        }
         return item->data(0, Qt::UserRole).toString();
     }
 
@@ -1351,11 +1889,6 @@ namespace StableCore::Storage::Editor
         if (item == nullptr)
         {
             return {};
-        }
-
-        while (item->parent() != nullptr)
-        {
-            item = item->parent();
         }
         return item->data(0, Qt::UserRole).toString();
     }
@@ -1414,7 +1947,11 @@ namespace StableCore::Storage::Editor
 
     void SCDatabaseEditorMainWindow::SetStatusMessage(const QString& text)
     {
-        statusLabel_->setText(text);
+        if (statusLabel_ != nullptr)
+        {
+            statusLabel_->setText(text);
+        }
+        statusBar()->showMessage(text, 5000);
     }
 
 }  // namespace StableCore::Storage::Editor
