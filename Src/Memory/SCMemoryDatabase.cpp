@@ -344,6 +344,12 @@ namespace StableCore::Storage
         class MemorySchema final : public ISCSchema, public SCRefCountedObject
         {
         public:
+            struct SchemaColumnEntry
+            {
+                std::int64_t rowId{0};
+                SCColumnDef def;
+            };
+
             explicit MemorySchema(MemoryTable* table) : table_(table) {}
 
             ErrorCode GetColumnCount(std::int32_t* outCount) override
@@ -370,7 +376,8 @@ namespace StableCore::Storage
                     return SC_E_INVALIDARG;
                 }
 
-                *outDef = columns_[static_cast<std::size_t>(index)];
+                *outDef =
+                    columns_[static_cast<std::size_t>(index)].def;
                 return SC_OK;
             }
 
@@ -392,7 +399,7 @@ namespace StableCore::Storage
                     return SC_E_COLUMN_NOT_FOUND;
                 }
 
-                *outDef = it->second;
+                *outDef = it->second.def;
                 return SC_OK;
             }
 
@@ -406,7 +413,18 @@ namespace StableCore::Storage
                 const std::wstring& name) const noexcept
             {
                 const auto it = columnsByName_.find(name);
-                return it == columnsByName_.end() ? nullptr : &it->second;
+                return it == columnsByName_.end() ? nullptr : &it->second.def;
+            }
+
+            std::int64_t FindColumnRowId(const wchar_t* name) const noexcept
+            {
+                if (name == nullptr)
+                {
+                    return -1;
+                }
+
+                const auto it = columnRowIdsByName_.find(name);
+                return it == columnRowIdsByName_.end() ? -1 : it->second;
             }
 
             MemoryTable* Table() const noexcept
@@ -416,22 +434,49 @@ namespace StableCore::Storage
 
             void LoadColumn(const SCColumnDef& def)
             {
-                columns_.push_back(def);
-                columnsByName_[def.name] = def;
+                LoadColumn(def, nextColumnRowId_++);
+            }
+
+            void LoadColumn(const SCColumnDef& def, std::int64_t rowId)
+            {
+                const std::int64_t normalizedRowId =
+                    rowId > 0 ? rowId : nextColumnRowId_++;
+                if (normalizedRowId >= nextColumnRowId_)
+                {
+                    nextColumnRowId_ = normalizedRowId + 1;
+                }
+
+                const auto insertIt =
+                    std::find_if(columns_.begin(), columns_.end(),
+                                 [normalizedRowId](
+                                     const SchemaColumnEntry& existing) {
+                                     return existing.rowId > normalizedRowId;
+                                 });
+                columns_.insert(insertIt,
+                                SchemaColumnEntry{normalizedRowId, def});
+                columnsByName_[def.name] =
+                    SchemaColumnEntry{normalizedRowId, def};
+                columnRowIdsByName_[def.name] = normalizedRowId;
             }
 
             void ReplaceColumn(const SCColumnDef& def)
             {
                 const auto vecIt =
                     std::find_if(columns_.begin(), columns_.end(),
-                                 [&def](const SCColumnDef& existing) {
-                                     return existing.name == def.name;
+                                 [&def](const SchemaColumnEntry& existing) {
+                                     return existing.def.name == def.name;
                                  });
                 if (vecIt != columns_.end())
                 {
-                    *vecIt = def;
+                    vecIt->def = def;
                 }
-                columnsByName_[def.name] = def;
+                const std::int64_t rowId =
+                    vecIt != columns_.end() ? vecIt->rowId : -1;
+                columnsByName_[def.name] = SchemaColumnEntry{rowId, def};
+                if (rowId >= 0)
+                {
+                    columnRowIdsByName_[def.name] = rowId;
+                }
             }
 
             void UnloadColumn(const wchar_t* name)
@@ -447,10 +492,16 @@ namespace StableCore::Storage
                     columnsByName_.erase(mapIt);
                 }
 
+                const auto rowIdIt = columnRowIdsByName_.find(name);
+                if (rowIdIt != columnRowIdsByName_.end())
+                {
+                    columnRowIdsByName_.erase(rowIdIt);
+                }
+
                 const auto vecIt =
                     std::find_if(columns_.begin(), columns_.end(),
-                                 [name](const SCColumnDef& def) {
-                                     return def.name == name;
+                                 [name](const SchemaColumnEntry& def) {
+                                     return def.def.name == name;
                                  });
                 if (vecIt != columns_.end())
                 {
@@ -460,8 +511,10 @@ namespace StableCore::Storage
 
         private:
             MemoryTable* table_{nullptr};
-            std::vector<SCColumnDef> columns_;
-            std::unordered_map<std::wstring, SCColumnDef> columnsByName_;
+            std::vector<SchemaColumnEntry> columns_;
+            std::unordered_map<std::wstring, SchemaColumnEntry> columnsByName_;
+            std::unordered_map<std::wstring, std::int64_t> columnRowIdsByName_;
+            std::int64_t nextColumnRowId_{1};
         };
 
         class MemoryEditSession final : public ISCEditSession,
@@ -790,7 +843,8 @@ namespace StableCore::Storage
             void RecordSchemaJournal(const std::wstring& tableName,
                                      const SCColumnDef& oldColumn,
                                      const SCColumnDef& newColumn,
-                                     JournalOp op);
+                                     JournalOp op,
+                                     std::int64_t columnRowId = -1);
             void RecordJournal(const std::wstring& tableName, RecordId recordId,
                                const std::wstring& fieldName,
                                const SCValue& oldValue, const SCValue& newValue,
@@ -1479,8 +1533,10 @@ namespace StableCore::Storage
             if (table_ != nullptr && table_->Database() != nullptr &&
                 table_->Database()->HasActiveEdit())
             {
+                const std::int64_t rowId = FindColumnRowId(def.name.c_str());
                 table_->Database()->RecordSchemaJournal(
-                    table_->Name(), SCColumnDef{}, def, JournalOp::AddColumn);
+                    table_->Name(), SCColumnDef{}, def, JournalOp::AddColumn,
+                    rowId);
             }
             return SC_OK;
         }
@@ -1498,7 +1554,8 @@ namespace StableCore::Storage
                 return SC_E_COLUMN_NOT_FOUND;
             }
 
-            const SCColumnDef removed = it->second;
+            const SCColumnDef removed = it->second.def;
+            const std::int64_t rowId = it->second.rowId;
             if (table_ != nullptr)
             {
                 for (const auto& [_, data] : table_->Records())
@@ -1515,7 +1572,7 @@ namespace StableCore::Storage
             {
                 table_->Database()->RecordSchemaJournal(
                     table_->Name(), removed, SCColumnDef{},
-                    JournalOp::RemoveColumn);
+                    JournalOp::RemoveColumn, rowId);
             }
             return SC_OK;
         }
@@ -1536,15 +1593,15 @@ namespace StableCore::Storage
 
             const auto vecIt =
                 std::find_if(columns_.begin(), columns_.end(),
-                             [&def](const SCColumnDef& existing) {
-                                 return existing.name == def.name;
+                             [&def](const SchemaColumnEntry& existing) {
+                                 return existing.def.name == def.name;
                              });
             if (vecIt == columns_.end())
             {
                 return SC_E_COLUMN_NOT_FOUND;
             }
 
-            const SCColumnDef previous = existingIt->second;
+            const SCColumnDef previous = existingIt->second.def;
             if (previous.valueKind != def.valueKind)
             {
                 if (table_ == nullptr)
@@ -1622,8 +1679,10 @@ namespace StableCore::Storage
             if (table_ != nullptr && table_->Database() != nullptr &&
                 table_->Database()->HasActiveEdit())
             {
+                const std::int64_t rowId = FindColumnRowId(def.name.c_str());
                 table_->Database()->RecordSchemaJournal(
-                    table_->Name(), previous, def, JournalOp::UpdateColumn);
+                    table_->Name(), previous, def, JournalOp::UpdateColumn,
+                    rowId);
             }
             return SC_OK;
         }
@@ -1648,7 +1707,8 @@ namespace StableCore::Storage
 
         void MemoryDatabase::RecordSchemaJournal(
             const std::wstring& tableName, const SCColumnDef& oldColumn,
-            const SCColumnDef& newColumn, JournalOp op)
+            const SCColumnDef& newColumn, JournalOp op,
+            std::int64_t columnRowId)
         {
             if (!HasActiveEdit())
             {
@@ -1664,6 +1724,7 @@ namespace StableCore::Storage
                 {
                     entry.oldColumn = oldColumn;
                     entry.newColumn = newColumn;
+                    entry.columnRowId = columnRowId;
                     return;
                 }
             }
@@ -1679,6 +1740,7 @@ namespace StableCore::Storage
                 false,
                 oldColumn,
                 newColumn,
+                columnRowId,
             });
         }
 
@@ -2252,7 +2314,7 @@ namespace StableCore::Storage
                         {
                             def.name = entry.fieldName;
                         }
-                        schema->LoadColumn(def);
+                        schema->LoadColumn(def, entry.columnRowId);
                     }
                     break;
                 }
@@ -2344,7 +2406,7 @@ namespace StableCore::Storage
                         {
                             def.name = entry.fieldName;
                         }
-                        schema->LoadColumn(def);
+                        schema->LoadColumn(def, entry.columnRowId);
                     } else
                     {
                         for (const auto& [_, data] : table->Records())

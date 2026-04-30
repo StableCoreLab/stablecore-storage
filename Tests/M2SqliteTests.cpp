@@ -1589,3 +1589,74 @@ TEST(StorageM2Sqlite, SchemaColumnJournalSurvivesReopenAndUndoRedo)
         EXPECT_EQ(loaded.displayName, L"Height");
     }
 }
+
+TEST(StorageM2Sqlite, SchemaColumnUndoRestoreKeepsOriginalColumnOrder)
+{
+    const fs::path dbPath =
+        MakeTempDbPath(L"StableCoreStorage_M2_SchemaOrder.sqlite");
+
+    sc::SCDbPtr db;
+    EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
+
+    sc::SCTablePtr table = CreateBeamTable(db);
+    sc::SCSchemaPtr schema;
+    EXPECT_EQ(table->GetSchema(schema), sc::SC_OK);
+
+    sc::SCColumnDef name;
+    name.name = L"Name";
+    name.displayName = L"Name";
+    name.valueKind = sc::ValueKind::String;
+    name.defaultValue = sc::SCValue::FromString(L"");
+    EXPECT_EQ(schema->AddColumn(name), sc::SC_OK);
+
+    sc::SCColumnDef height;
+    height.name = L"Height";
+    height.displayName = L"Height";
+    height.valueKind = sc::ValueKind::Int64;
+    height.defaultValue = sc::SCValue::FromInt64(0);
+
+    sc::SCEditPtr edit;
+    EXPECT_EQ(db->BeginEdit(L"add height", edit), sc::SC_OK);
+    EXPECT_EQ(schema->AddColumn(height), sc::SC_OK);
+    EXPECT_EQ(db->Commit(edit.Get()), sc::SC_OK);
+
+    std::int32_t columnCount = 0;
+    sc::SCColumnDef column;
+    EXPECT_EQ(schema->GetColumnCount(&columnCount), sc::SC_OK);
+    EXPECT_EQ(columnCount, 3);
+    EXPECT_EQ(schema->GetColumn(0, &column), sc::SC_OK);
+    EXPECT_EQ(column.name, L"Width");
+    EXPECT_EQ(schema->GetColumn(1, &column), sc::SC_OK);
+    EXPECT_EQ(column.name, L"Name");
+    EXPECT_EQ(schema->GetColumn(2, &column), sc::SC_OK);
+    EXPECT_EQ(column.name, L"Height");
+
+    EXPECT_EQ(db->BeginEdit(L"remove width", edit), sc::SC_OK);
+    EXPECT_EQ(schema->RemoveColumn(L"Width"), sc::SC_OK);
+    EXPECT_EQ(db->Commit(edit.Get()), sc::SC_OK);
+
+    EXPECT_EQ(schema->GetColumnCount(&columnCount), sc::SC_OK);
+    EXPECT_EQ(columnCount, 2);
+    EXPECT_EQ(schema->GetColumn(0, &column), sc::SC_OK);
+    EXPECT_EQ(column.name, L"Name");
+    EXPECT_EQ(schema->GetColumn(1, &column), sc::SC_OK);
+    EXPECT_EQ(column.name, L"Height");
+
+    EXPECT_EQ(db->Undo(), sc::SC_OK);
+    EXPECT_EQ(schema->GetColumnCount(&columnCount), sc::SC_OK);
+    EXPECT_EQ(columnCount, 3);
+    EXPECT_EQ(schema->GetColumn(0, &column), sc::SC_OK);
+    EXPECT_EQ(column.name, L"Width");
+    EXPECT_EQ(schema->GetColumn(1, &column), sc::SC_OK);
+    EXPECT_EQ(column.name, L"Name");
+    EXPECT_EQ(schema->GetColumn(2, &column), sc::SC_OK);
+    EXPECT_EQ(column.name, L"Height");
+
+    EXPECT_EQ(db->Redo(), sc::SC_OK);
+    EXPECT_EQ(schema->GetColumnCount(&columnCount), sc::SC_OK);
+    EXPECT_EQ(columnCount, 2);
+    EXPECT_EQ(schema->GetColumn(0, &column), sc::SC_OK);
+    EXPECT_EQ(column.name, L"Name");
+    EXPECT_EQ(schema->GetColumn(1, &column), sc::SC_OK);
+    EXPECT_EQ(column.name, L"Height");
+}

@@ -1688,6 +1688,12 @@ namespace StableCore::Storage
         class SqliteSchema final : public ISCSchema, public SCRefCountedObject
         {
         public:
+            struct SchemaColumnEntry
+            {
+                std::int64_t rowId{0};
+                SCColumnDef def;
+            };
+
             SqliteSchema(SqliteDatabase* db, std::wstring tableName,
                          std::int64_t tableRowId)
                 : db_(db),
@@ -1709,27 +1715,65 @@ namespace StableCore::Storage
                 const std::wstring& name) const noexcept
             {
                 const auto it = columnsByName_.find(name);
-                return it == columnsByName_.end() ? nullptr : &it->second;
+                return it == columnsByName_.end() ? nullptr : &it->second.def;
+            }
+
+            std::int64_t FindColumnRowId(const wchar_t* name) const noexcept
+            {
+                if (name == nullptr)
+                {
+                    return -1;
+                }
+
+                const auto it = columnRowIdsByName_.find(name);
+                return it == columnRowIdsByName_.end() ? -1 : it->second;
             }
 
             void LoadColumn(const SCColumnDef& def)
             {
-                columns_.push_back(def);
-                columnsByName_[def.name] = def;
+                LoadColumn(def, nextColumnRowId_++);
+            }
+
+            void LoadColumn(const SCColumnDef& def, std::int64_t rowId)
+            {
+                const std::int64_t normalizedRowId =
+                    rowId > 0 ? rowId : nextColumnRowId_++;
+                if (normalizedRowId >= nextColumnRowId_)
+                {
+                    nextColumnRowId_ = normalizedRowId + 1;
+                }
+
+                const auto insertIt =
+                    std::find_if(columns_.begin(), columns_.end(),
+                                 [normalizedRowId](
+                                     const SchemaColumnEntry& existing) {
+                                     return existing.rowId > normalizedRowId;
+                                 });
+                columns_.insert(insertIt,
+                                SchemaColumnEntry{normalizedRowId, def});
+                columnsByName_[def.name] =
+                    SchemaColumnEntry{normalizedRowId, def};
+                columnRowIdsByName_[def.name] = normalizedRowId;
             }
 
             void ReplaceColumn(const SCColumnDef& def)
             {
                 const auto vecIt =
                     std::find_if(columns_.begin(), columns_.end(),
-                                 [&def](const SCColumnDef& existing) {
-                                     return existing.name == def.name;
+                                 [&def](const SchemaColumnEntry& existing) {
+                                     return existing.def.name == def.name;
                                  });
                 if (vecIt != columns_.end())
                 {
-                    *vecIt = def;
+                    vecIt->def = def;
                 }
-                columnsByName_[def.name] = def;
+                const std::int64_t rowId =
+                    vecIt != columns_.end() ? vecIt->rowId : -1;
+                columnsByName_[def.name] = SchemaColumnEntry{rowId, def};
+                if (rowId >= 0)
+                {
+                    columnRowIdsByName_[def.name] = rowId;
+                }
             }
 
             void UnloadColumn(const wchar_t* name)
@@ -1745,10 +1789,16 @@ namespace StableCore::Storage
                     columnsByName_.erase(mapIt);
                 }
 
+                const auto rowIdIt = columnRowIdsByName_.find(name);
+                if (rowIdIt != columnRowIdsByName_.end())
+                {
+                    columnRowIdsByName_.erase(rowIdIt);
+                }
+
                 const auto vecIt =
                     std::find_if(columns_.begin(), columns_.end(),
-                                 [name](const SCColumnDef& def) {
-                                     return def.name == name;
+                                 [name](const SchemaColumnEntry& def) {
+                                     return def.def.name == name;
                                  });
                 if (vecIt != columns_.end())
                 {
@@ -1765,8 +1815,10 @@ namespace StableCore::Storage
             SqliteDatabase* db_{nullptr};
             std::wstring tableName_;
             std::int64_t tableRowId_{0};
-            std::vector<SCColumnDef> columns_;
-            std::unordered_map<std::wstring, SCColumnDef> columnsByName_;
+            std::vector<SchemaColumnEntry> columns_;
+            std::unordered_map<std::wstring, SchemaColumnEntry> columnsByName_;
+            std::unordered_map<std::wstring, std::int64_t> columnRowIdsByName_;
+            std::int64_t nextColumnRowId_{1};
         };
 
         class SqliteEditSession final : public ISCEditSession,
@@ -2101,13 +2153,15 @@ namespace StableCore::Storage
             void RecordSchemaJournal(const std::wstring& tableName,
                                      const SCColumnDef& oldColumn,
                                      const SCColumnDef& newColumn,
-                                     JournalOp op);
+                                     JournalOp op,
+                                     std::int64_t columnRowId = -1);
             void RecordJournal(const std::wstring& tableName, RecordId recordId,
                                const std::wstring& fieldName,
                                const SCValue& oldValue, const SCValue& newValue,
                                bool oldDeleted, bool newDeleted, JournalOp op);
             ErrorCode PersistSchemaAddColumn(SqliteSchema* schema,
-                                             const SCColumnDef& def);
+                                             const SCColumnDef& def,
+                                             std::int64_t rowId = -1);
             ErrorCode PersistSchemaUpdateColumn(SqliteSchema* schema,
                                                 const SCColumnDef& def);
             ErrorCode PersistSchemaRemoveColumn(SqliteSchema* schema,
@@ -2192,7 +2246,7 @@ namespace StableCore::Storage
             {
                 return SC_E_INVALIDARG;
             }
-            *outDef = columns_[static_cast<std::size_t>(index)];
+            *outDef = columns_[static_cast<std::size_t>(index)].def;
             return SC_OK;
         }
 
@@ -2212,7 +2266,7 @@ namespace StableCore::Storage
             {
                 return SC_E_COLUMN_NOT_FOUND;
             }
-            *outDef = it->second;
+            *outDef = it->second.def;
             return SC_OK;
         }
 
@@ -2641,7 +2695,7 @@ namespace StableCore::Storage
                 "CREATE TABLE IF NOT EXISTS journal_schema_entries ("
                 "tx_id INTEGER NOT NULL, sequence_index INTEGER NOT NULL, op "
                 "INTEGER NOT NULL, table_name TEXT NOT NULL, column_name TEXT "
-                "NOT NULL, old_display_name TEXT, old_value_kind INTEGER, "
+                "NOT NULL, column_rowid INTEGER NOT NULL, old_display_name TEXT, old_value_kind INTEGER, "
                 "old_column_kind INTEGER, old_nullable INTEGER, old_editable "
                 "INTEGER, old_user_defined INTEGER, old_indexed INTEGER, "
                 "old_participates_in_calc INTEGER, old_unit TEXT, "
@@ -2747,7 +2801,7 @@ namespace StableCore::Storage
                 auto* sqliteTable = static_cast<SqliteTable*>(table.Get());
 
                 SqliteStmt columnsStmt = db_.Prepare(
-                    "SELECT column_name, display_name, value_kind, "
+                    "SELECT rowid, column_name, display_name, value_kind, "
                     "column_kind, nullable_flag, editable_flag, "
                     "user_defined_flag,"
                     " indexed_flag, participates_in_calc_flag, unit, "
@@ -2760,22 +2814,23 @@ namespace StableCore::Storage
                 while (columnsStmt.Step(&hasColumn) == SC_OK && hasColumn)
                 {
                     SCColumnDef def;
-                    def.name = columnsStmt.ColumnText(0);
-                    def.displayName = columnsStmt.ColumnText(1);
+                    const std::int64_t rowId = columnsStmt.ColumnInt64(0);
+                    def.name = columnsStmt.ColumnText(1);
+                    def.displayName = columnsStmt.ColumnText(2);
                     def.valueKind =
-                        FromSqliteValueKind(columnsStmt.ColumnInt(2));
+                        FromSqliteValueKind(columnsStmt.ColumnInt(3));
                     def.columnKind =
-                        FromSqliteColumnKind(columnsStmt.ColumnInt(3));
-                    def.nullable = columnsStmt.ColumnBool(4);
-                    def.editable = columnsStmt.ColumnBool(5);
-                    def.userDefined = columnsStmt.ColumnBool(6);
-                    def.indexed = columnsStmt.ColumnBool(7);
-                    def.participatesInCalc = columnsStmt.ColumnBool(8);
-                    def.unit = columnsStmt.ColumnText(9);
-                    def.referenceTable = columnsStmt.ColumnText(10);
+                        FromSqliteColumnKind(columnsStmt.ColumnInt(4));
+                    def.nullable = columnsStmt.ColumnBool(5);
+                    def.editable = columnsStmt.ColumnBool(6);
+                    def.userDefined = columnsStmt.ColumnBool(7);
+                    def.indexed = columnsStmt.ColumnBool(8);
+                    def.participatesInCalc = columnsStmt.ColumnBool(9);
+                    def.unit = columnsStmt.ColumnText(10);
+                    def.referenceTable = columnsStmt.ColumnText(11);
                     def.defaultValue =
-                        ReadValueFromStorage(columnsStmt, 11, 12, 13, 14, 15);
-                    sqliteTable->Schema()->LoadColumn(def);
+                        ReadValueFromStorage(columnsStmt, 12, 13, 14, 15, 16);
+                    sqliteTable->Schema()->LoadColumn(def, rowId);
                 }
 
                 SqliteStmt recordsStmt = db_.Prepare(
@@ -2865,7 +2920,7 @@ namespace StableCore::Storage
 
                 SqliteStmt schemaStmt = db_.Prepare(
                     "SELECT sequence_index, op, table_name, column_name, "
-                    "old_display_name, old_value_kind, old_column_kind, "
+                    "column_rowid, old_display_name, old_value_kind, old_column_kind, "
                     "old_nullable, old_editable, old_user_defined, "
                     "old_indexed, old_participates_in_calc, old_unit, "
                     "old_reference_table, old_default_kind, old_default_int64, "
@@ -2886,12 +2941,13 @@ namespace StableCore::Storage
                     entry.op = FromSqliteJournalOp(schemaStmt.ColumnInt(1));
                     entry.tableName = schemaStmt.ColumnText(2);
                     entry.fieldName = schemaStmt.ColumnText(3);
+                    entry.columnRowId = schemaStmt.ColumnInt64(4);
                     entry.oldColumn = ReadColumnDefFromStorage(
-                        schemaStmt, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
-                        16, 17, 18);
+                        schemaStmt, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+                        16, 17, 18, 19);
                     entry.newColumn = ReadColumnDefFromStorage(
-                        schemaStmt, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28,
-                        29, 30, 31, 32, 33);
+                        schemaStmt, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29,
+                        30, 31, 32, 33, 34);
                     persistedEntry.entry = std::move(entry);
                     entries.push_back(std::move(persistedEntry));
                 }
@@ -4730,7 +4786,7 @@ namespace StableCore::Storage
         }
 
         ErrorCode SqliteDatabase::PersistSchemaAddColumn(
-            SqliteSchema* schema, const SCColumnDef& def)
+            SqliteSchema* schema, const SCColumnDef& def, std::int64_t rowId)
         {
             if (schema == nullptr)
             {
@@ -4739,18 +4795,25 @@ namespace StableCore::Storage
 
             SqliteStmt stmt = db_.Prepare(
                 "INSERT INTO schema_columns("
-                " table_id, column_name, display_name, value_kind, "
+                " rowid, table_id, column_name, display_name, value_kind, "
                 "column_kind, nullable_flag, editable_flag,"
                 " user_defined_flag, indexed_flag, "
                 "participates_in_calc_flag, unit, reference_table,"
                 " default_kind, default_int64, default_double, "
                 "default_bool, default_text)"
-                " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+                " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
                 "?);");
-            stmt.BindInt64(1, schema->TableRowId());
-            stmt.BindText(2, def.name);
-            BindColumnDefForStorage(stmt, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
-                                    13, 14, 15, 16, 17, def);
+            if (rowId > 0)
+            {
+                stmt.BindInt64(1, rowId);
+            } else
+            {
+                stmt.BindNull(1);
+            }
+            stmt.BindInt64(2, schema->TableRowId());
+            stmt.BindText(3, def.name);
+            BindColumnDefForStorage(stmt, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13,
+                                    14, 15, 16, 17, 18, def);
             const ErrorCode rc = stmt.Step();
             if (Failed(rc))
             {
@@ -4775,7 +4838,9 @@ namespace StableCore::Storage
                 }
             }
 
-            schema->LoadColumn(def);
+            const std::int64_t insertedRowId =
+                rowId > 0 ? rowId : db_.LastInsertRowId();
+            schema->LoadColumn(def, insertedRowId);
             MarkReferenceIndexDirty();
             return SC_OK;
         }
@@ -4872,6 +4937,7 @@ namespace StableCore::Storage
             {
                 return SC_E_COLUMN_NOT_FOUND;
             }
+            const std::int64_t rowId = schema->FindColumnRowId(columnName);
 
             auto tableIt = std::find_if(
                 tables_.begin(), tables_.end(),
@@ -4984,8 +5050,9 @@ namespace StableCore::Storage
                 return SC_E_FAIL;
             }
 
+            const std::int64_t rowId = schema->FindColumnRowId(def.name.c_str());
             RecordSchemaJournal(tableName, SCColumnDef{}, def,
-                                JournalOp::AddColumn);
+                                JournalOp::AddColumn, rowId);
             return SC_OK;
         }
 
@@ -5156,8 +5223,9 @@ namespace StableCore::Storage
                 return SC_E_FAIL;
             }
 
+            const std::int64_t rowId = schema->FindColumnRowId(def.name.c_str());
             RecordSchemaJournal(tableIt->first, previousColumn, def,
-                                JournalOp::UpdateColumn);
+                                JournalOp::UpdateColumn, rowId);
 
             MarkReferenceIndexDirty();
             return SC_OK;
@@ -5239,6 +5307,7 @@ namespace StableCore::Storage
                 return SC_E_COLUMN_NOT_FOUND;
             }
             const SCColumnDef previousColumn = *previousDef;
+            const std::int64_t rowId = schema->FindColumnRowId(columnName);
             auto tableIt = std::find_if(
                 tables_.begin(), tables_.end(),
                 [tableRowId = schema->TableRowId()](
@@ -5343,7 +5412,7 @@ namespace StableCore::Storage
             }
 
             RecordSchemaJournal(tableName, previousColumn, SCColumnDef{},
-                                JournalOp::RemoveColumn);
+                                JournalOp::RemoveColumn, rowId);
             return SC_OK;
         }
 
@@ -5415,7 +5484,8 @@ namespace StableCore::Storage
 
         void SqliteDatabase::RecordSchemaJournal(
             const std::wstring& tableName, const SCColumnDef& oldColumn,
-            const SCColumnDef& newColumn, JournalOp op)
+            const SCColumnDef& newColumn, JournalOp op,
+            std::int64_t columnRowId)
         {
             if (!HasActiveEdit())
             {
@@ -5431,6 +5501,7 @@ namespace StableCore::Storage
                 {
                     entry.oldColumn = oldColumn;
                     entry.newColumn = newColumn;
+                    entry.columnRowId = columnRowId;
                     return;
                 }
             }
@@ -5446,6 +5517,7 @@ namespace StableCore::Storage
                 false,
                 oldColumn,
                 newColumn,
+                columnRowId,
             });
         }
 
@@ -5593,7 +5665,8 @@ namespace StableCore::Storage
                     } else
                     {
                         return PersistSchemaAddColumn(schema,
-                                                       makeReplayColumn());
+                                                       makeReplayColumn(),
+                                                       entry.columnRowId);
                     }
                 case JournalOp::UpdateColumn:
                     return PersistSchemaUpdateColumn(schema,
@@ -5602,7 +5675,8 @@ namespace StableCore::Storage
                     if (reverse)
                     {
                         return PersistSchemaAddColumn(schema,
-                                                       makeReplayColumn());
+                                                       makeReplayColumn(),
+                                                       entry.columnRowId);
                     } else
                     {
                         return PersistSchemaRemoveColumn(schema,
@@ -5842,7 +5916,7 @@ namespace StableCore::Storage
 
             SqliteStmt stmt = db_.Prepare(
                 "INSERT INTO journal_schema_entries("
-                " tx_id, sequence_index, op, table_name, column_name, "
+                " tx_id, sequence_index, op, table_name, column_name, column_rowid, "
                 "old_display_name, old_value_kind, old_column_kind, "
                 "old_nullable, old_editable, old_user_defined, old_indexed, "
                 "old_participates_in_calc, old_unit, old_reference_table, "
@@ -5854,7 +5928,7 @@ namespace StableCore::Storage
                 "new_default_int64, new_default_double, new_default_bool, "
                 "new_default_text)"
                 " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
-                "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);");
+                "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);");
 
             for (const auto& entry : tx.entries)
             {
@@ -5870,10 +5944,11 @@ namespace StableCore::Storage
                 stmt.BindInt(3, ToSqliteJournalOp(entry.op));
                 stmt.BindText(4, entry.tableName);
                 stmt.BindText(5, entry.fieldName);
-                BindColumnDefForStorage(stmt, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
-                                        16, 17, 18, 19, 20, entry.oldColumn);
-                BindColumnDefForStorage(stmt, 21, 22, 23, 24, 25, 26, 27, 28, 29,
-                                        30, 31, 32, 33, 34, 35, entry.newColumn);
+                stmt.BindInt64(6, entry.columnRowId);
+                BindColumnDefForStorage(stmt, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+                                        17, 18, 19, 20, 21, entry.oldColumn);
+                BindColumnDefForStorage(stmt, 22, 23, 24, 25, 26, 27, 28, 29, 30,
+                                        31, 32, 33, 34, 35, 36, entry.newColumn);
                 stmt.Step();
                 stmt.Reset();
             }

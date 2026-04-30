@@ -5,6 +5,7 @@
 #include <QLabel>
 #include <QMainWindow>
 #include <QModelIndex>
+#include <QPoint>
 #include <QPlainTextEdit>
 #include <QTableView>
 #include <QToolBar>
@@ -36,6 +37,7 @@ namespace StableCore::Storage::Editor
         void CreateTable();
         void AddColumn();
         void EditSelectedColumn();
+        void DeleteSelectedColumn();
         void ConvertSelectedColumnToComputed();
         void AddSessionComputedColumn();
         void EditSelectedComputedColumn();
@@ -50,6 +52,10 @@ namespace StableCore::Storage::Editor
         void ShowHealthSummary();
         void ShowEditLogSummary();
         void ExportDebugPackage();
+        void ExportCurrentTableCsv();
+        void ImportCsvIntoCurrentTable();
+        void OnSchemaContextMenuRequested(const QPoint& pos);
+        void OnGridContextMenuRequested(const QPoint& pos);
         void OnTableSelectionChanged();
         void OnGridSelectionChanged();
         void OnGridHeaderClicked(int logicalIndex);
@@ -74,6 +80,10 @@ namespace StableCore::Storage::Editor
         void BuildMenus();
         void ShowError(const QString& title, const QString& message);
         void SetStatusMessage(const QString& text);
+        bool ExportCurrentTableCsvFile(const QString& filePath,
+                                       QString* outError) const;
+        bool ImportCsvIntoCurrentTableFile(const QString& filePath,
+                                           QString* outError);
 
         SCDatabaseSession* session_{nullptr};
         SCRecordTableModel* recordModel_{nullptr};

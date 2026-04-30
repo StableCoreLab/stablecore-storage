@@ -75,3 +75,16 @@
 
 - `Edit Column...` now migrates compatible existing values when the schema `valueKind` changes and records the schema delta for Undo / Redo.
 - Unsupported conversions are rejected and the original schema/data state is preserved.
+
+## CSV Export / Import
+
+- The database editor now exposes `Export CSV...` and `Import CSV...` for the current table.
+- CSV import is executed as a single batch edit so a parse or storage failure does not leave a half-applied table state.
+- CSV import requires a writable database; read-only sessions are rejected before any batch work starts.
+- Computed columns are included in CSV export output for readability, but import only writes back editable fact columns.
+
+## Right-Click Editing
+
+- The schema panel now offers context-menu actions for adding or deleting the selected column.
+- The central data grid now offers context-menu actions for adding or deleting the selected row.
+- These actions reuse the existing explicit session edit boundaries instead of mutating UI state directly.

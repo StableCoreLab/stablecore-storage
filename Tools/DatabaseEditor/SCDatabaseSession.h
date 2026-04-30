@@ -51,6 +51,7 @@ namespace StableCore::Storage::Editor
         bool SelectTable(const QString& tableName, QString* outError);
         bool AddColumn(const StableCore::Storage::SCColumnDef& column,
                        QString* outError);
+        bool RemoveColumn(const QString& columnName, QString* outError);
         bool UpdateColumn(const QString& originalName,
                           const StableCore::Storage::SCColumnDef& column,
                           QString* outError);

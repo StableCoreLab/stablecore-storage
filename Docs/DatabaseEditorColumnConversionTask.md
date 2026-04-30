@@ -285,6 +285,7 @@
 
 - `AddColumn(...)`, `UpdateColumn(...)`, and `RemoveColumn(...)` now emit schema journal entries alongside any value migration.
 - Schema journal entries are persisted in `journal_schema_entries` and loaded back into the undo/redo stacks on open.
+- Schema undo/redo preserves the original column order when a removed column is restored.
 - Undo / Redo and rollback replay schema delta and value migration in the same transaction boundary.
 - `RemoveColumn(...)` must not be exposed as a user-facing, undoable delete capability; it stays as an internal structural action for conversion / rollback closure only.
 - Recovery order is now deterministic:

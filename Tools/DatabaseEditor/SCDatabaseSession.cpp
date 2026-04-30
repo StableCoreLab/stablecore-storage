@@ -975,6 +975,71 @@ namespace StableCore::Storage::Editor
             outError);
     }
 
+    bool SCDatabaseSession::RemoveColumn(const QString& columnName,
+                                         QString* outError)
+    {
+        if (!currentTable_)
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("No table is selected.");
+            }
+            return false;
+        }
+
+        const QString requestedName = columnName.trimmed();
+        if (requestedName.isEmpty())
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("Column name is required.");
+            }
+            return false;
+        }
+
+        sc::SCSchemaPtr schema;
+        sc::ErrorCode rc = currentTable_->GetSchema(schema);
+        if (sc::Failed(rc))
+        {
+            if (outError != nullptr)
+            {
+                *outError = ErrorToString(rc);
+            }
+            return false;
+        }
+
+        sc::SCColumnDef existingColumn;
+        const std::wstring requestedNameW = requestedName.toStdWString();
+        rc = schema->FindColumn(requestedNameW.c_str(), &existingColumn);
+        if (sc::Failed(rc))
+        {
+            if (outError != nullptr)
+            {
+                *outError = ErrorToString(rc);
+            }
+            return false;
+        }
+
+        return ApplyColumnMutation(
+            L"Remove Column",
+            [this, requestedNameW](sc::SCSchemaPtr& schema,
+                                   sc::SCComputedTableViewPtr* outPreviewView,
+                                   QString* outError) -> sc::ErrorCode {
+                const sc::ErrorCode removeRc =
+                    schema->RemoveColumn(requestedNameW.c_str());
+                if (sc::Failed(removeRc))
+                {
+                    return removeRc;
+                }
+                if (!BuildCurrentTableViewPreview(outPreviewView, outError))
+                {
+                    return sc::SC_E_FAIL;
+                }
+                return sc::SC_OK;
+            },
+            []() {}, outError);
+    }
+
     bool SCDatabaseSession::UpdateColumn(
         const QString& originalName, const sc::SCColumnDef& column,
         QString* outError)

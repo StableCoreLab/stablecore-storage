@@ -3,6 +3,7 @@
 #include <gtest/gtest.h>
 #include <QVariant>
 
+#include "SCBatch.h"
 #include "SCDatabaseSession.h"
 
 namespace sc = StableCore::Storage;
@@ -73,6 +74,109 @@ namespace
     }
 
 }  // namespace
+
+TEST(DatabaseEditorSession, ExecuteBatchEditCreatesRecordsWithValues)
+{
+    const fs::path dbPath =
+        MakeTempDbPath(L"StableCoreStorage_DbEditor_BatchImport.sqlite");
+
+    editor::SCDatabaseSession session;
+    QString error;
+
+    ASSERT_TRUE(session.CreateDatabase(
+        QString::fromStdWString(dbPath.wstring()), &error))
+        << error.toStdString();
+    ASSERT_TRUE(session.CreateTable(QStringLiteral("Beam"), &error))
+        << error.toStdString();
+    ASSERT_TRUE(session.AddColumn(MakeIntColumn(L"Id"), &error))
+        << error.toStdString();
+    ASSERT_TRUE(session.AddColumn(MakeStringColumn(L"Code"), &error))
+        << error.toStdString();
+
+    std::vector<sc::SCBatchTableRequest> requests;
+    sc::SCBatchTableRequest request;
+    request.tableName = L"Beam";
+    sc::SCBatchCreateRecordRequest create;
+    create.values.push_back({L"Id", sc::SCValue::FromInt64(7)});
+    create.values.push_back({L"Code", sc::SCValue::FromString(L"Beam-A")});
+    request.creates.push_back(create);
+    requests.push_back(request);
+
+    sc::SCBatchExecutionOptions options;
+    options.editName = L"Import CSV";
+    options.rollbackOnError = true;
+
+    sc::SCBatchExecutionResult result;
+    const sc::ErrorCode rc =
+        sc::ExecuteBatchEdit(session.Database(), requests, options, &result);
+    ASSERT_EQ(rc, sc::SC_OK);
+    EXPECT_EQ(result.createdCount, 1u);
+
+    ASSERT_TRUE(session.CurrentTable() != nullptr);
+    sc::SCRecordCursorPtr cursor;
+    ASSERT_EQ(session.CurrentTable()->EnumerateRecords(cursor), sc::SC_OK);
+    bool hasRow = false;
+    ASSERT_EQ(cursor->MoveNext(&hasRow), sc::SC_OK);
+    ASSERT_TRUE(hasRow);
+    sc::SCRecordPtr record;
+    ASSERT_EQ(cursor->GetCurrent(record), sc::SC_OK);
+
+    std::int64_t id = 0;
+    ASSERT_EQ(record->GetInt64(L"Id", &id), sc::SC_OK);
+    EXPECT_EQ(id, 7);
+
+    std::wstring code;
+    ASSERT_EQ(record->GetStringCopy(L"Code", &code), sc::SC_OK);
+    EXPECT_EQ(code, L"Beam-A");
+}
+
+TEST(DatabaseEditorSession, ExecuteBatchEditRollsBackOnInvalidAssignment)
+{
+    const fs::path dbPath =
+        MakeTempDbPath(L"StableCoreStorage_DbEditor_BatchRollback.sqlite");
+
+    editor::SCDatabaseSession session;
+    QString error;
+
+    ASSERT_TRUE(session.CreateDatabase(
+        QString::fromStdWString(dbPath.wstring()), &error))
+        << error.toStdString();
+    ASSERT_TRUE(session.CreateTable(QStringLiteral("Beam"), &error))
+        << error.toStdString();
+    ASSERT_TRUE(session.AddColumn(MakeIntColumn(L"Id"), &error))
+        << error.toStdString();
+
+    std::vector<sc::SCBatchTableRequest> requests;
+    sc::SCBatchTableRequest validRequest;
+    validRequest.tableName = L"Beam";
+    sc::SCBatchCreateRecordRequest validCreate;
+    validCreate.values.push_back({L"Id", sc::SCValue::FromInt64(1)});
+    validRequest.creates.push_back(validCreate);
+    requests.push_back(validRequest);
+
+    sc::SCBatchTableRequest invalidRequest;
+    invalidRequest.tableName = L"Beam";
+    sc::SCBatchCreateRecordRequest invalidCreate;
+    invalidCreate.values.push_back({L"Missing", sc::SCValue::FromInt64(2)});
+    invalidRequest.creates.push_back(invalidCreate);
+    requests.push_back(invalidRequest);
+
+    sc::SCBatchExecutionOptions options;
+    options.editName = L"Import CSV";
+    options.rollbackOnError = true;
+
+    sc::SCBatchExecutionResult result;
+    const sc::ErrorCode rc =
+        sc::ExecuteBatchEdit(session.Database(), requests, options, &result);
+    ASSERT_TRUE(sc::Failed(rc));
+
+    ASSERT_TRUE(session.CurrentTable() != nullptr);
+    sc::SCRecordCursorPtr cursor;
+    ASSERT_EQ(session.CurrentTable()->EnumerateRecords(cursor), sc::SC_OK);
+    bool hasRow = false;
+    ASSERT_EQ(cursor->MoveNext(&hasRow), sc::SC_OK);
+    EXPECT_FALSE(hasRow);
+}
 
 TEST(DatabaseEditorSession,
      TableSelectionAndSchemaRemainAlignedAcrossCreateAndReopen)
@@ -232,6 +336,46 @@ TEST(DatabaseEditorSession, AddColumnParticipatesInUndoRedo)
         << error.toStdString();
     ASSERT_EQ(columns.size(), 1);
     EXPECT_EQ(columns[0].name, L"Width");
+}
+
+TEST(DatabaseEditorSession, RemoveColumnParticipatesInUndoRedo)
+{
+    const fs::path dbPath =
+        MakeTempDbPath(L"StableCoreStorage_DbEditor_RemoveColumnUndoRedo.sqlite");
+
+    editor::SCDatabaseSession session;
+    QString error;
+
+    ASSERT_TRUE(session.CreateDatabase(
+        QString::fromStdWString(dbPath.wstring()), &error))
+        << error.toStdString();
+    ASSERT_TRUE(session.CreateTable(QStringLiteral("Beam"), &error))
+        << error.toStdString();
+    ASSERT_TRUE(session.AddColumn(MakeIntColumn(L"Width"), &error))
+        << error.toStdString();
+    ASSERT_TRUE(session.AddColumn(MakeIntColumn(L"Height"), &error))
+        << error.toStdString();
+
+    ASSERT_TRUE(session.RemoveColumn(QStringLiteral("Width"), &error))
+        << error.toStdString();
+
+    QVector<sc::SCColumnDef> columns;
+    ASSERT_TRUE(session.BuildSchemaSnapshot(&columns, &error))
+        << error.toStdString();
+    ASSERT_EQ(columns.size(), 1);
+    EXPECT_EQ(columns[0].name, L"Height");
+
+    ASSERT_TRUE(session.Undo(&error)) << error.toStdString();
+    ASSERT_TRUE(session.BuildSchemaSnapshot(&columns, &error))
+        << error.toStdString();
+    EXPECT_EQ(CollectColumnNames(columns),
+              (std::vector<std::wstring>{L"Width", L"Height"}));
+
+    ASSERT_TRUE(session.Redo(&error)) << error.toStdString();
+    ASSERT_TRUE(session.BuildSchemaSnapshot(&columns, &error))
+        << error.toStdString();
+    EXPECT_EQ(CollectColumnNames(columns),
+              (std::vector<std::wstring>{L"Height"}));
 }
 
 TEST(DatabaseEditorSession, EditColumnMigratesCompatibleValues)

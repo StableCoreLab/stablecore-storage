@@ -404,6 +404,7 @@ namespace StableCore::Storage
         bool newDeleted{false};
         SCColumnDef oldColumn;
         SCColumnDef newColumn;
+        std::int64_t columnRowId{-1};
     };
 
     struct JournalTransaction

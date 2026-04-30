@@ -2,8 +2,11 @@
 
 #include <QAction>
 #include <QAbstractItemView>
+#include <QByteArray>
 #include <QDateTime>
+#include <QFile>
 #include <QFileDialog>
+#include <QIODevice>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QInputDialog>
@@ -12,16 +15,21 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QSaveFile>
 #include <QRegularExpression>
 #include <QSignalBlocker>
 #include <QSplitter>
+#include <QStringList>
 #include <QStatusBar>
 #include <QToolBar>
 #include <QTabWidget>
+#include <QVector>
 #include <QVBoxLayout>
 #include <QWidget>
 
 #include <vector>
+
+#include "SCBatch.h"
 
 namespace sc = StableCore::Storage;
 
@@ -261,6 +269,380 @@ namespace StableCore::Storage::Editor
             return schemaColumn;
         }
 
+        QString StorageErrorText(sc::ErrorCode error)
+        {
+            return QStringLiteral("Storage error: 0x") +
+                   QString::number(static_cast<qulonglong>(error), 16);
+        }
+
+        QString EscapeCsvField(const QString& value)
+        {
+            const bool needsQuotes =
+                value.contains(QLatin1Char(',')) ||
+                value.contains(QLatin1Char('"')) ||
+                value.contains(QLatin1Char('\n')) ||
+                value.contains(QLatin1Char('\r')) ||
+                (!value.isEmpty() &&
+                 (value.front().isSpace() || value.back().isSpace()));
+
+            QString escaped = value;
+            escaped.replace(QLatin1Char('"'), QStringLiteral("\"\""));
+            if (needsQuotes)
+            {
+                return QStringLiteral("\"") + escaped + QStringLiteral("\"");
+            }
+            return escaped;
+        }
+
+        bool ParseCsvText(const QString& input, QVector<QStringList>* outRows,
+                          QString* outError)
+        {
+            if (outRows == nullptr)
+            {
+                if (outError != nullptr)
+                {
+                    *outError = QStringLiteral("Output CSV rows container is null.");
+                }
+                return false;
+            }
+
+            outRows->clear();
+
+            QString text = input;
+            if (!text.isEmpty() && text.front() == QChar(0xFEFF))
+            {
+                text.remove(0, 1);
+            }
+
+            QString currentField;
+            QStringList currentRow;
+            bool inQuotes = false;
+            bool lastWasRowDelimiter = false;
+            bool afterQuotedField = false;
+
+            const auto finishField = [&]() {
+                currentRow.push_back(currentField);
+                currentField.clear();
+            };
+
+            const auto finishRow = [&]() {
+                finishField();
+                outRows->push_back(currentRow);
+                currentRow.clear();
+            };
+
+            for (qsizetype index = 0; index < text.size(); ++index)
+            {
+                const QChar ch = text[index];
+
+                if (inQuotes)
+                {
+                    if (ch == QLatin1Char('"'))
+                    {
+                        if (index + 1 < text.size() &&
+                            text[index + 1] == QLatin1Char('"'))
+                        {
+                            currentField.push_back(QLatin1Char('"'));
+                            ++index;
+                        }
+                        else
+                        {
+                            inQuotes = false;
+                            afterQuotedField = true;
+                        }
+                    }
+                    else
+                    {
+                        currentField.push_back(ch);
+                    }
+                    lastWasRowDelimiter = false;
+                    continue;
+                }
+
+                if (ch == QLatin1Char('"'))
+                {
+                    if (afterQuotedField)
+                    {
+                        if (outError != nullptr)
+                        {
+                            *outError = QStringLiteral(
+                                "Unexpected character after a quoted CSV field.");
+                        }
+                        return false;
+                    }
+                    if (!currentField.isEmpty())
+                    {
+                        if (outError != nullptr)
+                        {
+                            *outError = QStringLiteral(
+                                "Unexpected quote inside an unquoted CSV field.");
+                        }
+                        return false;
+                    }
+                    inQuotes = true;
+                    afterQuotedField = false;
+                    lastWasRowDelimiter = false;
+                    continue;
+                }
+
+                if (ch == QLatin1Char(','))
+                {
+                    if (afterQuotedField)
+                    {
+                        afterQuotedField = false;
+                    }
+                    finishField();
+                    lastWasRowDelimiter = false;
+                    continue;
+                }
+
+                if (ch == QLatin1Char('\r'))
+                {
+                    if (afterQuotedField)
+                    {
+                        afterQuotedField = false;
+                    }
+                    if (index + 1 < text.size() &&
+                        text[index + 1] == QLatin1Char('\n'))
+                    {
+                        ++index;
+                    }
+                    finishRow();
+                    lastWasRowDelimiter = true;
+                    continue;
+                }
+
+                if (ch == QLatin1Char('\n'))
+                {
+                    if (afterQuotedField)
+                    {
+                        afterQuotedField = false;
+                    }
+                    finishRow();
+                    lastWasRowDelimiter = true;
+                    continue;
+                }
+
+                if (afterQuotedField)
+                {
+                    if (outError != nullptr)
+                    {
+                        *outError = QStringLiteral(
+                            "Unexpected character after a quoted CSV field.");
+                    }
+                    return false;
+                }
+
+                currentField.push_back(ch);
+                lastWasRowDelimiter = false;
+            }
+
+            if (inQuotes)
+            {
+                if (outError != nullptr)
+                {
+                    *outError = QStringLiteral("CSV input ended inside a quoted field.");
+                }
+                return false;
+            }
+
+            if (!text.isEmpty() &&
+                (!lastWasRowDelimiter || !currentField.isEmpty() ||
+                 !currentRow.isEmpty()))
+            {
+                finishRow();
+            }
+
+            return true;
+        }
+
+        bool ParseCsvInteger(const QString& text, std::int64_t* outValue,
+                             QString* outError)
+        {
+            bool ok = false;
+            const std::int64_t value = text.trimmed().toLongLong(&ok);
+            if (!ok)
+            {
+                if (outError != nullptr)
+                {
+                    *outError = QStringLiteral("Invalid integer value: ") + text;
+                }
+                return false;
+            }
+
+            if (outValue != nullptr)
+            {
+                *outValue = value;
+            }
+            return true;
+        }
+
+        bool ParseCsvDouble(const QString& text, double* outValue,
+                            QString* outError)
+        {
+            bool ok = false;
+            const double value = text.trimmed().toDouble(&ok);
+            if (!ok)
+            {
+                if (outError != nullptr)
+                {
+                    *outError = QStringLiteral("Invalid decimal value: ") + text;
+                }
+                return false;
+            }
+
+            if (outValue != nullptr)
+            {
+                *outValue = value;
+            }
+            return true;
+        }
+
+        bool ParseCsvBool(const QString& text, bool* outValue, QString* outError)
+        {
+            const QString normalized = text.trimmed().toLower();
+            if (normalized == QStringLiteral("1") ||
+                normalized == QStringLiteral("true") ||
+                normalized == QStringLiteral("yes") ||
+                normalized == QStringLiteral("y") ||
+                normalized == QStringLiteral("on"))
+            {
+                if (outValue != nullptr)
+                {
+                    *outValue = true;
+                }
+                return true;
+            }
+
+            if (normalized == QStringLiteral("0") ||
+                normalized == QStringLiteral("false") ||
+                normalized == QStringLiteral("no") ||
+                normalized == QStringLiteral("n") ||
+                normalized == QStringLiteral("off"))
+            {
+                if (outValue != nullptr)
+                {
+                    *outValue = false;
+                }
+                return true;
+            }
+
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("Invalid boolean value: ") + text;
+            }
+            return false;
+        }
+
+        bool CsvTextToValue(const sc::SCTableViewColumnDef& column,
+                            const QString& text, sc::SCValue* outValue,
+                            QString* outError)
+        {
+            if (outValue == nullptr)
+            {
+                if (outError != nullptr)
+                {
+                    *outError = QStringLiteral("Output value is null.");
+                }
+                return false;
+            }
+
+            if (text.isEmpty())
+            {
+                switch (column.valueKind)
+                {
+                    case sc::ValueKind::String:
+                        *outValue = sc::SCValue::FromString(std::wstring());
+                        return true;
+                    case sc::ValueKind::Enum:
+                        *outValue = sc::SCValue::FromEnum(std::wstring());
+                        return true;
+                    case sc::ValueKind::Null:
+                    default:
+                        *outValue = sc::SCValue::Null();
+                        return true;
+                }
+            }
+
+            switch (column.valueKind)
+            {
+                case sc::ValueKind::Int64: {
+                    std::int64_t value = 0;
+                    if (!ParseCsvInteger(text, &value, outError))
+                    {
+                        return false;
+                    }
+                    *outValue = sc::SCValue::FromInt64(value);
+                    return true;
+                }
+                case sc::ValueKind::Double: {
+                    double value = 0.0;
+                    if (!ParseCsvDouble(text, &value, outError))
+                    {
+                        return false;
+                    }
+                    *outValue = sc::SCValue::FromDouble(value);
+                    return true;
+                }
+                case sc::ValueKind::Bool: {
+                    bool value = false;
+                    if (!ParseCsvBool(text, &value, outError))
+                    {
+                        return false;
+                    }
+                    *outValue = sc::SCValue::FromBool(value);
+                    return true;
+                }
+                case sc::ValueKind::String:
+                    *outValue = sc::SCValue::FromString(text.toStdWString());
+                    return true;
+                case sc::ValueKind::RecordId: {
+                    std::int64_t value = 0;
+                    if (!ParseCsvInteger(text, &value, outError))
+                    {
+                        return false;
+                    }
+                    if (value < 0)
+                    {
+                        if (outError != nullptr)
+                        {
+                            *outError = QStringLiteral(
+                                "RecordId cannot be negative: ") + text;
+                        }
+                        return false;
+                    }
+                    *outValue = sc::SCValue::FromRecordId(
+                        static_cast<sc::RecordId>(value));
+                    return true;
+                }
+                case sc::ValueKind::Enum:
+                    *outValue = sc::SCValue::FromEnum(text.toStdWString());
+                    return true;
+                case sc::ValueKind::Null:
+                default:
+                    if (outError != nullptr)
+                    {
+                        *outError = QStringLiteral(
+                            "CSV import does not support this column type.");
+                    }
+                    return false;
+            }
+        }
+
+        int FindColumnIndex(const QVector<sc::SCTableViewColumnDef>& columns,
+                            const QString& name)
+        {
+            for (int index = 0; index < columns.size(); ++index)
+            {
+                if (QString::fromStdWString(columns[index].name)
+                        .compare(name, Qt::CaseInsensitive) == 0)
+                {
+                    return index;
+                }
+            }
+            return -1;
+        }
+
     }  // namespace
 
     SCDatabaseEditorMainWindow::SCDatabaseEditorMainWindow(QWidget* parent)
@@ -374,6 +756,11 @@ namespace StableCore::Storage::Editor
         tableToolBar_->addAction(QStringLiteral("Refresh"), this,
                                 &SCDatabaseEditorMainWindow::RefreshCurrentView);
         tableToolBar_->addSeparator();
+        tableToolBar_->addAction(QStringLiteral("Export CSV..."), this,
+                                 &SCDatabaseEditorMainWindow::ExportCurrentTableCsv);
+        tableToolBar_->addAction(QStringLiteral("Import CSV..."), this,
+                                 &SCDatabaseEditorMainWindow::ImportCsvIntoCurrentTable);
+        tableToolBar_->addSeparator();
         tableToolBar_->addAction(QStringLiteral("Add Column"), this,
                                 &SCDatabaseEditorMainWindow::AddColumn);
         tableToolBar_->addAction(QStringLiteral("Edit Column"), this,
@@ -405,6 +792,7 @@ namespace StableCore::Storage::Editor
         dataTable_->setSelectionMode(QAbstractItemView::SingleSelection);
         dataTable_->setSortingEnabled(true);
         dataTable_->setWordWrap(false);
+        dataTable_->viewport()->setContextMenuPolicy(Qt::CustomContextMenu);
         tableLayout->addWidget(dataTable_, 1);
 
         centralLayout->addWidget(tablePage_, 1);
@@ -414,6 +802,8 @@ namespace StableCore::Storage::Editor
                 &SCDatabaseEditorMainWindow::OnFilterTextChanged);
         connect(clearFilterButton, &QPushButton::clicked, filterEdit_,
                 &QLineEdit::clear);
+        connect(dataTable_->viewport(), &QWidget::customContextMenuRequested, this,
+                &SCDatabaseEditorMainWindow::OnGridContextMenuRequested);
 
         objectExplorerDock_ =
             new QDockWidget(QStringLiteral("Object Explorer"), this);
@@ -441,6 +831,7 @@ namespace StableCore::Storage::Editor
              QStringLiteral("Nullable"), QStringLiteral("Default"),
              QStringLiteral("Reference Table"), QStringLiteral("User Defined"),
              QStringLiteral("Computed")});
+        schemaTree_->viewport()->setContextMenuPolicy(Qt::CustomContextMenu);
         inspectorTabs_->addTab(schemaTree_, QStringLiteral("Schema"));
 
         recordTree_ = new QTreeWidget(inspectorTabs_);
@@ -460,6 +851,10 @@ namespace StableCore::Storage::Editor
             {QStringLiteral("Field"), QStringLiteral("Target Table"),
              QStringLiteral("Target Field"), QStringLiteral("Status")});
         inspectorTabs_->addTab(relationTree_, QStringLiteral("Relation"));
+
+        connect(schemaTree_->viewport(), &QWidget::customContextMenuRequested,
+                this,
+                &SCDatabaseEditorMainWindow::OnSchemaContextMenuRequested);
 
         inspectorDock_->setWidget(inspectorTabs_);
         addDockWidget(Qt::RightDockWidgetArea, inspectorDock_);
@@ -552,6 +947,11 @@ namespace StableCore::Storage::Editor
                              &SCDatabaseEditorMainWindow::DeleteSelectedRecord);
         tableMenu->addAction(QStringLiteral("Pick Selected Relation..."), this,
                              &SCDatabaseEditorMainWindow::EditSelectedRelation);
+        tableMenu->addSeparator();
+        tableMenu->addAction(QStringLiteral("Export CSV..."), this,
+                             &SCDatabaseEditorMainWindow::ExportCurrentTableCsv);
+        tableMenu->addAction(QStringLiteral("Import CSV..."), this,
+                             &SCDatabaseEditorMainWindow::ImportCsvIntoCurrentTable);
 
         auto* computedMenu =
             menuBar()->addMenu(QStringLiteral("&Computed Column"));
@@ -725,6 +1125,68 @@ namespace StableCore::Storage::Editor
         RefreshOverviewPanels();
         SetStatusMessage(QStringLiteral("Column added: ") +
                          ToQString(column.name));
+    }
+
+    void SCDatabaseEditorMainWindow::DeleteSelectedColumn()
+    {
+        const QString columnName = CurrentSchemaColumnName();
+        if (columnName.isEmpty())
+        {
+            ShowError(QStringLiteral("Delete Column Failed"),
+                      QStringLiteral("Select a schema field first."));
+            return;
+        }
+
+        const QMessageBox::StandardButton answer = QMessageBox::question(
+            this, QStringLiteral("Delete Column"),
+            QStringLiteral("Delete schema field \"%1\"?").arg(columnName));
+        if (answer != QMessageBox::Yes)
+        {
+            return;
+        }
+
+        QVector<sc::SCColumnDef> columnsBeforeDelete;
+        QString error;
+        if (!session_->BuildSchemaSnapshot(&columnsBeforeDelete, &error))
+        {
+            ShowError(QStringLiteral("Delete Column Failed"), error);
+            return;
+        }
+
+        QString fallbackSelection;
+        for (int index = 0; index < columnsBeforeDelete.size(); ++index)
+        {
+            if (ToQString(columnsBeforeDelete[index].name)
+                    .compare(columnName, Qt::CaseInsensitive) != 0)
+            {
+                continue;
+            }
+
+            if (index + 1 < columnsBeforeDelete.size())
+            {
+                fallbackSelection =
+                    ToQString(columnsBeforeDelete[index + 1].name);
+            }
+            else if (index - 1 >= 0)
+            {
+                fallbackSelection =
+                    ToQString(columnsBeforeDelete[index - 1].name);
+            }
+            break;
+        }
+
+        if (!session_->RemoveColumn(columnName, &error))
+        {
+            ShowError(QStringLiteral("Delete Column Failed"), error);
+            return;
+        }
+
+        UpdateSchemaInspector();
+        SelectSchemaColumnByName(fallbackSelection);
+        recordModel_->Refresh();
+        UpdateRelationInspector();
+        RefreshOverviewPanels();
+        SetStatusMessage(QStringLiteral("Column deleted: ") + columnName);
     }
 
     void SCDatabaseEditorMainWindow::EditSelectedColumn()
@@ -1126,6 +1588,69 @@ namespace StableCore::Storage::Editor
         SetStatusMessage(QStringLiteral("Relation updated."));
     }
 
+    void SCDatabaseEditorMainWindow::OnSchemaContextMenuRequested(
+        const QPoint& pos)
+    {
+        if (schemaTree_ == nullptr)
+        {
+            return;
+        }
+
+        if (QTreeWidgetItem* item = schemaTree_->itemAt(pos); item != nullptr)
+        {
+            schemaTree_->setCurrentItem(item);
+        }
+
+        QMenu menu(schemaTree_);
+        const bool canEditSchema =
+            session_->IsOpen() && !session_->CurrentTableName().isEmpty();
+        QAction* addAction = menu.addAction(QStringLiteral("Add Column..."),
+                                            this,
+                                            &SCDatabaseEditorMainWindow::AddColumn);
+        addAction->setEnabled(canEditSchema);
+        QAction* deleteAction =
+            menu.addAction(QStringLiteral("Delete Column..."), this,
+                           &SCDatabaseEditorMainWindow::DeleteSelectedColumn);
+        deleteAction->setEnabled(canEditSchema &&
+                                 !CurrentSchemaColumnName().isEmpty());
+        menu.exec(schemaTree_->viewport()->mapToGlobal(pos));
+    }
+
+    void SCDatabaseEditorMainWindow::OnGridContextMenuRequested(
+        const QPoint& pos)
+    {
+        if (dataTable_ == nullptr)
+        {
+            return;
+        }
+
+        const QModelIndex proxyIndex = dataTable_->indexAt(pos);
+        if (proxyIndex.isValid())
+        {
+            dataTable_->setCurrentIndex(proxyIndex);
+            if (dataTable_->selectionModel() != nullptr)
+            {
+                dataTable_->selectionModel()->select(
+                    proxyIndex, QItemSelectionModel::ClearAndSelect |
+                                    QItemSelectionModel::Rows);
+            }
+        }
+
+        QMenu menu(dataTable_);
+        const bool canEditRows =
+            session_->IsOpen() && !session_->CurrentTableName().isEmpty();
+        QAction* addAction = menu.addAction(QStringLiteral("Add Row"), this,
+                                            &SCDatabaseEditorMainWindow::AddRecord);
+        addAction->setEnabled(canEditRows);
+        QAction* deleteAction =
+            menu.addAction(QStringLiteral("Delete Row"), this,
+                           &SCDatabaseEditorMainWindow::DeleteSelectedRecord);
+        deleteAction->setEnabled(
+            canEditRows &&
+            (proxyIndex.isValid() || CurrentSourceIndex().isValid()));
+        menu.exec(dataTable_->viewport()->mapToGlobal(pos));
+    }
+
     void SCDatabaseEditorMainWindow::UndoLastAction()
     {
         QString error;
@@ -1227,6 +1752,406 @@ namespace StableCore::Storage::Editor
                 QStringLiteral("Exported debug package:\n") + filePath);
         }
         SetStatusMessage(QStringLiteral("Debug package exported: ") + filePath);
+    }
+
+    void SCDatabaseEditorMainWindow::ExportCurrentTableCsv()
+    {
+        if (!session_->IsOpen() || session_->CurrentTableName().isEmpty())
+        {
+            ShowError(QStringLiteral("Export CSV Failed"),
+                      QStringLiteral("Select a table before exporting CSV."));
+            return;
+        }
+
+        const QString defaultFileName =
+            session_->CurrentTableName() + QStringLiteral(".csv");
+        const QString filePath = QFileDialog::getSaveFileName(
+            this, QStringLiteral("Export CSV"), defaultFileName,
+            QStringLiteral("CSV Files (*.csv);;All Files (*)"));
+        if (filePath.isEmpty())
+        {
+            return;
+        }
+
+        QString error;
+        if (!ExportCurrentTableCsvFile(filePath, &error))
+        {
+            ShowError(QStringLiteral("Export CSV Failed"), error);
+            return;
+        }
+
+        SetStatusMessage(QStringLiteral("CSV exported: ") + filePath);
+    }
+
+    void SCDatabaseEditorMainWindow::ImportCsvIntoCurrentTable()
+    {
+        if (!session_->IsOpen() || session_->CurrentTableName().isEmpty())
+        {
+            ShowError(QStringLiteral("Import CSV Failed"),
+                      QStringLiteral("Select a table before importing CSV."));
+            return;
+        }
+
+        sc::SCEditingDatabaseState editingState;
+        QString stateError;
+        if (!session_->GetEditingState(&editingState, &stateError))
+        {
+            ShowError(QStringLiteral("Import CSV Failed"), stateError);
+            return;
+        }
+        if (editingState.openMode == sc::SCDatabaseOpenMode::ReadOnly)
+        {
+            ShowError(QStringLiteral("Import CSV Failed"),
+                      QStringLiteral("CSV import requires a writable database."));
+            return;
+        }
+
+        const QString defaultFileName =
+            session_->CurrentTableName() + QStringLiteral(".csv");
+        const QString filePath = QFileDialog::getOpenFileName(
+            this, QStringLiteral("Import CSV"), defaultFileName,
+            QStringLiteral("CSV Files (*.csv);;All Files (*)"));
+        if (filePath.isEmpty())
+        {
+            return;
+        }
+
+        QString error;
+        if (!ImportCsvIntoCurrentTableFile(filePath, &error))
+        {
+            ShowError(QStringLiteral("Import CSV Failed"), error);
+            return;
+        }
+
+        SetStatusMessage(QStringLiteral("CSV imported: ") + filePath);
+    }
+
+    bool SCDatabaseEditorMainWindow::ExportCurrentTableCsvFile(
+        const QString& filePath, QString* outError) const
+    {
+        if (!session_->IsOpen() || session_->CurrentTableName().isEmpty())
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("No table is selected.");
+            }
+            return false;
+        }
+        if (recordModel_ == nullptr || filterModel_ == nullptr)
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("Record model is not available.");
+            }
+            return false;
+        }
+
+        QSaveFile file(filePath);
+        if (!file.open(QIODevice::WriteOnly | QIODevice::Text))
+        {
+            if (outError != nullptr)
+            {
+                *outError =
+                    QStringLiteral("Failed to open the CSV file for writing.");
+            }
+            return false;
+        }
+
+        QStringList headerFields;
+        const int columnCount = recordModel_->columnCount();
+        headerFields.reserve(columnCount);
+        for (int column = 0; column < columnCount; ++column)
+        {
+            const sc::SCTableViewColumnDef definition = recordModel_->ColumnAt(column);
+            headerFields.push_back(
+                EscapeCsvField(QString::fromStdWString(definition.name)));
+        }
+
+        const auto writeLine = [&](const QStringList& fields) -> bool {
+            const QString line = fields.join(QStringLiteral(","));
+            const QByteArray bytes = line.toUtf8();
+            if (file.write(bytes) != bytes.size())
+            {
+                if (outError != nullptr)
+                {
+                    *outError =
+                        QStringLiteral("Failed to write CSV content.");
+                }
+                return false;
+            }
+            if (file.write("\n") != 1)
+            {
+                if (outError != nullptr)
+                {
+                    *outError =
+                        QStringLiteral("Failed to write CSV line break.");
+                }
+                return false;
+            }
+            return true;
+        };
+
+        const QByteArray utf8Bom("\xEF\xBB\xBF", 3);
+        if (file.write(utf8Bom) != utf8Bom.size())
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("Failed to write the CSV header.");
+            }
+            return false;
+        }
+
+        if (!writeLine(headerFields))
+        {
+            return false;
+        }
+
+        const int rowCount = filterModel_->rowCount();
+        for (int row = 0; row < rowCount; ++row)
+        {
+            QStringList fields;
+            fields.reserve(columnCount);
+            for (int column = 0; column < columnCount; ++column)
+            {
+                const QModelIndex index = filterModel_->index(row, column);
+                const QVariant value =
+                    filterModel_->data(index, Qt::DisplayRole);
+                fields.push_back(EscapeCsvField(value.toString()));
+            }
+
+            if (!writeLine(fields))
+            {
+                return false;
+            }
+        }
+
+        if (!file.commit())
+        {
+            if (outError != nullptr)
+            {
+                *outError =
+                    QStringLiteral("Failed to finalize the CSV file.");
+            }
+            return false;
+        }
+
+        return true;
+    }
+
+    bool SCDatabaseEditorMainWindow::ImportCsvIntoCurrentTableFile(
+        const QString& filePath, QString* outError)
+    {
+        if (!session_->IsOpen() || session_->CurrentTableName().isEmpty())
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("No table is selected.");
+            }
+            return false;
+        }
+        if (recordModel_ == nullptr)
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("Record model is not available.");
+            }
+            return false;
+        }
+
+        QFile file(filePath);
+        if (!file.open(QIODevice::ReadOnly | QIODevice::Text))
+        {
+            if (outError != nullptr)
+            {
+                *outError =
+                    QStringLiteral("Failed to open the CSV file for reading.");
+            }
+            return false;
+        }
+
+        const QString text = QString::fromUtf8(file.readAll());
+        QVector<QStringList> csvRows;
+        if (!ParseCsvText(text, &csvRows, outError))
+        {
+            return false;
+        }
+        if (csvRows.isEmpty())
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("CSV file does not contain a header row.");
+            }
+            return false;
+        }
+
+        const QStringList headerRow = csvRows.first();
+        csvRows.removeAt(0);
+        const int columnCount = recordModel_->columnCount();
+        QVector<sc::SCTableViewColumnDef> viewColumns;
+        viewColumns.reserve(columnCount);
+        for (int column = 0; column < columnCount; ++column)
+        {
+            viewColumns.push_back(recordModel_->ColumnAt(column));
+        }
+
+        QVector<int> columnMapping;
+        columnMapping.reserve(headerRow.size());
+        QVector<bool> columnUsed(viewColumns.size(), false);
+        int importableColumnCount = 0;
+        for (const QString& rawHeader : headerRow)
+        {
+            const QString header = rawHeader.trimmed();
+            if (header.isEmpty())
+            {
+                if (outError != nullptr)
+                {
+                    *outError =
+                        QStringLiteral("CSV header contains an empty column name.");
+                }
+                return false;
+            }
+
+            const int columnIndex = FindColumnIndex(viewColumns, header);
+            if (columnIndex < 0)
+            {
+                if (outError != nullptr)
+                {
+                    *outError = QStringLiteral("CSV header references unknown column: ") +
+                                 header;
+                }
+                return false;
+            }
+
+            const sc::SCTableViewColumnDef& definition = viewColumns[columnIndex];
+            if (definition.layer == sc::TableColumnLayer::Fact &&
+                definition.editable)
+            {
+                if (columnUsed[columnIndex])
+                {
+                    if (outError != nullptr)
+                    {
+                        *outError = QStringLiteral(
+                            "CSV header contains a duplicate editable column: ") +
+                                     header;
+                    }
+                    return false;
+                }
+                columnUsed[columnIndex] = true;
+                ++importableColumnCount;
+                columnMapping.push_back(columnIndex);
+            }
+            else
+            {
+                columnMapping.push_back(-1);
+            }
+        }
+
+        if (importableColumnCount == 0)
+        {
+            if (outError != nullptr)
+            {
+                *outError =
+                    QStringLiteral("CSV file does not contain any editable columns.");
+            }
+            return false;
+        }
+
+        const QString tableName = session_->CurrentTableName();
+        std::vector<sc::SCBatchTableRequest> requests;
+        requests.reserve(static_cast<std::size_t>(csvRows.size()));
+
+        for (int rowIndex = 0; rowIndex < csvRows.size(); ++rowIndex)
+        {
+            const QStringList& row = csvRows[rowIndex];
+            if (row.size() > headerRow.size())
+            {
+                if (outError != nullptr)
+                {
+                    *outError = QStringLiteral("CSV row %1 has more fields than the header.")
+                                    .arg(rowIndex + 2);
+                }
+                return false;
+            }
+
+            sc::SCBatchTableRequest request;
+            request.tableName = tableName.toStdWString();
+
+            for (int headerIndex = 0; headerIndex < headerRow.size(); ++headerIndex)
+            {
+                const int columnIndex = columnMapping[headerIndex];
+                if (columnIndex < 0)
+                {
+                    continue;
+                }
+
+                const sc::SCTableViewColumnDef& definition =
+                    viewColumns[columnIndex];
+                const QString cellText =
+                    headerIndex < row.size() ? row[headerIndex] : QString();
+
+                sc::SCValue value;
+                if (!CsvTextToValue(definition, cellText, &value, outError))
+                {
+                    if (outError != nullptr && !outError->isEmpty())
+                    {
+                        *outError = QStringLiteral("CSV row %1, column \"%2\": %3")
+                                        .arg(rowIndex + 2)
+                                        .arg(QString::fromStdWString(definition.name))
+                                        .arg(*outError);
+                    }
+                    return false;
+                }
+
+                sc::SCFieldValueAssignment assignment;
+                assignment.fieldName = definition.name;
+                assignment.SCValue = value;
+                sc::SCBatchCreateRecordRequest createRecord;
+                createRecord.values.push_back(std::move(assignment));
+                request.creates.push_back(std::move(createRecord));
+            }
+
+            requests.emplace_back(std::move(request));
+        }
+
+        if (requests.empty())
+        {
+            return true;
+        }
+
+        sc::SCBatchExecutionOptions options;
+        options.editName = L"Import CSV";
+        options.rollbackOnError = true;
+
+        sc::SCBatchExecutionResult result;
+        const sc::ErrorCode rc =
+            sc::ExecuteBatchEdit(session_->Database(), requests, options, &result);
+        if (sc::Failed(rc))
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("CSV import failed: ") +
+                             StorageErrorText(rc);
+            }
+            return false;
+        }
+
+        QString refreshError;
+        if (!session_->Refresh(&refreshError))
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral(
+                                "CSV import committed, but refresh failed: ") +
+                             refreshError;
+            }
+            return false;
+        }
+
+        if (outError != nullptr)
+        {
+            outError->clear();
+        }
+        return true;
     }
 
     void SCDatabaseEditorMainWindow::RefreshOverviewPanels()

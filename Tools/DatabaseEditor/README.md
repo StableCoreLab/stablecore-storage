@@ -57,6 +57,8 @@ Build\StorageDbEditor\Release\SCStorageDatabaseEditor.exe
 - `Undo`
 - `Redo`
 - `Refresh`
+- `Export CSV...`
+- `Import CSV...`
 
 ## 基本使用
 
@@ -185,6 +187,17 @@ Build\StorageDbEditor\Release\SCStorageDatabaseEditor.exe
 - `Docs/DatabaseEditorComputedColumnLifecycle.md`
 - `Tools/DatabaseEditor/SCDatabaseEditorMainWindow.cpp`
 - `Tools/DatabaseEditor/SCDatabaseSession.cpp`
+
+## CSV Export / Import
+
+- `Export CSV...` exports the current table view as UTF-8 CSV.
+- `Import CSV...` appends rows to the current table by matching header names to editable fact columns.
+- Computed columns are exported for reference and ignored during import.
+
+## Right-Click Actions
+
+- Right-click the `Schema` panel to add or delete the selected schema column.
+- Right-click the central data grid to add or delete the selected row.
 
 ## 补充能力
 
