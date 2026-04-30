@@ -321,8 +321,6 @@ This section is the final implementation contract for the current task. It is in
   - applies the schema/value deletion inside the transaction
   - restores the pre-image on transaction failure or exception
 - `ReloadColumnValuesFromStorage(...)` may remain as a diagnostic/auxiliary helper, but it must not be the primary recovery path.
-- The replay path may keep legacy compatibility for old journals, but the current edit path must not generate a user-facing undoable `RemoveColumn` capability.
-
 ### Problem 2 closure: `ApplyColumnMutation(...)` / `BeginAndCommitSingleAction(...)`
 
 - Introduce one rollback helper, for example `RollbackEditAndReport(...)`.

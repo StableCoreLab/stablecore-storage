@@ -2577,7 +2577,6 @@ namespace StableCore::Storage
             }
 
             LoadMetadata();
-
             LoadTables();
 
             if (!readOnly_)
@@ -2920,16 +2919,19 @@ namespace StableCore::Storage
 
                 SqliteStmt schemaStmt = db_.Prepare(
                     "SELECT sequence_index, op, table_name, column_name, "
-                    "column_rowid, old_display_name, old_value_kind, old_column_kind, "
-                    "old_nullable, old_editable, old_user_defined, "
-                    "old_indexed, old_participates_in_calc, old_unit, "
-                    "old_reference_table, old_default_kind, old_default_int64, "
-                    "old_default_double, old_default_bool, old_default_text, "
+                    "column_rowid, old_display_name, old_value_kind, "
+                    "old_column_kind, old_nullable, old_editable, "
+                    "old_user_defined, old_indexed, "
+                    "old_participates_in_calc, old_unit, "
+                    "old_reference_table, old_default_kind, "
+                    "old_default_int64, old_default_double, old_default_bool, "
+                    "old_default_text, "
                     "new_display_name, new_value_kind, new_column_kind, "
                     "new_nullable, new_editable, new_user_defined, "
                     "new_indexed, new_participates_in_calc, new_unit, "
-                    "new_reference_table, new_default_kind, new_default_int64, "
-                    "new_default_double, new_default_bool, new_default_text "
+                    "new_reference_table, new_default_kind, "
+                    "new_default_int64, new_default_double, "
+                    "new_default_bool, new_default_text "
                     "FROM journal_schema_entries WHERE tx_id = ?;");
                 schemaStmt.BindInt64(1, persisted.txId);
                 hasEntry = false;
@@ -5916,13 +5918,14 @@ namespace StableCore::Storage
 
             SqliteStmt stmt = db_.Prepare(
                 "INSERT INTO journal_schema_entries("
-                " tx_id, sequence_index, op, table_name, column_name, column_rowid, "
-                "old_display_name, old_value_kind, old_column_kind, "
-                "old_nullable, old_editable, old_user_defined, old_indexed, "
-                "old_participates_in_calc, old_unit, old_reference_table, "
-                "old_default_kind, old_default_int64, old_default_double, "
-                "old_default_bool, old_default_text, new_display_name, "
-                "new_value_kind, new_column_kind, new_nullable, new_editable, "
+                " tx_id, sequence_index, op, table_name, column_name, "
+                "column_rowid, old_display_name, old_value_kind, "
+                "old_column_kind, old_nullable, old_editable, "
+                "old_user_defined, old_indexed, old_participates_in_calc, "
+                "old_unit, old_reference_table, old_default_kind, "
+                "old_default_int64, old_default_double, old_default_bool, "
+                "old_default_text, new_display_name, new_value_kind, "
+                "new_column_kind, new_nullable, new_editable, "
                 "new_user_defined, new_indexed, new_participates_in_calc, "
                 "new_unit, new_reference_table, new_default_kind, "
                 "new_default_int64, new_default_double, new_default_bool, "

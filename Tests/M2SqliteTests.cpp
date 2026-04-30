@@ -732,7 +732,7 @@ TEST(StorageM2Sqlite, CreateBackupCopyPreservesOrTrimsJournalHistory)
     EXPECT_GT(preservedResult.outputFileSizeBytes, 0u);
 
     sc::SCDbPtr preservedDb;
-    EXPECT_EQ(CreateFileDb(preservedBackupPath.c_str(), preservedDb),
+    ASSERT_EQ(CreateFileDb(preservedBackupPath.c_str(), preservedDb),
               sc::SC_OK);
 
     sc::SCEditLogState preservedLog;
@@ -1552,14 +1552,21 @@ TEST(StorageM2Sqlite, SchemaColumnJournalSurvivesReopenAndUndoRedo)
         EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
 
         sc::SCTablePtr table = CreateBeamTable(db);
-        sc::SCSchemaPtr schema;
-        EXPECT_EQ(table->GetSchema(schema), sc::SC_OK);
+    sc::SCSchemaPtr schema;
+    EXPECT_EQ(table->GetSchema(schema), sc::SC_OK);
 
-        sc::SCColumnDef height;
-        height.name = L"Height";
-        height.displayName = L"Height";
-        height.valueKind = sc::ValueKind::Int64;
-        height.defaultValue = sc::SCValue::FromInt64(0);
+    sc::SCColumnDef name;
+    name.name = L"Name";
+    name.displayName = L"Name";
+    name.valueKind = sc::ValueKind::String;
+    name.defaultValue = sc::SCValue::FromString(L"");
+    EXPECT_EQ(schema->AddColumn(name), sc::SC_OK);
+
+    sc::SCColumnDef height;
+    height.name = L"Height";
+    height.displayName = L"Height";
+    height.valueKind = sc::ValueKind::Int64;
+    height.defaultValue = sc::SCValue::FromInt64(0);
 
         sc::SCEditPtr edit;
         EXPECT_EQ(db->BeginEdit(L"add height", edit), sc::SC_OK);

@@ -85,6 +85,7 @@
 
 ## Right-Click Editing
 
-- The schema panel now offers context-menu actions for adding or deleting the selected column.
+- The object explorer now offers context-menu actions for selecting a table and creating a table, which makes the table-entry path visible without relying on the toolbar.
+- The schema panel now offers context-menu actions for adding, editing, or deleting the selected column.
 - The central data grid now offers context-menu actions for adding or deleting the selected row.
 - These actions reuse the existing explicit session edit boundaries instead of mutating UI state directly.

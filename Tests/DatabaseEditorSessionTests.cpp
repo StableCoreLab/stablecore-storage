@@ -338,6 +338,62 @@ TEST(DatabaseEditorSession, AddColumnParticipatesInUndoRedo)
     EXPECT_EQ(columns[0].name, L"Width");
 }
 
+TEST(DatabaseEditorSession, CreateTableSelectsCurrentTableForEditing)
+{
+    const fs::path dbPath =
+        MakeTempDbPath(L"StableCoreStorage_DbEditor_CreateTableSelect.sqlite");
+
+    editor::SCDatabaseSession session;
+    QString error;
+
+    ASSERT_TRUE(session.CreateDatabase(
+        QString::fromStdWString(dbPath.wstring()), &error))
+        << error.toStdString();
+    ASSERT_TRUE(session.CreateTable(QStringLiteral("Beam"), &error))
+        << error.toStdString();
+
+    EXPECT_EQ(session.CurrentTableName(), QStringLiteral("Beam"));
+    EXPECT_TRUE(session.CurrentTable() != nullptr);
+
+    ASSERT_TRUE(session.AddColumn(MakeIntColumn(L"Width"), &error))
+        << error.toStdString();
+}
+
+TEST(DatabaseEditorSession, AddAndDeleteRecordStayOnCurrentTable)
+{
+    const fs::path dbPath =
+        MakeTempDbPath(L"StableCoreStorage_DbEditor_AddDeleteRecord.sqlite");
+
+    editor::SCDatabaseSession session;
+    QString error;
+
+    ASSERT_TRUE(session.CreateDatabase(
+        QString::fromStdWString(dbPath.wstring()), &error))
+        << error.toStdString();
+    ASSERT_TRUE(session.CreateTable(QStringLiteral("Beam"), &error))
+        << error.toStdString();
+    ASSERT_TRUE(session.AddColumn(MakeIntColumn(L"Width"), &error))
+        << error.toStdString();
+
+    ASSERT_TRUE(session.AddRecord(&error)) << error.toStdString();
+    ASSERT_TRUE(session.CurrentTable() != nullptr);
+
+    sc::SCRecordCursorPtr cursor;
+    ASSERT_EQ(session.CurrentTable()->EnumerateRecords(cursor), sc::SC_OK);
+    bool hasRow = false;
+    ASSERT_EQ(cursor->MoveNext(&hasRow), sc::SC_OK);
+    ASSERT_TRUE(hasRow);
+
+    sc::SCRecordPtr record;
+    ASSERT_EQ(cursor->GetCurrent(record), sc::SC_OK);
+    ASSERT_TRUE(session.DeleteRecord(record->GetId(), &error))
+        << error.toStdString();
+
+    ASSERT_EQ(session.CurrentTable()->EnumerateRecords(cursor), sc::SC_OK);
+    ASSERT_EQ(cursor->MoveNext(&hasRow), sc::SC_OK);
+    EXPECT_FALSE(hasRow);
+}
+
 TEST(DatabaseEditorSession, RemoveColumnParticipatesInUndoRedo)
 {
     const fs::path dbPath =

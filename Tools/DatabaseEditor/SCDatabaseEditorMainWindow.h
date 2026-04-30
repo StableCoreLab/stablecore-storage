@@ -54,6 +54,7 @@ namespace StableCore::Storage::Editor
         void ExportDebugPackage();
         void ExportCurrentTableCsv();
         void ImportCsvIntoCurrentTable();
+        void OnObjectExplorerContextMenuRequested(const QPoint& pos);
         void OnSchemaContextMenuRequested(const QPoint& pos);
         void OnGridContextMenuRequested(const QPoint& pos);
         void OnTableSelectionChanged();

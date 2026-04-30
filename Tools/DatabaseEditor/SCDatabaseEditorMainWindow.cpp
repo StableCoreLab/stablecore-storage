@@ -792,7 +792,7 @@ namespace StableCore::Storage::Editor
         dataTable_->setSelectionMode(QAbstractItemView::SingleSelection);
         dataTable_->setSortingEnabled(true);
         dataTable_->setWordWrap(false);
-        dataTable_->viewport()->setContextMenuPolicy(Qt::CustomContextMenu);
+        dataTable_->setContextMenuPolicy(Qt::CustomContextMenu);
         tableLayout->addWidget(dataTable_, 1);
 
         centralLayout->addWidget(tablePage_, 1);
@@ -802,7 +802,7 @@ namespace StableCore::Storage::Editor
                 &SCDatabaseEditorMainWindow::OnFilterTextChanged);
         connect(clearFilterButton, &QPushButton::clicked, filterEdit_,
                 &QLineEdit::clear);
-        connect(dataTable_->viewport(), &QWidget::customContextMenuRequested, this,
+        connect(dataTable_, &QWidget::customContextMenuRequested, this,
                 &SCDatabaseEditorMainWindow::OnGridContextMenuRequested);
 
         objectExplorerDock_ =
@@ -815,10 +815,14 @@ namespace StableCore::Storage::Editor
             {QStringLiteral("Object"), QStringLiteral("Type")});
         objectTree_->setSelectionMode(QAbstractItemView::SingleSelection);
         objectTree_->setAlternatingRowColors(true);
+        objectTree_->setContextMenuPolicy(Qt::CustomContextMenu);
         objectExplorerDock_->setWidget(objectTree_);
         addDockWidget(Qt::LeftDockWidgetArea, objectExplorerDock_);
         connect(objectTree_, &QTreeWidget::itemSelectionChanged, this,
                 &SCDatabaseEditorMainWindow::OnTableSelectionChanged);
+        connect(objectTree_, &QWidget::customContextMenuRequested,
+                this,
+                &SCDatabaseEditorMainWindow::OnObjectExplorerContextMenuRequested);
 
         inspectorDock_ = new QDockWidget(QStringLiteral("Inspector"), this);
         inspectorDock_->setObjectName(QStringLiteral("inspectorDock"));
@@ -831,7 +835,7 @@ namespace StableCore::Storage::Editor
              QStringLiteral("Nullable"), QStringLiteral("Default"),
              QStringLiteral("Reference Table"), QStringLiteral("User Defined"),
              QStringLiteral("Computed")});
-        schemaTree_->viewport()->setContextMenuPolicy(Qt::CustomContextMenu);
+        schemaTree_->setContextMenuPolicy(Qt::CustomContextMenu);
         inspectorTabs_->addTab(schemaTree_, QStringLiteral("Schema"));
 
         recordTree_ = new QTreeWidget(inspectorTabs_);
@@ -852,7 +856,7 @@ namespace StableCore::Storage::Editor
              QStringLiteral("Target Field"), QStringLiteral("Status")});
         inspectorTabs_->addTab(relationTree_, QStringLiteral("Relation"));
 
-        connect(schemaTree_->viewport(), &QWidget::customContextMenuRequested,
+        connect(schemaTree_, &QWidget::customContextMenuRequested,
                 this,
                 &SCDatabaseEditorMainWindow::OnSchemaContextMenuRequested);
 
@@ -1104,6 +1108,34 @@ namespace StableCore::Storage::Editor
 
     void SCDatabaseEditorMainWindow::AddColumn()
     {
+        if (session_->CurrentTableName().isEmpty() && objectTree_ != nullptr &&
+            objectTree_->currentItem() != nullptr)
+        {
+            const ExplorerNodeType nodeType = static_cast<ExplorerNodeType>(
+                objectTree_->currentItem()
+                    ->data(0, kExplorerNodeTypeRole)
+                    .toInt());
+            if (nodeType == ExplorerNodeType::Table)
+            {
+                QString error;
+                const QString nodeName =
+                    objectTree_->currentItem()->data(0, kExplorerNodeNameRole)
+                        .toString();
+                if (!session_->SelectTable(nodeName, &error))
+                {
+                    ShowError(QStringLiteral("Add Column Failed"), error);
+                    return;
+                }
+            }
+        }
+
+        if (session_->CurrentTableName().isEmpty())
+        {
+            ShowError(QStringLiteral("Add Column Failed"),
+                      QStringLiteral("Select a table first."));
+            return;
+        }
+
         SCAddColumnDialog dialog(this);
         if (dialog.exec() != QDialog::Accepted)
         {
@@ -1125,6 +1157,54 @@ namespace StableCore::Storage::Editor
         RefreshOverviewPanels();
         SetStatusMessage(QStringLiteral("Column added: ") +
                          ToQString(column.name));
+    }
+
+    void SCDatabaseEditorMainWindow::OnObjectExplorerContextMenuRequested(
+        const QPoint& pos)
+    {
+        if (objectTree_ == nullptr)
+        {
+            return;
+        }
+
+        if (QTreeWidgetItem* item = objectTree_->itemAt(pos); item != nullptr)
+        {
+            objectTree_->setCurrentItem(item);
+        }
+
+        QTreeWidgetItem* current = objectTree_->currentItem();
+        const ExplorerNodeType nodeType = current != nullptr
+                                              ? static_cast<ExplorerNodeType>(
+                                                    current->data(
+                                                        0, kExplorerNodeTypeRole)
+                                                        .toInt())
+                                              : ExplorerNodeType::Database;
+        QMenu menu(objectTree_);
+
+        if (nodeType == ExplorerNodeType::Table)
+        {
+            QAction* selectAction = menu.addAction(
+                QStringLiteral("Select Table"), this,
+                &SCDatabaseEditorMainWindow::OnTableSelectionChanged);
+            selectAction->setEnabled(true);
+            menu.addAction(QStringLiteral("Add Column..."), this,
+                           &SCDatabaseEditorMainWindow::AddColumn);
+        } else if (nodeType == ExplorerNodeType::TablesRoot)
+        {
+            menu.addAction(QStringLiteral("Create Table..."), this,
+                           &SCDatabaseEditorMainWindow::CreateTable);
+        } else if (nodeType == ExplorerNodeType::ComputedRoot)
+        {
+            menu.addAction(QStringLiteral("Add Session Computed Column..."),
+                           this,
+                           &SCDatabaseEditorMainWindow::AddSessionComputedColumn);
+        } else
+        {
+            menu.addAction(QStringLiteral("Refresh"), this,
+                           &SCDatabaseEditorMainWindow::RefreshCurrentView);
+        }
+
+        menu.exec(objectTree_->mapToGlobal(pos));
     }
 
     void SCDatabaseEditorMainWindow::DeleteSelectedColumn()
@@ -1608,12 +1688,17 @@ namespace StableCore::Storage::Editor
                                             this,
                                             &SCDatabaseEditorMainWindow::AddColumn);
         addAction->setEnabled(canEditSchema);
+        QAction* editAction = menu.addAction(
+            QStringLiteral("Edit Column..."), this,
+            &SCDatabaseEditorMainWindow::EditSelectedColumn);
+        editAction->setEnabled(canEditSchema &&
+                               !CurrentSchemaColumnName().isEmpty());
         QAction* deleteAction =
             menu.addAction(QStringLiteral("Delete Column..."), this,
                            &SCDatabaseEditorMainWindow::DeleteSelectedColumn);
         deleteAction->setEnabled(canEditSchema &&
                                  !CurrentSchemaColumnName().isEmpty());
-        menu.exec(schemaTree_->viewport()->mapToGlobal(pos));
+        menu.exec(schemaTree_->mapToGlobal(pos));
     }
 
     void SCDatabaseEditorMainWindow::OnGridContextMenuRequested(
@@ -1648,7 +1733,7 @@ namespace StableCore::Storage::Editor
         deleteAction->setEnabled(
             canEditRows &&
             (proxyIndex.isValid() || CurrentSourceIndex().isValid()));
-        menu.exec(dataTable_->viewport()->mapToGlobal(pos));
+        menu.exec(dataTable_->mapToGlobal(pos));
     }
 
     void SCDatabaseEditorMainWindow::UndoLastAction()
@@ -2658,6 +2743,9 @@ namespace StableCore::Storage::Editor
             tableItem->setData(0, kExplorerNodeNameRole, tableName);
             if (!currentTable.isEmpty() &&
                 tableName.compare(currentTable, Qt::CaseInsensitive) == 0)
+            {
+                selectedItem = tableItem;
+            } else if (currentTable.isEmpty() && tableNames.size() == 1)
             {
                 selectedItem = tableItem;
             }
