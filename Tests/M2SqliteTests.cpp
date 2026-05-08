@@ -440,12 +440,9 @@ TEST(StorageM2Sqlite, PersistedRecordSurvivesReopen)
         sc::SCRecordCursorPtr cursor;
         EXPECT_EQ(beamTable->EnumerateRecords(cursor), sc::SC_OK);
 
-        bool hasRow = false;
-        EXPECT_EQ(cursor->MoveNext(&hasRow), sc::SC_OK);
-        EXPECT_TRUE(hasRow);
-
         sc::SCRecordPtr beam;
-        EXPECT_EQ(cursor->GetCurrent(beam), sc::SC_OK);
+        EXPECT_EQ(cursor->Next(beam), sc::SC_OK);
+        EXPECT_TRUE(static_cast<bool>(beam));
 
         std::int64_t width = 0;
         EXPECT_EQ(beam->GetInt64(L"Width", &width), sc::SC_OK);
@@ -487,12 +484,9 @@ TEST(StorageM2Sqlite, UndoRedoSurvivesReopen)
 
         sc::SCRecordCursorPtr cursor;
         EXPECT_EQ(beamTable->EnumerateRecords(cursor), sc::SC_OK);
-        bool hasRow = false;
-        EXPECT_EQ(cursor->MoveNext(&hasRow), sc::SC_OK);
-        EXPECT_TRUE(hasRow);
-
         sc::SCRecordPtr beam;
-        EXPECT_EQ(cursor->GetCurrent(beam), sc::SC_OK);
+        EXPECT_EQ(cursor->Next(beam), sc::SC_OK);
+        EXPECT_TRUE(static_cast<bool>(beam));
 
         std::int64_t width = 0;
         EXPECT_EQ(beam->GetInt64(L"Width", &width), sc::SC_OK);
@@ -819,12 +813,9 @@ TEST(StorageM2Sqlite, PersistedQueryAndDelete)
         sc::SCQueryCondition condition{L"Width", sc::SCValue::FromInt64(500)};
         EXPECT_EQ(beamTable->FindRecords(condition, cursor), sc::SC_OK);
 
-        bool hasRow = false;
-        EXPECT_EQ(cursor->MoveNext(&hasRow), sc::SC_OK);
-        EXPECT_TRUE(hasRow);
-
         sc::SCRecordPtr beam;
-        EXPECT_EQ(cursor->GetCurrent(beam), sc::SC_OK);
+        EXPECT_EQ(cursor->Next(beam), sc::SC_OK);
+        EXPECT_TRUE(static_cast<bool>(beam));
 
         std::int64_t width = 0;
         EXPECT_EQ(beam->GetInt64(L"Width", &width), sc::SC_OK);
@@ -874,9 +865,9 @@ TEST(StorageM2Sqlite, PersistedEmptyQueryIsNotError)
                                      cursor),
               sc::SC_OK);
 
-    bool hasRow = true;
-    EXPECT_EQ(cursor->MoveNext(&hasRow), sc::SC_OK);
-    EXPECT_FALSE(hasRow);
+    sc::SCRecordPtr beam;
+    EXPECT_EQ(cursor->Next(beam), sc::SC_OK);
+    EXPECT_FALSE(static_cast<bool>(beam));
 }
 
 TEST(StorageM2Sqlite, VersionGraphReportsUpgradeWindow)
@@ -1029,9 +1020,9 @@ TEST(StorageM2Sqlite, UpgradeFailureRollsBackOnObjectNameConflict)
     EXPECT_EQ(reopened->GetTable(L"Beam", beamTable), sc::SC_OK);
     sc::SCRecordCursorPtr cursor;
     EXPECT_EQ(beamTable->EnumerateRecords(cursor), sc::SC_OK);
-    bool hasRow = false;
-    EXPECT_EQ(cursor->MoveNext(&hasRow), sc::SC_OK);
-    EXPECT_TRUE(hasRow);
+    sc::SCRecordPtr beam;
+    EXPECT_EQ(cursor->Next(beam), sc::SC_OK);
+    EXPECT_TRUE(static_cast<bool>(beam));
 }
 
 TEST(StorageM2Sqlite, UncleanShutdownBlocksUpgradeExecution)
@@ -1125,9 +1116,9 @@ TEST(StorageM2Sqlite, ImportSessionCheckpointIsNotLiveState)
 
     sc::SCRecordCursorPtr cursor;
     EXPECT_EQ(beamTable->EnumerateRecords(cursor), sc::SC_OK);
-    bool hasRow = true;
-    EXPECT_EQ(cursor->MoveNext(&hasRow), sc::SC_OK);
-    EXPECT_FALSE(hasRow);
+    sc::SCRecordPtr beam;
+    EXPECT_EQ(cursor->Next(beam), sc::SC_OK);
+    EXPECT_FALSE(static_cast<bool>(beam));
 
     sc::SCImportFinalizeCommit commit;
     commit.sessionId = session.sessionId;
@@ -1140,8 +1131,9 @@ TEST(StorageM2Sqlite, ImportSessionCheckpointIsNotLiveState)
     EXPECT_EQ(result.chunkCount, 1u);
 
     EXPECT_EQ(beamTable->EnumerateRecords(cursor), sc::SC_OK);
-    EXPECT_EQ(cursor->MoveNext(&hasRow), sc::SC_OK);
-    EXPECT_TRUE(hasRow);
+    sc::SCRecordPtr finalizedBeam;
+    EXPECT_EQ(cursor->Next(finalizedBeam), sc::SC_OK);
+    EXPECT_TRUE(static_cast<bool>(finalizedBeam));
 }
 
 TEST(StorageM2Sqlite, RestartedDatabaseCanFinalizeImportRecoveryState)
@@ -1185,9 +1177,9 @@ TEST(StorageM2Sqlite, RestartedDatabaseCanFinalizeImportRecoveryState)
 
         sc::SCRecordCursorPtr cursor;
         EXPECT_EQ(beamTable->EnumerateRecords(cursor), sc::SC_OK);
-        bool hasRow = false;
-        EXPECT_EQ(cursor->MoveNext(&hasRow), sc::SC_OK);
-        EXPECT_FALSE(hasRow);
+        sc::SCRecordPtr beam;
+        EXPECT_EQ(cursor->Next(beam), sc::SC_OK);
+        EXPECT_FALSE(static_cast<bool>(beam));
     }
 
     sc::SCDbPtr reopened;
@@ -1216,9 +1208,9 @@ TEST(StorageM2Sqlite, RestartedDatabaseCanFinalizeImportRecoveryState)
     EXPECT_EQ(reopened->GetTable(L"Beam", beamTable), sc::SC_OK);
     sc::SCRecordCursorPtr cursor;
     EXPECT_EQ(beamTable->EnumerateRecords(cursor), sc::SC_OK);
-    bool hasRow = false;
-    EXPECT_EQ(cursor->MoveNext(&hasRow), sc::SC_OK);
-    EXPECT_TRUE(hasRow);
+    sc::SCRecordPtr beam;
+    EXPECT_EQ(cursor->Next(beam), sc::SC_OK);
+    EXPECT_TRUE(static_cast<bool>(beam));
 
     EXPECT_EQ(reopened->LoadImportRecoveryState(sessionId, &recoveryState),
               sc::SC_E_RECORD_NOT_FOUND);
@@ -1306,9 +1298,9 @@ TEST(StorageM2Sqlite, ExecuteImportUsesChunkedSessionModel)
 
     sc::SCRecordCursorPtr cursor;
     EXPECT_EQ(beamTable->EnumerateRecords(cursor), sc::SC_OK);
-    bool hasRow = false;
+    sc::SCRecordPtr beam;
     std::size_t count = 0;
-    while (cursor->MoveNext(&hasRow) == sc::SC_OK && hasRow)
+    while (cursor->Next(beam) == sc::SC_OK && beam)
     {
         ++count;
     }
@@ -1345,9 +1337,9 @@ TEST(StorageM2Sqlite, BatchFailureDoesNotLeaveActiveEdit)
 
     sc::SCRecordCursorPtr cursor;
     EXPECT_EQ(beamTable->EnumerateRecords(cursor), sc::SC_OK);
-    bool hasRow = false;
-    EXPECT_EQ(cursor->MoveNext(&hasRow), sc::SC_OK);
-    EXPECT_FALSE(hasRow);
+    sc::SCRecordPtr beam;
+    EXPECT_EQ(cursor->Next(beam), sc::SC_OK);
+    EXPECT_FALSE(static_cast<bool>(beam));
 }
 
 TEST(StorageM2Sqlite, ExecuteImportKeepsRecoveryStateWhenCommitFails)
@@ -1379,9 +1371,9 @@ TEST(StorageM2Sqlite, ExecuteImportKeepsRecoveryStateWhenCommitFails)
 
     sc::SCRecordCursorPtr cursor;
     EXPECT_EQ(beamTable->EnumerateRecords(cursor), sc::SC_OK);
-    bool hasRow = false;
-    EXPECT_EQ(cursor->MoveNext(&hasRow), sc::SC_OK);
-    EXPECT_FALSE(hasRow);
+    sc::SCRecordPtr beam;
+    EXPECT_EQ(cursor->Next(beam), sc::SC_OK);
+    EXPECT_FALSE(static_cast<bool>(beam));
 
     sc::SCImportRecoveryState recoveryState;
     EXPECT_EQ(proxy->LoadImportRecoveryState(1, &recoveryState), sc::SC_OK);
@@ -1420,9 +1412,9 @@ TEST(StorageM2Sqlite, ExecuteImportClearsRecoveryStateOnSuccess)
 
     sc::SCRecordCursorPtr cursor;
     EXPECT_EQ(beamTable->EnumerateRecords(cursor), sc::SC_OK);
-    bool hasRow = false;
-    EXPECT_EQ(cursor->MoveNext(&hasRow), sc::SC_OK);
-    EXPECT_TRUE(hasRow);
+    sc::SCRecordPtr beam;
+    EXPECT_EQ(cursor->Next(beam), sc::SC_OK);
+    EXPECT_TRUE(static_cast<bool>(beam));
 
     sc::SCImportRecoveryState recoveryState;
     EXPECT_EQ(

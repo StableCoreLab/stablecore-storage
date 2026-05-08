@@ -341,12 +341,9 @@ TEST(StorageM1, TransactionCommitAndQuery)
     sc::SCQueryCondition condition{L"Width", sc::SCValue::FromInt64(300)};
     EXPECT_EQ(beamTable->FindRecords(condition, cursor), sc::SC_OK);
 
-    bool hasRow = false;
-    EXPECT_EQ(cursor->MoveNext(&hasRow), sc::SC_OK);
-    EXPECT_TRUE(hasRow);
-
     sc::SCRecordPtr current;
-    EXPECT_EQ(cursor->GetCurrent(current), sc::SC_OK);
+    EXPECT_EQ(cursor->Next(current), sc::SC_OK);
+    EXPECT_TRUE(static_cast<bool>(current));
 
     std::int64_t width = 0;
     EXPECT_EQ(current->GetInt64(L"Width", &width), sc::SC_OK);
@@ -518,11 +515,9 @@ TEST(StorageM1, WriteRequiresActiveEditAndEmptyQueryIsNotError)
         beamTable->FindRecords({L"Width", sc::SCValue::FromInt64(999)}, cursor),
         sc::SC_OK);
 
-    bool hasRow = true;
-    EXPECT_EQ(cursor->MoveNext(&hasRow), sc::SC_OK);
-    EXPECT_FALSE(hasRow);
     sc::SCRecordPtr current;
-    EXPECT_EQ(cursor->GetCurrent(current), sc::SC_FALSE_RESULT);
+    EXPECT_EQ(cursor->Next(current), sc::SC_OK);
+    EXPECT_FALSE(static_cast<bool>(current));
 }
 
 TEST(StorageM1, ReadOnlyOpenModeRejectsEdits)

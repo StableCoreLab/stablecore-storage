@@ -115,11 +115,9 @@ TEST(DatabaseEditorSession, ExecuteBatchEditCreatesRecordsWithValues)
     ASSERT_TRUE(session.CurrentTable() != nullptr);
     sc::SCRecordCursorPtr cursor;
     ASSERT_EQ(session.CurrentTable()->EnumerateRecords(cursor), sc::SC_OK);
-    bool hasRow = false;
-    ASSERT_EQ(cursor->MoveNext(&hasRow), sc::SC_OK);
-    ASSERT_TRUE(hasRow);
     sc::SCRecordPtr record;
-    ASSERT_EQ(cursor->GetCurrent(record), sc::SC_OK);
+    ASSERT_EQ(cursor->Next(record), sc::SC_OK);
+    ASSERT_TRUE(static_cast<bool>(record));
 
     std::int64_t id = 0;
     ASSERT_EQ(record->GetInt64(L"Id", &id), sc::SC_OK);
@@ -173,9 +171,9 @@ TEST(DatabaseEditorSession, ExecuteBatchEditRollsBackOnInvalidAssignment)
     ASSERT_TRUE(session.CurrentTable() != nullptr);
     sc::SCRecordCursorPtr cursor;
     ASSERT_EQ(session.CurrentTable()->EnumerateRecords(cursor), sc::SC_OK);
-    bool hasRow = false;
-    ASSERT_EQ(cursor->MoveNext(&hasRow), sc::SC_OK);
-    EXPECT_FALSE(hasRow);
+    sc::SCRecordPtr record;
+    ASSERT_EQ(cursor->Next(record), sc::SC_OK);
+    EXPECT_FALSE(static_cast<bool>(record));
 }
 
 TEST(DatabaseEditorSession,
@@ -434,18 +432,15 @@ TEST(DatabaseEditorSession, AddAndDeleteRecordStayOnCurrentTable)
 
     sc::SCRecordCursorPtr cursor;
     ASSERT_EQ(session.CurrentTable()->EnumerateRecords(cursor), sc::SC_OK);
-    bool hasRow = false;
-    ASSERT_EQ(cursor->MoveNext(&hasRow), sc::SC_OK);
-    ASSERT_TRUE(hasRow);
-
     sc::SCRecordPtr record;
-    ASSERT_EQ(cursor->GetCurrent(record), sc::SC_OK);
+    ASSERT_EQ(cursor->Next(record), sc::SC_OK);
+    ASSERT_TRUE(static_cast<bool>(record));
     ASSERT_TRUE(session.DeleteRecord(record->GetId(), &error))
         << error.toStdString();
 
     ASSERT_EQ(session.CurrentTable()->EnumerateRecords(cursor), sc::SC_OK);
-    ASSERT_EQ(cursor->MoveNext(&hasRow), sc::SC_OK);
-    EXPECT_FALSE(hasRow);
+    ASSERT_EQ(cursor->Next(record), sc::SC_OK);
+    EXPECT_FALSE(static_cast<bool>(record));
 }
 
 TEST(DatabaseEditorSession, RemoveColumnParticipatesInUndoRedo)
@@ -508,11 +503,9 @@ TEST(DatabaseEditorSession, EditColumnMigratesCompatibleValues)
     ASSERT_TRUE(session.CurrentTable() != nullptr);
     sc::SCRecordCursorPtr cursor;
     ASSERT_EQ(session.CurrentTable()->EnumerateRecords(cursor), sc::SC_OK);
-    bool hasRow = false;
-    ASSERT_EQ(cursor->MoveNext(&hasRow), sc::SC_OK);
-    ASSERT_TRUE(hasRow);
     sc::SCRecordPtr record;
-    ASSERT_EQ(cursor->GetCurrent(record), sc::SC_OK);
+    ASSERT_EQ(cursor->Next(record), sc::SC_OK);
+    ASSERT_TRUE(static_cast<bool>(record));
     const sc::RecordId recordId = record->GetId();
     ASSERT_TRUE(session.SetCellValue(recordId, QStringLiteral("Width"),
                                      QVariant::fromValue<qlonglong>(11),
@@ -560,11 +553,9 @@ TEST(DatabaseEditorSession, EditColumnRollsBackWhenViewRebuildFails)
     ASSERT_TRUE(session.CurrentTable() != nullptr);
     sc::SCRecordCursorPtr cursor;
     ASSERT_EQ(session.CurrentTable()->EnumerateRecords(cursor), sc::SC_OK);
-    bool hasRow = false;
-    ASSERT_EQ(cursor->MoveNext(&hasRow), sc::SC_OK);
-    ASSERT_TRUE(hasRow);
     sc::SCRecordPtr record;
-    ASSERT_EQ(cursor->GetCurrent(record), sc::SC_OK);
+    ASSERT_EQ(cursor->Next(record), sc::SC_OK);
+    ASSERT_TRUE(static_cast<bool>(record));
     const sc::RecordId recordId = record->GetId();
     ASSERT_TRUE(session.SetCellValue(recordId, QStringLiteral("Width"),
                                      QVariant::fromValue<qlonglong>(17),
@@ -673,11 +664,9 @@ TEST(DatabaseEditorSession, ConvertColumnToComputedRebuildsSchemaAndView)
     ASSERT_TRUE(session.CurrentTable() != nullptr);
     sc::SCRecordCursorPtr cursor;
     ASSERT_EQ(session.CurrentTable()->EnumerateRecords(cursor), sc::SC_OK);
-    bool hasRow = false;
-    ASSERT_EQ(cursor->MoveNext(&hasRow), sc::SC_OK);
-    ASSERT_TRUE(hasRow);
     sc::SCRecordPtr record;
-    ASSERT_EQ(cursor->GetCurrent(record), sc::SC_OK);
+    ASSERT_EQ(cursor->Next(record), sc::SC_OK);
+    ASSERT_TRUE(static_cast<bool>(record));
     const sc::RecordId recordId = record->GetId();
     ASSERT_TRUE(session.SetCellValue(recordId, QStringLiteral("Length"),
                                      QVariant::fromValue<qlonglong>(7),
@@ -705,11 +694,9 @@ TEST(DatabaseEditorSession, ConvertColumnToComputedRebuildsSchemaAndView)
     sc::SCRecordCursorPtr restoredCursor;
     ASSERT_EQ(session.CurrentTable()->EnumerateRecords(restoredCursor),
               sc::SC_OK);
-    hasRow = false;
-    ASSERT_EQ(restoredCursor->MoveNext(&hasRow), sc::SC_OK);
-    ASSERT_TRUE(hasRow);
     sc::SCRecordPtr restoredRecord;
-    ASSERT_EQ(restoredCursor->GetCurrent(restoredRecord), sc::SC_OK);
+    ASSERT_EQ(restoredCursor->Next(restoredRecord), sc::SC_OK);
+    ASSERT_TRUE(static_cast<bool>(restoredRecord));
     std::int64_t restoredWidth = -1;
     ASSERT_EQ(restoredRecord->GetInt64(L"Width", &restoredWidth), sc::SC_OK);
     EXPECT_EQ(restoredWidth, 0);
@@ -794,11 +781,9 @@ TEST(DatabaseEditorSession, ConvertNonNullableColumnToComputedClearsDataStructur
     ASSERT_TRUE(session.CurrentTable() != nullptr);
     sc::SCRecordCursorPtr cursor;
     ASSERT_EQ(session.CurrentTable()->EnumerateRecords(cursor), sc::SC_OK);
-    bool hasRow = false;
-    ASSERT_EQ(cursor->MoveNext(&hasRow), sc::SC_OK);
-    ASSERT_TRUE(hasRow);
     sc::SCRecordPtr record;
-    ASSERT_EQ(cursor->GetCurrent(record), sc::SC_OK);
+    ASSERT_EQ(cursor->Next(record), sc::SC_OK);
+    ASSERT_TRUE(static_cast<bool>(record));
     const sc::RecordId recordId = record->GetId();
     ASSERT_TRUE(session.SetCellValue(recordId, QStringLiteral("Width"),
                                      QVariant::fromValue<qlonglong>(11),
@@ -822,11 +807,9 @@ TEST(DatabaseEditorSession, ConvertNonNullableColumnToComputedClearsDataStructur
     sc::SCRecordCursorPtr restoredCursor;
     ASSERT_EQ(session.CurrentTable()->EnumerateRecords(restoredCursor),
               sc::SC_OK);
-    hasRow = false;
-    ASSERT_EQ(restoredCursor->MoveNext(&hasRow), sc::SC_OK);
-    ASSERT_TRUE(hasRow);
     sc::SCRecordPtr restoredRecord;
-    ASSERT_EQ(restoredCursor->GetCurrent(restoredRecord), sc::SC_OK);
+    ASSERT_EQ(restoredCursor->Next(restoredRecord), sc::SC_OK);
+    ASSERT_TRUE(static_cast<bool>(restoredRecord));
     std::int64_t restoredWidth = -1;
     ASSERT_EQ(restoredRecord->GetInt64(L"Width", &restoredWidth), sc::SC_OK);
     EXPECT_EQ(restoredWidth, 0);

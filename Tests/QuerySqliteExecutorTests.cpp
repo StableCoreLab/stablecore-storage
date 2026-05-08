@@ -90,12 +90,9 @@ TEST(QuerySqliteExecutorTests, LegacyFindRecordsRoutesThroughExecutor)
         table->FindRecords({L"Width", sc::SCValue::FromInt64(200)}, cursor),
         sc::SC_OK);
 
-    bool hasRow = false;
-    EXPECT_EQ(cursor->MoveNext(&hasRow), sc::SC_OK);
-    EXPECT_TRUE(hasRow);
-
     sc::SCRecordPtr record;
-    EXPECT_EQ(cursor->GetCurrent(record), sc::SC_OK);
+    EXPECT_EQ(cursor->Next(record), sc::SC_OK);
+    EXPECT_TRUE(static_cast<bool>(record));
 
     std::int64_t width = 0;
     EXPECT_EQ(record->GetInt64(L"Width", &width), sc::SC_OK);

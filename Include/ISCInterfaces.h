@@ -195,10 +195,8 @@ namespace StableCore::Storage
     class ISCRecordCursor : public virtual ISCRefObject
     {
     public:
-        // Moves the cursor to the next record. Returns SC_OK and
-        // outHasValue=false on exhaustion.
-        virtual ErrorCode MoveNext(bool* outHasValue) = 0;
-        virtual ErrorCode GetCurrent(SCRecordPtr& outRecord) = 0;
+        // Returns SC_OK and outRecord=nullptr on exhaustion.
+        virtual ErrorCode Next(SCRecordPtr& outRecord) = 0;
     };
 
     class ISCTable : public virtual ISCRefObject

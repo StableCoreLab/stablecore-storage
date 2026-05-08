@@ -101,12 +101,9 @@ namespace
             sc::SC_OK);
 
         std::vector<std::wstring> names;
-        bool hasRow = false;
-        while (cursor->MoveNext(&hasRow) == sc::SC_OK && hasRow)
+        sc::SCRecordPtr beam;
+        while (cursor->Next(beam) == sc::SC_OK && beam)
         {
-            sc::SCRecordPtr beam;
-            EXPECT_EQ(cursor->GetCurrent(beam), sc::SC_OK);
-
             std::wstring name;
             EXPECT_EQ(beam->GetStringCopy(L"Name", &name), sc::SC_OK);
             names.push_back(std::move(name));
@@ -272,12 +269,10 @@ TEST(StorageM3, SqliteRelationBaseline)
     sc::SCRecordCursorPtr floorCursor;
     ASSERT_EQ(floorTable->EnumerateRecords(floorCursor), sc::SC_OK);
 
-    bool hasRow = false;
     std::vector<sc::RecordId> aliveFloorIds;
-    while (floorCursor->MoveNext(&hasRow) == sc::SC_OK && hasRow)
+    sc::SCRecordPtr floor;
+    while (floorCursor->Next(floor) == sc::SC_OK && floor)
     {
-        sc::SCRecordPtr floor;
-        ASSERT_EQ(floorCursor->GetCurrent(floor), sc::SC_OK);
         aliveFloorIds.push_back(floor->GetId());
     }
 
@@ -352,12 +347,9 @@ TEST(StorageM3, SqliteReferenceIndexCanBeRebuilt)
     ASSERT_EQ(floorTable->FindRecords(
                   {L"Title", sc::SCValue::FromString(L"3F")}, floorCursor),
               sc::SC_OK);
-    bool hasRow = false;
-    ASSERT_EQ(floorCursor->MoveNext(&hasRow), sc::SC_OK);
-    ASSERT_TRUE(hasRow);
-
     sc::SCRecordPtr floor3;
-    ASSERT_EQ(floorCursor->GetCurrent(floor3), sc::SC_OK);
+    ASSERT_EQ(floorCursor->Next(floor3), sc::SC_OK);
+    ASSERT_TRUE(static_cast<bool>(floor3));
 
     sc::SCTablePtr beamTable;
     ASSERT_EQ(fixture.db->GetTable(L"Beam", beamTable), sc::SC_OK);

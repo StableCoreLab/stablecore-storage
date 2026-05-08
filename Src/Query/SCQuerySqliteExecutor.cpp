@@ -24,39 +24,21 @@ namespace StableCore::Storage
             {
             }
 
-            ErrorCode MoveNext(bool* outHasValue) override
+            ErrorCode Next(SCRecordPtr& outRecord) override
             {
-                if (outHasValue == nullptr)
-                {
-                    return SC_E_POINTER;
-                }
-
                 if (index_ < records_.size())
                 {
-                    current_ = records_[index_++];
-                    *outHasValue = true;
+                    outRecord = records_[index_++];
                     return SC_OK;
                 }
 
-                current_.Reset();
-                *outHasValue = false;
-                return SC_OK;
-            }
-
-            ErrorCode GetCurrent(SCRecordPtr& outRecord) override
-            {
-                if (!current_)
-                {
-                    return SC_FALSE_RESULT;
-                }
-                outRecord = current_;
+                outRecord.Reset();
                 return SC_OK;
             }
 
         private:
             std::vector<SCRecordPtr> records_;
             std::size_t index_{0};
-            SCRecordPtr current_;
         };
 
         bool IsResidualOnlyOperator(QueryConditionOperator op)
@@ -692,18 +674,11 @@ namespace StableCore::Storage
             }
 
             std::vector<SCRecordPtr> matched;
-            bool hasRow = false;
             std::uint64_t scannedRows = 0;
-            while (cursor->MoveNext(&hasRow) == SC_OK && hasRow)
+            SCRecordPtr record;
+            while (cursor->Next(record) == SC_OK && record)
             {
                 ++scannedRows;
-                SCRecordPtr record;
-                const ErrorCode currentRc = cursor->GetCurrent(record);
-                if (Failed(currentRc))
-                {
-                    return currentRc;
-                }
-
                 if (EvaluatePlanForRecord(record, plan))
                 {
                     matched.push_back(record);
@@ -790,19 +765,12 @@ namespace StableCore::Storage
                     pageLimit == 0 ? kDefaultQueryPageLimit : pageLimit));
             }
 
-            bool hasRow = false;
             std::uint64_t scannedRows = 0;
             std::uint64_t matchedRows = 0;
-            while (cursor->MoveNext(&hasRow) == SC_OK && hasRow)
+            SCRecordPtr record;
+            while (cursor->Next(record) == SC_OK && record)
             {
                 ++scannedRows;
-                SCRecordPtr record;
-                const ErrorCode currentRc = cursor->GetCurrent(record);
-                if (Failed(currentRc))
-                {
-                    return currentRc;
-                }
-
                 if (!EvaluatePlanForRecord(record, plan))
                 {
                     continue;

@@ -1909,39 +1909,21 @@ namespace StableCore::Storage
             {
             }
 
-            ErrorCode MoveNext(bool* outHasValue) override
+            ErrorCode Next(SCRecordPtr& outRecord) override
             {
-                if (outHasValue == nullptr)
-                {
-                    return SC_E_POINTER;
-                }
-
                 if (index_ < records_.size())
                 {
-                    current_ = records_[index_++];
-                    *outHasValue = true;
+                    outRecord = records_[index_++];
                     return SC_OK;
                 }
 
-                current_.Reset();
-                *outHasValue = false;
-                return SC_OK;
-            }
-
-            ErrorCode GetCurrent(SCRecordPtr& outRecord) override
-            {
-                if (!current_)
-                {
-                    return SC_FALSE_RESULT;
-                }
-                outRecord = current_;
+                outRecord.Reset();
                 return SC_OK;
             }
 
         private:
             std::vector<SCRecordPtr> records_;
             std::size_t index_{0};
-            SCRecordPtr current_;
         };
 
         class SqliteTable final : public ISCTable, public SCRefCountedObject

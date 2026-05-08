@@ -153,9 +153,9 @@ namespace
     std::size_t CountRecords(const sc::SCRecordCursorPtr& cursor)
     {
         std::size_t count = 0;
-        bool hasRow = false;
         auto it = cursor;
-        while (it->MoveNext(&hasRow) == sc::SC_OK && hasRow)
+        sc::SCRecordPtr record;
+        while (it->Next(record) == sc::SC_OK && record)
         {
             ++count;
         }
@@ -165,16 +165,14 @@ namespace
     void AssertSortedDescendingByWidth(const sc::SCRecordCursorPtr& cursor,
                                        std::size_t expectedCount)
     {
-        bool hasRow = false;
         sc::SCRecordPtr record;
         std::int64_t previousWidth = std::numeric_limits<std::int64_t>::max();
         std::size_t count = 0;
 
         auto it = cursor;
-        while (it->MoveNext(&hasRow) == sc::SC_OK && hasRow)
+        while (it->Next(record) == sc::SC_OK && record)
         {
             ++count;
-            ASSERT_EQ(it->GetCurrent(record), sc::SC_OK);
             std::int64_t width = 0;
             ASSERT_EQ(record->GetInt64(L"Width", &width), sc::SC_OK);
             EXPECT_LE(width, previousWidth);

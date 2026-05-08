@@ -234,22 +234,15 @@ namespace StableCore::Storage
                 return SC_E_POINTER;
             }
 
-            bool hasRow = false;
             std::size_t count = 0;
             double sum = 0.0;
             double minValue = 0.0;
             double maxValue = 0.0;
             bool initialized = false;
 
-            while (cursor->MoveNext(&hasRow) == SC_OK && hasRow)
+            SCRecordPtr record;
+            while (cursor->Next(record) == SC_OK && record)
             {
-                SCRecordPtr record;
-                const ErrorCode currentRc = cursor->GetCurrent(record);
-                if (Failed(currentRc))
-                {
-                    return currentRc;
-                }
-
                 ++count;
                 if (column.aggregateKind == SCAggregateKind::Count)
                 {

@@ -456,22 +456,9 @@ namespace StableCore::Storage::Editor
                 return false;
             }
 
-            bool hasRow = false;
-            while (cursor->MoveNext(&hasRow) == sc::SC_OK && hasRow)
+            sc::SCRecordPtr record;
+            while (cursor->Next(record) == sc::SC_OK && record)
             {
-                sc::SCRecordPtr record;
-                const sc::ErrorCode currentRc = cursor->GetCurrent(record);
-                if (sc::Failed(currentRc))
-                {
-                    if (outError != nullptr)
-                    {
-                        *outError = QStringLiteral("Failed to read record: ") +
-                                     QString::number(
-                                         static_cast<qulonglong>(currentRc), 16);
-                    }
-                    return false;
-                }
-
                 ColumnValueSnapshot snapshot;
                 snapshot.recordId = record->GetId();
                 const sc::ErrorCode valueRc =
@@ -1747,20 +1734,9 @@ namespace StableCore::Storage::Editor
             return false;
         }
 
-        bool hasRow = false;
-        while (cursor->MoveNext(&hasRow) == sc::SC_OK && hasRow)
+        sc::SCRecordPtr record;
+        while (cursor->Next(record) == sc::SC_OK && record)
         {
-            sc::SCRecordPtr record;
-            rc = cursor->GetCurrent(record);
-            if (sc::Failed(rc))
-            {
-                if (outError != nullptr)
-                {
-                    *outError = ErrorToString(rc);
-                }
-                return false;
-            }
-
             RelationCandidate candidate;
             candidate.recordId = record->GetId();
             candidate.previewFields.push_back(

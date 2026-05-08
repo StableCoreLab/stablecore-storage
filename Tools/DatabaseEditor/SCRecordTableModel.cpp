@@ -220,14 +220,10 @@ namespace StableCore::Storage::Editor
             sc::SCRecordCursorPtr cursor;
             if (view->EnumerateRecords(cursor) == sc::SC_OK)
             {
-                bool hasRow = false;
-                while (cursor->MoveNext(&hasRow) == sc::SC_OK && hasRow)
+                sc::SCRecordPtr record;
+                while (cursor->Next(record) == sc::SC_OK && record)
                 {
-                    sc::SCRecordPtr record;
-                    if (cursor->GetCurrent(record) == sc::SC_OK)
-                    {
-                        rows_.push_back(RowData{record->GetId()});
-                    }
+                    rows_.push_back(RowData{record->GetId()});
                 }
             }
         }

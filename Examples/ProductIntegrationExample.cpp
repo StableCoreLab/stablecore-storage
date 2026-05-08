@@ -91,15 +91,11 @@ int main()
 
     sc::SCRecordCursorPtr floorCursor;
     floorTable->EnumerateRecords(floorCursor);
-    bool hasFloor = false;
-    floorCursor->MoveNext(&hasFloor);
-    if (!hasFloor)
+    sc::SCRecordPtr floor;
+    if (sc::Failed(floorCursor->Next(floor)) || !floor)
     {
         return 1;
     }
-
-    sc::SCRecordPtr floor;
-    floorCursor->GetCurrent(floor);
 
     std::vector<sc::SCBatchTableRequest> beamImport;
     sc::SCBatchTableRequest beamRequest;
@@ -140,15 +136,11 @@ int main()
 
     sc::SCRecordCursorPtr beamCursor;
     beamView->EnumerateRecords(beamCursor);
-    bool hasBeam = false;
-    beamCursor->MoveNext(&hasBeam);
-    if (!hasBeam)
+    sc::SCRecordPtr beam;
+    if (sc::Failed(beamCursor->Next(beam)) || !beam)
     {
         return 1;
     }
-
-    sc::SCRecordPtr beam;
-    beamCursor->GetCurrent(beam);
 
     sc::SCValue volume;
     if (sc::Failed(beamView->GetCellValue(beam->GetId(), L"Volume", &volume)))
