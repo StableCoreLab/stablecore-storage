@@ -6,14 +6,14 @@ Repository: `stablecore-storage`
 
 Role:
 
-> Core storage infrastructure for the quantity/takeoff system.
+> Core SQLite-based storage infrastructure for the quantity/takeoff system.
 
 Primary responsibilities:
 
+- SQLite project persistence
 - Undo / Redo
 - Transaction semantics
-- Journal / Snapshot / Replay
-- Persistent storage
+- ChangeSet / Journal / Snapshot / Replay
 - Recoverable editing
 - Upgrade / migration infrastructure
 
@@ -38,17 +38,17 @@ The repository follows a strict layered architecture:
 ```text
 Core (semantic rules)
     ↓
-Adapter (abstraction bridge)
+Adapter (public interface bridge)
     ↓
-Backend (Memory / SQLite)
+Backend (SQLite)
 ````
 
 Mandatory constraints:
 
 * Upper layers must NOT access SQLite directly
-* Query / Computed modules must NOT bypass interfaces
+* Query / Computed modules must NOT bypass public interfaces
 * Backend modules must NOT contain business semantics
-* Memory and SQLite behavior must remain semantically identical
+* Public storage semantics must remain independent from SQLite implementation details
 
 ---
 
@@ -63,7 +63,7 @@ The following semantics are invariant and must NEVER be violated:
 * deleted records must never revive
 * Undo / Redo must preserve identity consistency
 * transactions must not leave partial success states
-* Memory and SQLite backends must behave identically
+* SQLite implementation details must not leak into public APIs
 
 Correctness is always higher priority than performance.
 
@@ -152,6 +152,7 @@ Persistent truth sources are limited to:
 * Project
 * ChangeSet
 * Journal
+* Snapshot
 
 UI state, cache, and session objects are NOT truth sources.
 
@@ -171,14 +172,22 @@ Must handle:
 * failed migration
 * rollback failure
 * deleted-record access
+* interrupted SQLite transaction
+* corrupted or incomplete journal
 
 ---
 
-## 7.4 Backend Consistency
+## 7.4 Backend Isolation
 
-Memory and SQLite implementations must expose identical semantics.
+SQLite is an implementation detail.
 
-Backend-specific semantic branches are forbidden.
+Rules:
+
+* public APIs must remain storage-semantic
+* SQL details must not leak into upper layers
+* schema changes must go through explicit migration logic
+* storage behavior must not depend on UI state
+* SQLite schema must not become a public contract
 
 ---
 
@@ -190,6 +199,8 @@ The system must preserve intuitive semantics:
 * deleted data does not revive
 * readonly mode does not mutate data
 * failed operations do not partially commit
+* opening a project does not upgrade it implicitly
+* closing a project does not silently commit unfinished edits
 
 ---
 
@@ -200,10 +211,11 @@ Avoid the following common architectural violations:
 * accessing SQLite directly from upper layers
 * embedding business rules inside backend code
 * bypassing transaction boundaries
-* backend-specific behavior divergence
 * implicit writes during reads
 * hidden upgrade paths
 * using cache state as persistence truth
+* leaking SQLite concepts into public interfaces
+* mixing project lifecycle with UI workflow
 
 ---
 
@@ -214,13 +226,13 @@ Key modules:
 | Module      | Responsibility                 |
 | ----------- | ------------------------------ |
 | Include     | Public interfaces              |
-| Memory      | Semantic execution / UndoRedo  |
-| Sqlite      | Persistent backend             |
+| Sqlite      | SQLite storage backend         |
 | Query       | Query planning and execution   |
 | Computed    | Computed columns / expressions |
 | Batch       | Batch editing / import         |
 | Migration   | Upgrade and compatibility      |
 | Diagnostics | Debugging / diagnostics        |
+| Tools       | Auxiliary developer tools      |
 
 ---
 
@@ -239,6 +251,7 @@ Examples:
 
 * `ISCStorageService`
 * `SCProjectContext`
+* `SCSqliteDatabase`
 
 ---
 
@@ -270,6 +283,9 @@ Priority test areas:
 * migration failure
 * undo/redo consistency
 * transaction recovery
+* readonly open
+* failed upgrade recovery
+* journal recovery
 
 AI may modify tests but must not execute them.
 
@@ -281,8 +297,9 @@ Documentation updates are required only when:
 
 * architecture changes
 * public APIs change
-* semantics change
-* workflow behavior changes
+* storage semantics change
+* migration workflow changes
+* replay / journal behavior changes
 
 Avoid unrelated documentation rewrites.
 
@@ -305,7 +322,7 @@ Important references include:
 Every task should follow this order:
 
 1. Analyze scope and boundaries
-2. Understand semantic constraints
+2. Understand storage semantic constraints
 3. Implement minimal localized changes
 4. Add or update tests
 5. Perform static self-review
@@ -331,9 +348,10 @@ Task summaries should include:
 
 ## 14.3 Risk Assessment
 
-* semantic risks
+* storage semantic risks
 * migration risks
 * rollback risks
+* SQLite persistence risks
 * uncovered paths
 
 ## 14.4 Suggested Next Steps
@@ -348,7 +366,7 @@ This repository prioritizes:
 
 1. Semantic correctness
 2. Recoverability
-3. Backend consistency
+3. Storage semantic stability
 4. Explicit state transitions
 5. Incremental evolution
 6. Long-term maintainability
@@ -367,6 +385,7 @@ AI is expected to behave as:
 * Project
 * ChangeSet
 * Journal
+* Snapshot
 
 ---
 
@@ -374,9 +393,10 @@ AI is expected to behave as:
 
 * implicit writes
 * implicit upgrades
-* backend semantic divergence
 * partial commit states
 * SQLite access from upper layers
+* leaking SQLite internals into public APIs
+* hidden migration behavior
 
 ---
 
@@ -385,9 +405,7 @@ AI is expected to behave as:
 ```text
 Correctness
     > Recoverability
-        > Consistency
+        > Storage Semantic Stability
             > Maintainability
                 > Performance
 ```
-
-
