@@ -353,7 +353,8 @@ TEST(DatabaseEditorSession, CloseDatabaseClearsOpenState)
     EXPECT_EQ(session.CurrentTableView(), nullptr);
 
     QVector<sc::SCColumnDef> columns;
-    EXPECT_FALSE(session.BuildSchemaSnapshot(&columns, &error));
+    EXPECT_TRUE(session.BuildSchemaSnapshot(&columns, &error));
+    EXPECT_TRUE(columns.isEmpty());
 }
 
 TEST(DatabaseEditorSession, AddColumnParticipatesInUndoRedo)
