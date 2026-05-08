@@ -1,3 +1,4 @@
+#include <filesystem>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -5,9 +6,25 @@
 #include "SCStorage.h"
 
 namespace sc = StableCore::Storage;
+namespace fs = std::filesystem;
 
 namespace
 {
+
+    fs::path MakeTempDbPath(const wchar_t* fileName)
+    {
+        fs::path path = fs::temp_directory_path() / fileName;
+        std::error_code ec;
+        fs::remove(path, ec);
+        return path;
+    }
+
+    sc::ErrorCode CreateFileDb(const wchar_t* fileName, sc::SCDbPtr& db)
+    {
+        const fs::path path = MakeTempDbPath(fileName);
+        return sc::CreateFileDatabase(path.c_str(), sc::SCOpenDatabaseOptions{},
+                                       db);
+    }
 
     struct RecordingObserver final : sc::ISCDatabaseObserver
     {
@@ -78,7 +95,9 @@ TEST(StorageM1, ValueTypedAccess)
 TEST(StorageM1, SchemaRejectsInvalidRelationDefault)
 {
     sc::SCDbPtr db;
-    EXPECT_EQ(sc::CreateInMemoryDatabase(db), sc::SC_OK);
+    EXPECT_EQ(CreateFileDb(L"StableCoreStorage_M1_SchemaRejectsInvalidRelationDefault.sqlite",
+                           db),
+              sc::SC_OK);
 
     sc::SCTablePtr table;
     EXPECT_EQ(db->CreateTable(L"RelationHolder", table), sc::SC_OK);
@@ -98,7 +117,9 @@ TEST(StorageM1, SchemaRejectsInvalidRelationDefault)
 TEST(StorageM1, SchemaRejectsInvalidReferenceTableUsage)
 {
     sc::SCDbPtr db;
-    EXPECT_EQ(sc::CreateInMemoryDatabase(db), sc::SC_OK);
+    EXPECT_EQ(CreateFileDb(L"StableCoreStorage_M1_SchemaRejectsInvalidReferenceTableUsage.sqlite",
+                           db),
+              sc::SC_OK);
 
     sc::SCTablePtr table;
     EXPECT_EQ(db->CreateTable(L"Beam", table), sc::SC_OK);
@@ -119,10 +140,12 @@ TEST(StorageM1, SchemaRejectsInvalidReferenceTableUsage)
     EXPECT_EQ(schema->AddColumn(relationWithoutRef), sc::SC_E_SCHEMA_VIOLATION);
 }
 
-TEST(StorageM1, SchemaUpdateColumnReplacesDefinitionInMemory)
+TEST(StorageM1, SchemaUpdateColumnReplacesDefinition)
 {
     sc::SCDbPtr db;
-    EXPECT_EQ(sc::CreateInMemoryDatabase(db), sc::SC_OK);
+    EXPECT_EQ(CreateFileDb(L"StableCoreStorage_M1_SchemaUpdateColumnReplacesDefinition.sqlite",
+                           db),
+              sc::SC_OK);
 
     sc::SCTablePtr table;
     EXPECT_EQ(db->CreateTable(L"Beam", table), sc::SC_OK);
@@ -149,10 +172,12 @@ TEST(StorageM1, SchemaUpdateColumnReplacesDefinitionInMemory)
     EXPECT_EQ(loaded.valueKind, sc::ValueKind::String);
 }
 
-TEST(StorageM1, SchemaUpdateColumnMigratesCompatibleValuesInMemory)
+TEST(StorageM1, SchemaUpdateColumnMigratesCompatibleValues)
 {
     sc::SCDbPtr db;
-    EXPECT_EQ(sc::CreateInMemoryDatabase(db), sc::SC_OK);
+    EXPECT_EQ(CreateFileDb(L"StableCoreStorage_M1_SchemaUpdateColumnMigratesCompatibleValues.sqlite",
+                           db),
+              sc::SC_OK);
 
     sc::SCTablePtr beamTable = CreateBeamTable(db);
 
@@ -187,10 +212,12 @@ TEST(StorageM1, SchemaUpdateColumnMigratesCompatibleValuesInMemory)
     EXPECT_EQ(loaded.valueKind, sc::ValueKind::String);
 }
 
-TEST(StorageM1, SchemaUpdateColumnRejectsIncompatibleValuesInMemory)
+TEST(StorageM1, SchemaUpdateColumnRejectsIncompatibleValues)
 {
     sc::SCDbPtr db;
-    EXPECT_EQ(sc::CreateInMemoryDatabase(db), sc::SC_OK);
+    EXPECT_EQ(CreateFileDb(L"StableCoreStorage_M1_SchemaUpdateColumnRejectsIncompatibleValues.sqlite",
+                           db),
+              sc::SC_OK);
 
     sc::SCTablePtr beamTable = CreateBeamTable(db);
 
@@ -228,7 +255,9 @@ TEST(StorageM1, SchemaUpdateColumnRejectsIncompatibleValuesInMemory)
 TEST(StorageM1, SchemaColumnJournalSupportsAddUpdateRemoveUndoRedo)
 {
     sc::SCDbPtr db;
-    EXPECT_EQ(sc::CreateInMemoryDatabase(db), sc::SC_OK);
+    EXPECT_EQ(CreateFileDb(L"StableCoreStorage_M1_SchemaColumnJournalSupportsAddUpdateRemoveUndoRedo.sqlite",
+                           db),
+              sc::SC_OK);
 
     sc::SCTablePtr table = CreateBeamTable(db);
 
@@ -293,7 +322,9 @@ TEST(StorageM1, SchemaColumnJournalSupportsAddUpdateRemoveUndoRedo)
 TEST(StorageM1, TransactionCommitAndQuery)
 {
     sc::SCDbPtr db;
-    EXPECT_EQ(sc::CreateInMemoryDatabase(db), sc::SC_OK);
+    EXPECT_EQ(CreateFileDb(L"StableCoreStorage_M1_TransactionCommitAndQuery.sqlite",
+                           db),
+              sc::SC_OK);
 
     sc::SCTablePtr beamTable = CreateBeamTable(db);
 
@@ -325,7 +356,9 @@ TEST(StorageM1, TransactionCommitAndQuery)
 TEST(StorageM1, RollbackRestoresRecordValues)
 {
     sc::SCDbPtr db;
-    EXPECT_EQ(sc::CreateInMemoryDatabase(db), sc::SC_OK);
+    EXPECT_EQ(CreateFileDb(L"StableCoreStorage_M1_RollbackRestoresRecordValues.sqlite",
+                           db),
+              sc::SC_OK);
 
     sc::SCTablePtr beamTable = CreateBeamTable(db);
 
@@ -353,7 +386,9 @@ TEST(StorageM1, RollbackRestoresRecordValues)
 TEST(StorageM1, DeleteAndUndoRedo)
 {
     sc::SCDbPtr db;
-    EXPECT_EQ(sc::CreateInMemoryDatabase(db), sc::SC_OK);
+    EXPECT_EQ(CreateFileDb(L"StableCoreStorage_M1_DeleteAndUndoRedo.sqlite",
+                           db),
+              sc::SC_OK);
 
     sc::SCTablePtr beamTable = CreateBeamTable(db);
 
@@ -387,7 +422,9 @@ TEST(StorageM1, DeleteAndUndoRedo)
 TEST(StorageM1, RelationFieldValidationAndChangeSet)
 {
     sc::SCDbPtr db;
-    EXPECT_EQ(sc::CreateInMemoryDatabase(db), sc::SC_OK);
+    EXPECT_EQ(CreateFileDb(L"StableCoreStorage_M1_RelationFieldValidationAndChangeSet.sqlite",
+                           db),
+              sc::SC_OK);
 
     sc::SCTablePtr floorTable = CreateFloorTable(db);
     sc::SCTablePtr beamTable = CreateBeamTable(db);
@@ -438,7 +475,9 @@ TEST(StorageM1, RelationFieldValidationAndChangeSet)
 TEST(StorageM1, GetStringCopyAndDefaultValue)
 {
     sc::SCDbPtr db;
-    EXPECT_EQ(sc::CreateInMemoryDatabase(db), sc::SC_OK);
+    EXPECT_EQ(CreateFileDb(L"StableCoreStorage_M1_GetStringCopyAndDefaultValue.sqlite",
+                           db),
+              sc::SC_OK);
 
     sc::SCTablePtr beamTable = CreateBeamTable(db);
 
@@ -459,7 +498,9 @@ TEST(StorageM1, GetStringCopyAndDefaultValue)
 TEST(StorageM1, WriteRequiresActiveEditAndEmptyQueryIsNotError)
 {
     sc::SCDbPtr db;
-    EXPECT_EQ(sc::CreateInMemoryDatabase(db), sc::SC_OK);
+    EXPECT_EQ(CreateFileDb(L"StableCoreStorage_M1_WriteRequiresActiveEditAndEmptyQueryIsNotError.sqlite",
+                           db),
+              sc::SC_OK);
 
     sc::SCTablePtr beamTable = CreateBeamTable(db);
 
@@ -484,13 +525,24 @@ TEST(StorageM1, WriteRequiresActiveEditAndEmptyQueryIsNotError)
     EXPECT_EQ(cursor->GetCurrent(current), sc::SC_FALSE_RESULT);
 }
 
-TEST(StorageM1, ReadOnlyOpenModeRejectsMemoryEdits)
+TEST(StorageM1, ReadOnlyOpenModeRejectsEdits)
 {
+    const fs::path dbPath =
+        MakeTempDbPath(L"StableCoreStorage_M1_ReadOnlyOpenModeRejectsEdits.sqlite");
+
+    {
+        sc::SCDbPtr writableDb;
+        EXPECT_EQ(sc::CreateFileDatabase(dbPath.c_str(),
+                                         sc::SCOpenDatabaseOptions{},
+                                         writableDb),
+                  sc::SC_OK);
+    }
+
     sc::SCOpenDatabaseOptions options;
     options.openMode = sc::SCDatabaseOpenMode::ReadOnly;
 
     sc::SCDbPtr db;
-    EXPECT_EQ(sc::CreateInMemoryDatabase(options, db), sc::SC_OK);
+    EXPECT_EQ(sc::CreateFileDatabase(dbPath.c_str(), options, db), sc::SC_OK);
 
     sc::SCEditPtr edit;
     EXPECT_EQ(db->BeginEdit(L"readonly", edit), sc::SC_E_READ_ONLY_DATABASE);
@@ -499,7 +551,9 @@ TEST(StorageM1, ReadOnlyOpenModeRejectsMemoryEdits)
 TEST(StorageM1, EditLogCommitIdentityAndVersionStayStableAcrossUndoRedo)
 {
     sc::SCDbPtr db;
-    EXPECT_EQ(sc::CreateInMemoryDatabase(db), sc::SC_OK);
+    EXPECT_EQ(CreateFileDb(L"StableCoreStorage_M1_EditLogCommitIdentityAndVersionStayStableAcrossUndoRedo.sqlite",
+                           db),
+              sc::SC_OK);
 
     sc::SCTablePtr beamTable = CreateBeamTable(db);
 
@@ -532,17 +586,4 @@ TEST(StorageM1, EditLogCommitIdentityAndVersionStayStableAcrossUndoRedo)
     EXPECT_EQ(logState.undoItems.front().commitId, commitId);
     EXPECT_EQ(logState.undoItems.front().version, committedVersion);
     EXPECT_EQ(logState.undoItems.front().kind, sc::SCEditLogActionKind::Commit);
-}
-
-TEST(StorageM1, CreateBackupCopyIsNotSupportedOnMemoryDatabase)
-{
-    sc::SCDbPtr db;
-    EXPECT_EQ(sc::CreateInMemoryDatabase(db), sc::SC_OK);
-
-    sc::SCBackupOptions options;
-    sc::SCBackupResult result;
-
-    EXPECT_EQ(db->CreateBackupCopy(L"StableCoreStorage_M1_BackupCopy.sqlite",
-                                   options, &result),
-              sc::SC_E_NOTIMPL);
 }

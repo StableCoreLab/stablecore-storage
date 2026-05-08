@@ -71,12 +71,20 @@ namespace
         return path;
     }
 
+    sc::ErrorCode CreateFileDb(const wchar_t* fileName, sc::SCDbPtr& db)
+    {
+        const fs::path path = MakeTempDbPath(fileName);
+        return sc::CreateFileDatabase(path.c_str(), sc::SCOpenDatabaseOptions{},
+                                       db);
+    }
+
 }  // namespace
 
 TEST(StorageTableView, CombinesFactAndComputedColumns)
 {
     sc::SCDbPtr db;
-    ASSERT_EQ(sc::CreateInMemoryDatabase(db), sc::SC_OK);
+    ASSERT_EQ(CreateFileDb(L"StableCoreStorage_TableView_Combine.sqlite", db),
+              sc::SC_OK);
 
     sc::SCTablePtr floorTable = CreateFloorTable(db);
     sc::SCTablePtr beamTable = CreateBeamTable(db);
@@ -127,7 +135,8 @@ TEST(StorageTableView, CombinesFactAndComputedColumns)
 TEST(StorageTableView, AggregateColumnTracksRelatedRecords)
 {
     sc::SCDbPtr db;
-    ASSERT_EQ(sc::CreateInMemoryDatabase(db), sc::SC_OK);
+    ASSERT_EQ(CreateFileDb(L"StableCoreStorage_TableView_Aggregate.sqlite", db),
+              sc::SC_OK);
 
     sc::SCTablePtr floorTable = CreateFloorTable(db);
     sc::SCTablePtr beamTable = CreateBeamTable(db);
@@ -176,7 +185,8 @@ TEST(StorageTableView, AggregateColumnTracksRelatedRecords)
 TEST(StorageTableView, RejectsInvalidComputedColumnDefinitions)
 {
     sc::SCDbPtr db;
-    ASSERT_EQ(sc::CreateInMemoryDatabase(db), sc::SC_OK);
+    ASSERT_EQ(CreateFileDb(L"StableCoreStorage_TableView_Invalid.sqlite", db),
+              sc::SC_OK);
 
     sc::SCTablePtr floorTable = CreateFloorTable(db);
     sc::SCTablePtr beamTable = CreateBeamTable(db);
@@ -223,7 +233,8 @@ TEST(StorageTableView, RejectsInvalidComputedColumnDefinitions)
 TEST(StorageTableView, ComputedColumnTracksEditUndoRedo)
 {
     sc::SCDbPtr db;
-    ASSERT_EQ(sc::CreateInMemoryDatabase(db), sc::SC_OK);
+    ASSERT_EQ(CreateFileDb(L"StableCoreStorage_TableView_UndoRedo.sqlite", db),
+              sc::SC_OK);
 
     sc::SCTablePtr floorTable = CreateFloorTable(db);
     sc::SCTablePtr beamTable = CreateBeamTable(db);

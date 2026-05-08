@@ -11,7 +11,6 @@ include(${CMAKE_CURRENT_LIST_DIR}/cmake/SCUtf8.cmake)
 option(SCSTORAGE_BUILD_DB_EDITOR "Build the Qt database editor tool" OFF)
 
 set(SCSTORAGE_TARGET SCStorage)
-set(SCSTORAGE_MEMORY_EXAMPLE_TARGET SCStorageMemoryExample)
 set(SCSTORAGE_PRODUCT_EXAMPLE_TARGET SCStorageProductExample)
 set(SCSTORAGE_TESTS_TARGET SCStorageTests)
 set(SCSTORAGE_DB_EDITOR_TESTS_TARGET SCStorageDatabaseEditorTests)
@@ -91,17 +90,14 @@ set(SCSTORAGE_LIBRARY_SOURCES
     Src/Diagnostics/SCDiagnostics.cpp
     Src/Diagnostics/SCDebugPackage.cpp
     Src/Migration/SCMigration.cpp
-    Src/Memory/SCMemoryDatabase.cpp
     Src/Query/SCQueryBridge.cpp
     Src/Query/SCQueryExecutor.cpp
-    Src/Query/SCQueryMemoryExecutor.cpp
     Src/Query/SCQuerySqliteExecutor.cpp
     Src/Query/SCQueryPlanner.cpp
     Src/Sqlite/SCSqliteAdapter.cpp
 )
 
 set(SCSTORAGE_LIBRARY_PRIVATE_HEADERS
-    Src/Query/SCQueryMemoryExecutor.h
     Src/Query/SCQuerySqliteExecutor.h
 )
 
@@ -160,20 +156,6 @@ set_target_properties(${SCSTORAGE_TARGET} PROPERTIES
     WINDOWS_EXPORT_ALL_SYMBOLS ON
 )
 
-add_executable(${SCSTORAGE_MEMORY_EXAMPLE_TARGET}
-    Examples/MemoryExample.cpp
-)
-SCStorageConfigureOutputDirs(${SCSTORAGE_MEMORY_EXAMPLE_TARGET})
-if (MSVC)
-    target_compile_options(${SCSTORAGE_MEMORY_EXAMPLE_TARGET} PRIVATE /MP)
-endif()
-
-target_link_libraries(${SCSTORAGE_MEMORY_EXAMPLE_TARGET}
-    PRIVATE
-        ${SCSTORAGE_TARGET}
-)
-SCStorageSourceGroupTree("${CMAKE_CURRENT_SOURCE_DIR}" Examples/MemoryExample.cpp)
-
 add_executable(${SCSTORAGE_PRODUCT_EXAMPLE_TARGET}
     Examples/ProductIntegrationExample.cpp
 )
@@ -223,7 +205,6 @@ if (SCSTORAGE_BUILD_TESTS)
         Tests/M2SqliteTests.cpp
         Tests/M3Tests.cpp
         Tests/QueryPlannerBridgeTests.cpp
-        Tests/QueryMemoryExecutorTests.cpp
         Tests/QuerySqliteExecutorTests.cpp
         Tests/PerformanceSmokeTests.cpp
         Tests/TableViewTests.cpp
@@ -245,7 +226,6 @@ if (SCSTORAGE_BUILD_TESTS)
         Tests/M2SqliteTests.cpp
         Tests/M3Tests.cpp
         Tests/QueryPlannerBridgeTests.cpp
-        Tests/QueryMemoryExecutorTests.cpp
         Tests/QuerySqliteExecutorTests.cpp
         Tests/PerformanceSmokeTests.cpp
         Tests/TableViewTests.cpp
@@ -306,12 +286,11 @@ install(FILES ${SCSTORAGE_PUBLIC_HEADERS}
     DESTINATION ${SCSTORAGE_INSTALL_INCLUDE_DIR}
 )
 
-install(TARGETS ${SCSTORAGE_MEMORY_EXAMPLE_TARGET} ${SCSTORAGE_PRODUCT_EXAMPLE_TARGET}
+install(TARGETS ${SCSTORAGE_PRODUCT_EXAMPLE_TARGET}
     RUNTIME DESTINATION ${SCSTORAGE_INSTALL_BIN_DIR}
 )
 
 install(FILES
-    $<TARGET_PDB_FILE:${SCSTORAGE_MEMORY_EXAMPLE_TARGET}>
     $<TARGET_PDB_FILE:${SCSTORAGE_PRODUCT_EXAMPLE_TARGET}>
     CONFIGURATIONS Debug RelWithDebInfo Release
     DESTINATION ${SCSTORAGE_INSTALL_PDB_DIR}

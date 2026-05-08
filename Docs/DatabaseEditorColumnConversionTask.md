@@ -24,7 +24,6 @@
 
 - `Tools/DatabaseEditor`
 - `Include/ISCInterfaces.h`
-- `Src/Memory`
 - `Src/Sqlite`
 - `Tests`
 
@@ -64,7 +63,6 @@
 允许修改：
 
 - `Include/ISCInterfaces.h`
-- `Src/Memory/SCMemoryDatabase.cpp`
 - `Src/Sqlite/SCSqliteAdapter.cpp`
 - `Tools/DatabaseEditor/SCDatabaseSession.h/.cpp`
 - `Tools/DatabaseEditor/SCDatabaseEditorMainWindow.h/.cpp`

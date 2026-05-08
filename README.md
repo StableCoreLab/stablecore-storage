@@ -24,7 +24,7 @@
 - 统一的表视图（合并事实列与计算列）
 - 批量编辑/导入辅助工具
 - 迁移、启动恢复、索引物化与诊断辅助
-- 示例：`Examples/MemoryExample.cpp`、`Examples/ProductIntegrationExample.cpp`
+- 示例：`Examples/ProductIntegrationExample.cpp`
 - 测试：`Tests/` 下包含基础测试
 - 可选的 Qt 数据库编辑器：`Tools/DatabaseEditor`
 
@@ -36,7 +36,7 @@
 using namespace StableCore::Storage;
 
 DbPtr db;
-CreateInMemoryDatabase(db);
+CreateFileDatabase(L"example.sqlite", SCOpenDatabaseOptions{}, db);
 
 TablePtr beamTable;
 db->CreateTable(L"Beam", beamTable);

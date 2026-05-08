@@ -19,7 +19,6 @@ namespace StableCore::Storage
     {
         Unknown,
         SQLite,
-        Memory,
     };
 
     struct QueryExecutionOptions

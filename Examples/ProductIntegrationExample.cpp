@@ -1,12 +1,22 @@
+#include <filesystem>
 #include <iostream>
 #include <vector>
 
 #include "SCStorage.h"
 
 namespace sc = StableCore::Storage;
+namespace fs = std::filesystem;
 
 namespace
 {
+
+    fs::path MakeTempDbPath(const wchar_t* fileName)
+    {
+        fs::path path = fs::temp_directory_path() / fileName;
+        std::error_code ec;
+        fs::remove(path, ec);
+        return path;
+    }
 
     class QuantityObserver final : public sc::ISCDatabaseObserver
     {
@@ -23,8 +33,12 @@ namespace
 
 int main()
 {
+    const fs::path dbPath =
+        MakeTempDbPath(L"StableCoreStorage_ProductIntegrationExample.sqlite");
+
     sc::SCDbPtr db;
-    if (sc::Failed(sc::CreateInMemoryDatabase(db)))
+    if (sc::Failed(sc::CreateFileDatabase(dbPath.c_str(),
+                                          sc::SCOpenDatabaseOptions{}, db)))
     {
         return 1;
     }
@@ -147,7 +161,7 @@ int main()
     std::wcout << L"Computed beam volume = " << volumeValue << L"\n";
 
     sc::SCStorageHealthReport report;
-    sc::BuildStorageHealthReport(db.Get(), L"InMemory", &report);
+    sc::BuildStorageHealthReport(db.Get(), L"SQLite", &report);
     std::wcout << L"Health report diagnostics = " << report.diagnostics.size()
                << L"\n";
     return 0;

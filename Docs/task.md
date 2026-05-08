@@ -26,7 +26,6 @@
 
 涉及代码：
 - `Src/Batch/SCBatchOperations.cpp`
-- `Src/Memory/SCMemoryDatabase.cpp`
 - `Src/Sqlite/SCSqliteAdapter.cpp`
 
 验收标准：
@@ -46,7 +45,6 @@
 
 涉及代码：
 - `Src/Query/SCQueryPlanner.cpp`
-- `Src/Query/SCQueryMemoryExecutor.cpp`
 - `Src/Query/SCQuerySqliteExecutor.cpp`
 
 验收标准：
@@ -68,7 +66,6 @@
 
 涉及代码：
 - `Include/ISCQuery.h`
-- `Src/Memory/SCMemoryDatabase.cpp`
 - `Src/Sqlite/SCSqliteAdapter.cpp`
 
 验收标准：
@@ -174,13 +171,12 @@
 - `Tests/M2SqliteTests.cpp`
 - `Tests/M3Tests.cpp`
 - `Tests/ComputedTests.cpp`
-- `Tests/QueryMemoryExecutorTests.cpp`
 - `Tests/QuerySqliteExecutorTests.cpp`
 
 验收标准：
 - 至少覆盖以下场景：非法输入、删除后访问、重复删除、重复提交、回滚后再次写入、恢复失败、查询不支持、计算列非法定义、缓存失效。
 - 每个新修复点都至少有一个回归测试。
-- 关键测试必须分别覆盖 Memory 和 SQLite 两个后端。
+- 关键测试必须覆盖 SQLite 后端与文件数据库路径。
 
 ## T8. 完善数据库编辑器的错误反馈与计算列工作流
 
@@ -241,7 +237,6 @@
 涉及代码：
 - `Tests/PerformanceSmokeTests.cpp`
 - `Tests/M2SqliteTests.cpp`
-- `Tests/QueryMemoryExecutorTests.cpp`
 - `Tests/QuerySqliteExecutorTests.cpp`
 
 验收标准：
