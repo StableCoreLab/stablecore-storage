@@ -719,10 +719,7 @@ namespace StableCore::Storage::Editor
     bool SCDatabaseSession::CreateDatabase(const QString& filePath,
                                            QString* outError)
     {
-        db_.Reset();
-        currentTable_.Reset();
-        currentTableView_.Reset();
-        sessionComputedColumnsByTable_.clear();
+        CloseDatabase(nullptr);
 
         sc::SCOpenDatabaseOptions options;
         options.openMode = sc::SCDatabaseOpenMode::Normal;
@@ -749,6 +746,41 @@ namespace StableCore::Storage::Editor
                                          QString* outError)
     {
         return CreateDatabase(filePath, outError);
+    }
+
+    bool SCDatabaseSession::CloseDatabase(QString* outError)
+    {
+        if (!db_ && currentTable_.Get() == nullptr &&
+            currentTableView_.Get() == nullptr && databasePath_.isEmpty() &&
+            currentTableName_.isEmpty() && tableNames_.isEmpty() &&
+            sessionComputedColumnsByTable_.isEmpty() &&
+            !importSessionActive_)
+        {
+            if (outError != nullptr)
+            {
+                outError->clear();
+            }
+            return true;
+        }
+
+        if (importSessionActive_)
+        {
+            importSession_ = sc::SCImportStagingArea{};
+            importSessionActive_ = false;
+        }
+
+        db_.Reset();
+        currentTable_.Reset();
+        currentTableView_.Reset();
+        sessionComputedColumnsByTable_.clear();
+        tableNames_.clear();
+        databasePath_.clear();
+        currentTableName_.clear();
+        if (outError != nullptr)
+        {
+            outError->clear();
+        }
+        return true;
     }
 
     bool SCDatabaseSession::GetEditLogState(sc::SCEditLogState* outState,

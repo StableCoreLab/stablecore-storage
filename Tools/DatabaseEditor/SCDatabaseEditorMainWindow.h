@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QDockWidget>
+#include <QAction>
 #include <QLineEdit>
 #include <QLabel>
 #include <QMainWindow>
@@ -33,6 +34,7 @@ namespace StableCore::Storage::Editor
     private slots:
         void CreateDatabase();
         void OpenDatabase();
+        void CloseDatabase();
         void CreateBackupCopy();
         void CreateTable();
         void AddColumn();
@@ -102,6 +104,7 @@ namespace StableCore::Storage::Editor
         QWidget* tablePage_{nullptr};
         QLabel* tableTitleLabel_{nullptr};
         QToolBar* tableToolBar_{nullptr};
+        QAction* closeDatabaseAction_{nullptr};
         QTableView* dataTable_{nullptr};
         QLineEdit* filterEdit_{nullptr};
         QDockWidget* inspectorDock_{nullptr};

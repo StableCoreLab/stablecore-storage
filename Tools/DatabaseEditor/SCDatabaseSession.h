@@ -41,6 +41,7 @@ namespace StableCore::Storage::Editor
 
         bool CreateDatabase(const QString& filePath, QString* outError);
         bool OpenDatabase(const QString& filePath, QString* outError);
+        bool CloseDatabase(QString* outError);
         bool GetEditLogState(StableCore::Storage::SCEditLogState* outState,
                              QString* outError) const;
         bool GetEditingState(

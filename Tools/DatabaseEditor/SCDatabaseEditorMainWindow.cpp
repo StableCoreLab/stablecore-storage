@@ -831,7 +831,8 @@ namespace StableCore::Storage::Editor
 
         schemaTree_ = new QTreeWidget(inspectorTabs_);
         schemaTree_->setHeaderLabels(
-            {QStringLiteral("Name"), QStringLiteral("Type"),
+            {QStringLiteral("Field Name"), QStringLiteral("Display Name"),
+             QStringLiteral("Type"),
              QStringLiteral("Nullable"), QStringLiteral("Default"),
              QStringLiteral("Reference Table"), QStringLiteral("User Defined"),
              QStringLiteral("Computed")});
@@ -1003,6 +1004,9 @@ namespace StableCore::Storage::Editor
                            &SCDatabaseEditorMainWindow::OpenDatabase);
         toolbar->addAction(QStringLiteral("New DB"), this,
                            &SCDatabaseEditorMainWindow::CreateDatabase);
+        closeDatabaseAction_ = toolbar->addAction(
+            QStringLiteral("Close"), this,
+            &SCDatabaseEditorMainWindow::CloseDatabase);
         toolbar->addAction(QStringLiteral("Backup Copy"), this,
                            &SCDatabaseEditorMainWindow::CreateBackupCopy);
         toolbar->addAction(QStringLiteral("Refresh"), this,
@@ -1017,6 +1021,10 @@ namespace StableCore::Storage::Editor
                            &SCDatabaseEditorMainWindow::ShowHealthSummary);
         toolbar->addAction(QStringLiteral("Debug Package"), this,
                            &SCDatabaseEditorMainWindow::ExportDebugPackage);
+        if (closeDatabaseAction_ != nullptr)
+        {
+            closeDatabaseAction_->setEnabled(session_->IsOpen());
+        }
     }
 
     void SCDatabaseEditorMainWindow::CreateDatabase()
@@ -1051,6 +1059,41 @@ namespace StableCore::Storage::Editor
         {
             ShowError(QStringLiteral("Open Database Failed"), error);
         }
+    }
+
+    void SCDatabaseEditorMainWindow::CloseDatabase()
+    {
+        if (!session_->IsOpen())
+        {
+            SetStatusMessage(QStringLiteral("No database is open."));
+            return;
+        }
+
+        const QMessageBox::StandardButton answer = QMessageBox::question(
+            this, QStringLiteral("Close Database"),
+            QStringLiteral("Close the current database?"));
+        if (answer != QMessageBox::Yes)
+        {
+            return;
+        }
+
+        QString error;
+        if (!session_->CloseDatabase(&error))
+        {
+            ShowError(QStringLiteral("Close Database Failed"), error);
+            return;
+        }
+
+        recordModel_->Refresh();
+        RefreshObjectExplorer();
+        UpdateSchemaInspector();
+        UpdateRecordInspector();
+        UpdateComputedColumnsPanel();
+        UpdateRelationInspector();
+        UpdateDatabaseStatusBar();
+        RefreshOverviewPanels();
+        UpdateGridSummary();
+        SetStatusMessage(QStringLiteral("Database closed."));
     }
 
     void SCDatabaseEditorMainWindow::CreateBackupCopy()
@@ -2476,16 +2519,18 @@ namespace StableCore::Storage::Editor
 
         for (const sc::SCColumnDef& column : columns)
         {
+            const QString fieldName = ToQString(column.name);
+            const QString displayName = ToQString(
+                column.displayName.empty() ? column.name : column.displayName);
             auto* row = new QTreeWidgetItem(schemaTree_);
-            row->setText(0, ToQString(column.displayName.empty()
-                                          ? column.name
-                                          : column.displayName));
-            row->setText(1, ValueKindToText(column.valueKind));
-            row->setText(2, BoolToText(column.nullable));
-            row->setText(3, SCValueToText(column.defaultValue));
-            row->setText(4, ToQString(column.referenceTable));
-            row->setText(5, BoolToText(column.userDefined));
-            row->setText(6, BoolToText(column.participatesInCalc));
+            row->setText(0, fieldName);
+            row->setText(1, displayName);
+            row->setText(2, ValueKindToText(column.valueKind));
+            row->setText(3, BoolToText(column.nullable));
+            row->setText(4, SCValueToText(column.defaultValue));
+            row->setText(5, ToQString(column.referenceTable));
+            row->setText(6, BoolToText(column.userDefined));
+            row->setText(7, BoolToText(column.participatesInCalc));
             row->setData(0, Qt::UserRole, ToQString(column.name));
         }
         schemaTree_->resizeColumnToContents(0);
@@ -2495,6 +2540,7 @@ namespace StableCore::Storage::Editor
         schemaTree_->resizeColumnToContents(4);
         schemaTree_->resizeColumnToContents(5);
         schemaTree_->resizeColumnToContents(6);
+        schemaTree_->resizeColumnToContents(7);
         SelectSchemaColumnByName(selectedName);
     }
 
@@ -2827,6 +2873,11 @@ namespace StableCore::Storage::Editor
                 QStringLiteral("Mode: %1")
                     .arg(stateLoaded ? OpenModeToText(editingState.openMode)
                                      : QStringLiteral("Closed")));
+        }
+
+        if (closeDatabaseAction_ != nullptr)
+        {
+            closeDatabaseAction_->setEnabled(stateLoaded);
         }
 
         if (currentTableLabel_ != nullptr)

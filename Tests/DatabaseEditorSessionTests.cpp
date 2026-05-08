@@ -304,6 +304,60 @@ TEST(DatabaseEditorSession, EditColumnUpdatesSchemaSnapshotInPlace)
     EXPECT_EQ(columnCount, 1);
 }
 
+TEST(DatabaseEditorSession, SchemaSnapshotKeepsFieldNameAndDisplayNameDistinct)
+{
+    const fs::path dbPath =
+        MakeTempDbPath(L"StableCoreStorage_DbEditor_SchemaDisplayName.sqlite");
+
+    editor::SCDatabaseSession session;
+    QString error;
+
+    ASSERT_TRUE(session.CreateDatabase(
+        QString::fromStdWString(dbPath.wstring()), &error))
+        << error.toStdString();
+    ASSERT_TRUE(session.CreateTable(QStringLiteral("Beam"), &error))
+        << error.toStdString();
+
+    sc::SCColumnDef column = MakeIntColumn(L"Width");
+    column.displayName = L"Beam Width";
+    ASSERT_TRUE(session.AddColumn(column, &error)) << error.toStdString();
+
+    QVector<sc::SCColumnDef> columns;
+    ASSERT_TRUE(session.BuildSchemaSnapshot(&columns, &error))
+        << error.toStdString();
+    ASSERT_EQ(columns.size(), 1);
+    EXPECT_EQ(columns[0].name, L"Width");
+    EXPECT_EQ(columns[0].displayName, L"Beam Width");
+}
+
+TEST(DatabaseEditorSession, CloseDatabaseClearsOpenState)
+{
+    const fs::path dbPath =
+        MakeTempDbPath(L"StableCoreStorage_DbEditor_CloseDatabase.sqlite");
+
+    editor::SCDatabaseSession session;
+    QString error;
+
+    ASSERT_TRUE(session.CreateDatabase(
+        QString::fromStdWString(dbPath.wstring()), &error))
+        << error.toStdString();
+    ASSERT_TRUE(session.CreateTable(QStringLiteral("Beam"), &error))
+        << error.toStdString();
+    ASSERT_TRUE(session.AddColumn(MakeIntColumn(L"Width"), &error))
+        << error.toStdString();
+    ASSERT_TRUE(session.CurrentTableView() != nullptr);
+
+    ASSERT_TRUE(session.CloseDatabase(&error)) << error.toStdString();
+    EXPECT_TRUE(session.DatabasePath().isEmpty());
+    EXPECT_TRUE(session.CurrentTableName().isEmpty());
+    EXPECT_FALSE(session.IsOpen());
+    EXPECT_EQ(session.CurrentTable(), nullptr);
+    EXPECT_EQ(session.CurrentTableView(), nullptr);
+
+    QVector<sc::SCColumnDef> columns;
+    EXPECT_FALSE(session.BuildSchemaSnapshot(&columns, &error));
+}
+
 TEST(DatabaseEditorSession, AddColumnParticipatesInUndoRedo)
 {
     const fs::path dbPath =
