@@ -1,412 +1,393 @@
-## 1. Project Overview
+# AGENTS.md
 
-**Repository:** `stablecore-storage`
-**Role:** 算量产品的存储平台核心库
+# 1. Repository Identity
 
-核心目标：
+Repository: `stablecore-storage`
 
-* 提供**数据层 Undo / Redo 能力**
-* 支撑 **Project / ChangeSet / Journal / Snapshot / Replay**
-* 建立**可恢复、可升级、可回放**的数据基础设施
+Role:
 
----
+> Core storage infrastructure for the quantity/takeoff system.
 
-## 2. Tech Stack
+Primary responsibilities:
 
-* Language: **C++20**
-* Build: **CMake**
-* Database: **SQLite**
-* Test: **GoogleTest**
-* Compiler: **MSVC (VS2022)**（未来需支持跨平台）
+- Undo / Redo
+- Transaction semantics
+- Journal / Snapshot / Replay
+- Persistent storage
+- Recoverable editing
+- Upgrade / migration infrastructure
 
 ---
 
-## 3. Directory Structure
+# 2. Tech Stack
 
-```
-├─cmake
-├─Docs
-├─Examples
-├─Include                # 公共接口层
-├─Src
-│  ├─Batch               # 批处理 / 导入
-│  ├─Computed            # 计算列
-│  ├─Diagnostics         # 诊断 / Debug Package
-│  ├─Memory              # 内存后端（核心语义）
-│  ├─Migration           # 升级 / 版本图
-│  ├─Query               # 查询执行
-│  └─Sqlite              # 持久化后端
-├─Tests
-└─Tools
-```
+- Language: C++20
+- Build: CMake
+- Database: SQLite
+- Test: GoogleTest
+- Compiler: MSVC VS2022
+
+Cross-platform compatibility is a long-term requirement.
 
 ---
 
-## 4. Core Architecture
+# 3. Core Architecture (P0)
 
-### 4.1 分层模型（必须遵守）
+The repository follows a strict layered architecture:
 
-```
-Core（语义/规则）
-   ↓
-Adapter（接口桥接）
-   ↓
-Backend（Memory / SQLite）
-```
+```text
+Core (semantic rules)
+    ↓
+Adapter (abstraction bridge)
+    ↓
+Backend (Memory / SQLite)
+````
 
-❗ **禁止行为：**
+Mandatory constraints:
 
-* 上层直接访问 SQLite 实现细节
-* Query / Computed 绕过接口访问底层
-* Memory 与 SQLite 行为不一致
-
----
-
-### 4.2 核心模块职责
-
-| 模块          | 职责                   |
-| ----------- | -------------------- |
-| Include     | 公共接口定义（唯一对外语义入口）     |
-| Memory      | 真正的语义执行、Undo/Redo、事务 |
-| Sqlite      | 持久化、恢复、日志            |
-| Query       | 查询计划与执行              |
-| Computed    | 表达式、计算列              |
-| Batch       | 批量编辑、导入              |
-| Migration   | 升级、兼容                |
-| Diagnostics | 诊断、调试、导出             |
+* Upper layers must NOT access SQLite directly
+* Query / Computed modules must NOT bypass interfaces
+* Backend modules must NOT contain business semantics
+* Memory and SQLite behavior must remain semantically identical
 
 ---
 
-## 5. Mandatory Design Principles（强制执行）
+# 4. Storage Semantic Invariants (P0)
 
-以下不是“建议”，是**必须遵守的约束**：
+The following semantics are invariant and must NEVER be violated:
 
----
+* `open()` must not mutate data
+* read operations must not write
+* upgrades must be explicit
+* rollback must fully restore state
+* deleted records must never revive
+* Undo / Redo must preserve identity consistency
+* transactions must not leave partial success states
+* Memory and SQLite backends must behave identically
 
-### 5.1 单一真值源（P0）
-
-* 正式数据只来自：
-
-  * Project
-  * ChangeSet
-  * Journal
-* UI / Cache / Session **不得作为真值**
-
-❗ 禁止：
-
-* 从缓存反推数据
-* UI 状态写回数据层
+Correctness is always higher priority than performance.
 
 ---
 
-### 5.2 显式边界（P0）
+# 5. AI Execution Boundary (P0)
 
-所有状态变更必须通过显式 API：
+AI operates in:
 
-* `BeginEdit`
-* `Commit`
-* `Rollback`
-* `Open`
-* `Upgrade`
-* `Finalize`
-* `Abort`
+> Offline Code Generation Mode
 
-❗ 禁止：
+AI may:
 
-* 在 `open()` 中写数据
-* 隐式触发升级
-* 读操作触发写入
+* modify source code
+* modify tests
+* modify CMake
+* update documentation
+* perform static reasoning and analysis
 
----
+AI must NOT:
 
-### 5.3 失败可恢复（P0）
+* compile
+* run executables
+* run tests
+* execute scripts
+* invoke build systems
+* modify generated build artifacts
+* validate behavior through execution
 
-所有写路径必须保证：
+Code correctness must be determined through:
 
-* 不产生半成功状态
-* 可回滚或可恢复
-
-必须覆盖：
-
-* 导入中断
-* 升级失败
-* 回滚失败
-* 删除后访问
+* static reasoning
+* semantic consistency
+* architecture constraints
+* existing code patterns
 
 ---
 
-### 5.4 接口一致性
+# 6. Modification Scope Rules (P0)
 
-* Memory / SQLite **语义必须一致**
-* 不允许某后端“多行为”
+Changes must remain strictly localized to the requested scope.
 
----
+AI must NOT:
 
-### 5.5 分层隔离
+* refactor unrelated modules
+* rename symbols without necessity
+* rewrite stable implementations
+* move files across modules
+* perform repository-wide formatting
+* modify unrelated behavior
+* introduce speculative abstractions
 
-* Query / Computed 不得访问 Backend 实现
-* Backend 不包含业务语义
+Prefer:
 
----
+* extension over rewrite
+* local fixes over global refactors
+* adapters over duplication
+* incremental evolution over redesign
 
-### 5.6 语义优先
-
-* 正确性 > 性能
-* 优化不得改变行为
-
----
-
-### 5.7 最小惊讶原则
-
-* 读不写
-* 删除不复活
-* 只读模式不修改数据
+Large-scale redesign is forbidden unless explicitly requested.
 
 ---
 
-### 5.8 组合优于分叉
+# 7. Core Design Principles
 
-* 不复制逻辑
-* Memory / SQLite 差异收敛到 Adapter
+## 7.1 Explicit State Transitions
 
----
+All state mutations must happen through explicit APIs:
 
-### 5.9 可测试
+* BeginEdit
+* Commit
+* Rollback
+* Open
+* Upgrade
+* Finalize
+* Abort
 
-必须覆盖：
-
-* 回滚后再写
-* 删除后访问
-* 导入中断
-* 恢复失败
-
----
-
-### 5.10 可诊断
-
-错误必须包含：
-
-* 原因
-* 上下文
-* 阶段
+Implicit state mutation is forbidden.
 
 ---
 
-## 6. Coding Rules
+## 7.2 Single Source of Truth
 
-### 6.1 命名规范
+Persistent truth sources are limited to:
 
-* 接口：`ISC*`
-* 实现：`SC*`
-* 成员变量：`m_`
-* 常量：`k*`
+* Project
+* ChangeSet
+* Journal
 
-示例：
+UI state, cache, and session objects are NOT truth sources.
+
+---
+
+## 7.3 Recoverability First
+
+All write paths must support:
+
+* rollback
+* recovery
+* interruption safety
+
+Must handle:
+
+* interrupted import
+* failed migration
+* rollback failure
+* deleted-record access
+
+---
+
+## 7.4 Backend Consistency
+
+Memory and SQLite implementations must expose identical semantics.
+
+Backend-specific semantic branches are forbidden.
+
+---
+
+## 7.5 Minimal Surprise Principle
+
+The system must preserve intuitive semantics:
+
+* reads do not write
+* deleted data does not revive
+* readonly mode does not mutate data
+* failed operations do not partially commit
+
+---
+
+# 8. Common Failure Patterns
+
+Avoid the following common architectural violations:
+
+* accessing SQLite directly from upper layers
+* embedding business rules inside backend code
+* bypassing transaction boundaries
+* backend-specific behavior divergence
+* implicit writes during reads
+* hidden upgrade paths
+* using cache state as persistence truth
+
+---
+
+# 9. Directory Overview
+
+Key modules:
+
+| Module      | Responsibility                 |
+| ----------- | ------------------------------ |
+| Include     | Public interfaces              |
+| Memory      | Semantic execution / UndoRedo  |
+| Sqlite      | Persistent backend             |
+| Query       | Query planning and execution   |
+| Computed    | Computed columns / expressions |
+| Batch       | Batch editing / import         |
+| Migration   | Upgrade and compatibility      |
+| Diagnostics | Debugging / diagnostics        |
+
+---
+
+# 10. Coding Rules
+
+## Naming
+
+| Type            | Rule   |
+| --------------- | ------ |
+| Interface       | `ISC*` |
+| Implementation  | `SC*`  |
+| Member variable | `m_`   |
+| Constant        | `k*`   |
+
+Examples:
 
 * `ISCStorageService`
 * `SCProjectContext`
 
 ---
 
-### 6.2 强制规则
+## General Rules
 
-❗ 禁止：
+Avoid:
 
-* 无关重命名
-* 大规模格式化
-* 风格性修改
-* 修改不相关模块
+* unnecessary renaming
+* style-only modifications
+* unrelated formatting
+* speculative cleanup
+* cosmetic refactors
 
----
-
-## 7. Testing Rules
-
-* 必须使用 **GoogleTest**
-* 新增行为必须补测试
-* 修 bug 必须补回归测试
-
-允许：
-
-* 运行测试
+Consistency with surrounding code is preferred over style purity.
 
 ---
 
-## 8. Documentation Rules（强制同步）
+# 11. Testing Rules
 
-### 8.1 全局文档（必须同步）
+* GoogleTest is mandatory
+* New behavior requires tests
+* Bug fixes require regression tests
+
+Priority test areas:
+
+* rollback recovery
+* deleted-record access
+* interrupted import
+* migration failure
+* undo/redo consistency
+* transaction recovery
+
+AI may modify tests but must not execute them.
+
+---
+
+# 12. Documentation Rules
+
+Documentation updates are required only when:
+
+* architecture changes
+* public APIs change
+* semantics change
+* workflow behavior changes
+
+Avoid unrelated documentation rewrites.
+
+---
+
+## Important Documents
+
+Important references include:
 
 * Docs/文档索引.md
 * Docs/当前实现状态.md
-* Docs/NeedUpdateDocs.md
 * Docs/CapabilityGapAssessment.md
 * Docs/Roadmap.md
 * Docs/V1BaselineDecisions.md
-* Docs/TaskBreakdown.md
-* Docs/task.md
-* Docs/NeedUpdateDocs.md
 
 ---
 
-### 8.2 按模块同步
+# 13. Task Workflow
 
-| 修改内容           | 必须同步                          |
-| -------------- | ----------------------------- |
-| Query / 引用索引   | Query执行架构设计稿.md               |
-| Computed       | ComputedTableView / Lifecycle |
-| Migration / 导入 | CapabilityGap / Performance   |
-| Editor         | GUI Design / Scope            |
+Every task should follow this order:
 
----
-
-## 9. Codex Execution Rules（关键）
-
-### 9.1 允许
-
-* 修改代码
-* 修改 CMake
+1. Analyze scope and boundaries
+2. Understand semantic constraints
+3. Implement minimal localized changes
+4. Add or update tests
+5. Perform static self-review
+6. Summarize risks and remaining gaps
 
 ---
 
-### 9.2 禁止
+# 14. Required Output
 
-* ❌ 编译
-* ❌ 提交 Git
-* ❌ 引入第三方库
-* ❌ 擅自扩大修改范围
+Task summaries should include:
 
----
+## 14.1 Change Summary
 
-### 9.3 工作方式（强制）
+* modified modules
+* implemented behavior
+* semantic impact
 
-每次任务必须按以下顺序：
+## 14.2 Test Coverage
 
-1. **先分析边界**
-2. **再实施代码**
-3. **再补测试**
-4. **最后自检**
+* affected scenarios
+* boundary conditions covered
+* regression coverage
 
----
-## 10.1 构建与执行限制（P0 强约束）
+## 14.3 Risk Assessment
 
-本仓库采用 **AI 离线生成模式（Offline Code Generation Mode）**：
+* semantic risks
+* migration risks
+* rollback risks
+* uncovered paths
 
-> AI 只负责代码与文档产出，不参与任何构建、运行或执行。
+## 14.4 Suggested Next Steps
 
-本规则适用于所有 AI 行为，包括但不限于：
-
-- 代码修改
-- 文档生成
-- 工具调用
-- 推理过程中的任何执行尝试
+* most reasonable follow-up tasks
 
 ---
 
-### ✅ AI 允许的行为
+# 15. Engineering Philosophy
 
-- 修改或新增代码
-- 修改或新增 CMake
-- 编写或更新文档
-- 基于代码与文档进行静态分析
+This repository prioritizes:
 
----
+1. Semantic correctness
+2. Recoverability
+3. Backend consistency
+4. Explicit state transitions
+5. Incremental evolution
+6. Long-term maintainability
 
-### ❌ 严格禁止的行为
+AI is expected to behave as:
 
-AI 不得执行或尝试执行以下任何操作：
-
-- 编译（cmake / ninja / msbuild / make 等）
-- 运行程序（exe / 测试 / 工具）
-- 执行脚本（bat / sh / python / powershell）
-- 调用系统命令验证构建或运行结果
-- 修改 `build/` 目录下任何生成文件
-- 通过“尝试运行”来验证代码正确性
+> A constrained engineering executor,
+> not an autonomous redesign agent.
 
 ---
 
-### ⚠️ 验证方式约束
+# 16. Quick Reference
 
-代码正确性必须通过：
+## Truth Sources
 
-- 静态逻辑推断
-- 与现有代码一致性
-- 对照设计文档（Docs）
-
-不得通过运行验证。
+* Project
+* ChangeSet
+* Journal
 
 ---
 
-### ⚠️ 设计约束补充
+## Never Allowed
 
-- AI 不应以“是否可编译”为目标驱动设计
-- 若存在潜在编译问题，应指出，而不是盲目修改
-
----
-
-### 🚫 违规处理
-
-如果任务需要构建、运行或验证：
-
-- AI 必须停止执行
-- 明确说明需要开发者本地完成
-- 不得尝试替代执行
-
-不得以任何形式绕过本规则。
----
-
-## 10. Output Requirements（必须输出）
-
-每次任务结束必须提供：
-
-### 10.1 改动摘要
-
-* 做了什么
-* 修改了哪些模块
-
-### 10.2 测试结果
-
-* 覆盖范围
-* 是否包含边界场景
-
-### 10.3 风险点
-
-* 语义风险
-* 回归风险
-* 未覆盖路径
-
-### 10.4 下一步建议
-
-* 最合理的后续任务
+* implicit writes
+* implicit upgrades
+* backend semantic divergence
+* partial commit states
+* SQLite access from upper layers
 
 ---
 
-## 11. Strict Prohibitions（重点）
+## Priority Order
 
-❗ 绝对禁止：
+```text
+Correctness
+    > Recoverability
+        > Consistency
+            > Maintainability
+                > Performance
+```
 
-* 在 open 中写入数据
-* 绕过接口直接访问 SQLite
-* Memory / SQLite 行为不一致
-* 引入隐式状态变更
-* 用文档替代实现
-* 改动未声明的模块
 
----
-
-## 12. Working Philosophy
-
-Codex 在本仓库中的角色是：
-
-> **“受约束的工程执行者”，而不是“自由发挥的重构者”**
-
-必须：
-
-* 遵守边界
-* 保持语义一致
-* 优先正确性
-* 小步演进
-
-## Task Input Requirement
-
-所有编码任务必须遵循 TASK_TEMPLATE.md 结构。
-
-如果输入不完整，必须先要求补充，而不是直接实现。
