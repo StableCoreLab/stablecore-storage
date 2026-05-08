@@ -1,325 +1,66 @@
 # AGENTS.md
 
-# 1. Repository Identity
+## Fast Path
 
-Repository: `stablecore-storage`
+### Repository
 
-Role:
+- Repository: `stablecore-storage`
+- Role: quantity/takeoff system 的核心 SQLite 存储基础设施
+- Focus: persistence, undo/redo, transaction semantics, changeset/journal/snapshot/replay, recoverable editing, upgrade/migration
 
-> Core SQLite-based storage infrastructure for the quantity/takeoff system.
+### Hard Constraints
 
-Primary responsibilities:
+- `open()` must not mutate data
+- reads must not write
+- upgrades must be explicit
+- rollback must fully restore state
+- deleted records must never revive
+- undo / redo must preserve identity consistency
+- transactions must not leave partial success states
+- SQLite implementation details must not leak into public APIs
 
-- SQLite project persistence
-- Undo / Redo
-- Transaction semantics
-- ChangeSet / Journal / Snapshot / Replay
-- Recoverable editing
-- Upgrade / migration infrastructure
-
----
-
-# 2. Tech Stack
-
-- Language: C++20
-- Build: CMake
-- Database: SQLite
-- Test: GoogleTest
-- Compiler: MSVC VS2022
-
-Cross-platform compatibility is a long-term requirement.
-
----
-
-# 3. Core Architecture (P0)
-
-The repository follows a strict layered architecture:
+### Architecture
 
 ```text
 Core (semantic rules)
-    ↓
-Adapter (public interface bridge)
-    ↓
-Backend (SQLite)
-````
-
-Mandatory constraints:
-
-* Upper layers must NOT access SQLite directly
-* Query / Computed modules must NOT bypass public interfaces
-* Backend modules must NOT contain business semantics
-* Public storage semantics must remain independent from SQLite implementation details
-
----
-
-# 4. Storage Semantic Invariants (P0)
-
-The following semantics are invariant and must NEVER be violated:
-
-* `open()` must not mutate data
-* read operations must not write
-* upgrades must be explicit
-* rollback must fully restore state
-* deleted records must never revive
-* Undo / Redo must preserve identity consistency
-* transactions must not leave partial success states
-* SQLite implementation details must not leak into public APIs
-
-Correctness is always higher priority than performance.
-
----
-
-# 5. AI Execution Boundary (P0)
-
-AI operates in:
-
-> Offline Code Generation Mode
-
-AI may:
-
-* modify source code
-* modify tests
-* modify CMake
-* update documentation
-* perform static reasoning and analysis
-
-AI must NOT:
-
-* compile
-* run executables
-* run tests
-* execute scripts
-* invoke build systems
-* modify generated build artifacts
-* validate behavior through execution
-
-Code correctness must be determined through:
-
-* static reasoning
-* semantic consistency
-* architecture constraints
-* existing code patterns
-
----
-
-# 6. Modification Scope Rules (P0)
-
-Changes must remain strictly localized to the requested scope.
-
-AI must NOT:
-
-* refactor unrelated modules
-* rename symbols without necessity
-* rewrite stable implementations
-* move files across modules
-* perform repository-wide formatting
-* modify unrelated behavior
-* introduce speculative abstractions
-
-Prefer:
-
-* extension over rewrite
-* local fixes over global refactors
-* adapters over duplication
-* incremental evolution over redesign
-
-Large-scale redesign is forbidden unless explicitly requested.
-
----
-
-# 7. Core Design Principles
-
-## 7.1 Explicit State Transitions
-
-All state mutations must happen through explicit APIs:
-
-* BeginEdit
-* Commit
-* Rollback
-* Open
-* Upgrade
-* Finalize
-* Abort
-
-Implicit state mutation is forbidden.
-
----
-
-## 7.2 Single Source of Truth
-
-Persistent truth sources are limited to:
-
-* Project
-* ChangeSet
-* Journal
-* Snapshot
-
-UI state, cache, and session objects are NOT truth sources.
-
----
-
-## 7.3 Recoverability First
-
-All write paths must support:
-
-* rollback
-* recovery
-* interruption safety
-
-Must handle:
-
-* interrupted import
-* failed migration
-* rollback failure
-* deleted-record access
-* interrupted SQLite transaction
-* corrupted or incomplete journal
-
----
-
-## 7.4 Backend Isolation
-
-SQLite is an implementation detail.
-
-Rules:
-
-* public APIs must remain storage-semantic
-* SQL details must not leak into upper layers
-* schema changes must go through explicit migration logic
-* storage behavior must not depend on UI state
-* SQLite schema must not become a public contract
-
----
-
-## 7.5 Minimal Surprise Principle
-
-The system must preserve intuitive semantics:
-
-* reads do not write
-* deleted data does not revive
-* readonly mode does not mutate data
-* failed operations do not partially commit
-* opening a project does not upgrade it implicitly
-* closing a project does not silently commit unfinished edits
-
----
-
-# 8. Common Failure Patterns
-
-Avoid the following common architectural violations:
-
-* accessing SQLite directly from upper layers
-* embedding business rules inside backend code
-* bypassing transaction boundaries
-* implicit writes during reads
-* hidden upgrade paths
-* using cache state as persistence truth
-* leaking SQLite concepts into public interfaces
-* mixing project lifecycle with UI workflow
-
----
-
-# 9. Directory Overview
-
-Key modules:
-
-| Module      | Responsibility                 |
-| ----------- | ------------------------------ |
-| Include     | Public interfaces              |
-| Sqlite      | SQLite storage backend         |
-| Query       | Query planning and execution   |
-| Computed    | Computed columns / expressions |
-| Batch       | Batch editing / import         |
-| Migration   | Upgrade and compatibility      |
-| Diagnostics | Debugging / diagnostics        |
-| Tools       | Auxiliary developer tools      |
-
----
-
-# 10. Coding Rules
-
-## Naming
-
-| Type            | Rule   |
-| --------------- | ------ |
-| Interface       | `ISC*` |
-| Implementation  | `SC*`  |
-| Member variable | `m_`   |
-| Constant        | `k*`   |
-
-Examples:
-
-* `ISCStorageService`
-* `SCProjectContext`
-* `SCSqliteDatabase`
-
----
-
-## General Rules
-
-Avoid:
-
-* unnecessary renaming
-* style-only modifications
-* unrelated formatting
-* speculative cleanup
-* cosmetic refactors
-
-Consistency with surrounding code is preferred over style purity.
-
----
-
-# 11. Testing Rules
-
-* GoogleTest is mandatory
-* New behavior requires tests
-* Bug fixes require regression tests
-
-Priority test areas:
-
-* rollback recovery
-* deleted-record access
-* interrupted import
-* migration failure
-* undo/redo consistency
-* transaction recovery
-* readonly open
-* failed upgrade recovery
-* journal recovery
-
-AI may modify tests but must not execute them.
-
----
-
-# 12. Documentation Rules
-
-Documentation updates are required only when:
-
-* architecture changes
-* public APIs change
-* storage semantics change
-* migration workflow changes
-* replay / journal behavior changes
-
-Avoid unrelated documentation rewrites.
-
----
-
-## Important Documents
-
-Important references include:
-
-* Docs/文档索引.md
-* Docs/当前实现状态.md
-* Docs/CapabilityGapAssessment.md
-* Docs/Roadmap.md
-* Docs/V1BaselineDecisions.md
-
----
-
-# 13. Task Workflow
-
-Every task should follow this order:
+    -> Adapter (public interface bridge)
+    -> Backend (SQLite)
+```
+
+- Upper layers must NOT access SQLite directly
+- Query / Computed modules must NOT bypass public interfaces
+- Backend modules must NOT contain business semantics
+
+### Execution Boundary
+
+Allowed:
+
+- modify source code
+- modify tests
+- modify CMake
+- update documentation
+- static reasoning / analysis
+
+Forbidden:
+
+- compile
+- run executables
+- run tests
+- execute scripts
+- invoke build systems
+- modify generated build artifacts
+
+### Change Strategy
+
+- Keep changes strictly localized
+- Prefer extension over rewrite
+- Prefer local fixes over global refactors
+- Do not refactor unrelated modules
+- Do not rename symbols without necessity
+- Do not perform repository-wide formatting
+- Do not introduce speculative abstractions
+
+### Required Workflow
 
 1. Analyze scope and boundaries
 2. Understand storage semantic constraints
@@ -328,79 +69,14 @@ Every task should follow this order:
 5. Perform static self-review
 6. Summarize risks and remaining gaps
 
----
+### Required Output
 
-# 14. Required Output
+- Change Summary
+- Test Coverage
+- Risk Assessment
+- Suggested Next Steps
 
-Task summaries should include:
-
-## 14.1 Change Summary
-
-* modified modules
-* implemented behavior
-* semantic impact
-
-## 14.2 Test Coverage
-
-* affected scenarios
-* boundary conditions covered
-* regression coverage
-
-## 14.3 Risk Assessment
-
-* storage semantic risks
-* migration risks
-* rollback risks
-* SQLite persistence risks
-* uncovered paths
-
-## 14.4 Suggested Next Steps
-
-* most reasonable follow-up tasks
-
----
-
-# 15. Engineering Philosophy
-
-This repository prioritizes:
-
-1. Semantic correctness
-2. Recoverability
-3. Storage semantic stability
-4. Explicit state transitions
-5. Incremental evolution
-6. Long-term maintainability
-
-AI is expected to behave as:
-
-> A constrained engineering executor,
-> not an autonomous redesign agent.
-
----
-
-# 16. Quick Reference
-
-## Truth Sources
-
-* Project
-* ChangeSet
-* Journal
-* Snapshot
-
----
-
-## Never Allowed
-
-* implicit writes
-* implicit upgrades
-* partial commit states
-* SQLite access from upper layers
-* leaking SQLite internals into public APIs
-* hidden migration behavior
-
----
-
-## Priority Order
+### Priority Order
 
 ```text
 Correctness
@@ -409,3 +85,21 @@ Correctness
             > Maintainability
                 > Performance
 ```
+
+## Read By Task Type
+
+只按当前任务读取需要的文档，不要默认全部展开。
+
+| Task Type | Read |
+| --- | --- |
+| 架构调整、分层边界、接口归属、语义约束判断 | `Docs/AI/ArchitectureAndSemantics.md` |
+| 能否执行某类操作、修改范围边界、AI 工作方式 | `Docs/AI/ExecutionBoundaryAndScope.md` |
+| 测试补充、回归覆盖、任务收尾输出格式 | `Docs/AI/TestingWorkflowAndOutput.md` |
+| 目录职责、命名规则、常见违规模式、参考文档入口 | `Docs/AI/ModuleMapAndReference.md` |
+
+## Loading Rule
+
+- 先读本文件
+- 只在任务需要时再读对应 `Docs/AI/*.md`
+- 若任务跨多个维度，按最少必要原则补充读取
+- 若与仓库现状冲突，以“语义正确性、可恢复性、显式状态转换”优先
