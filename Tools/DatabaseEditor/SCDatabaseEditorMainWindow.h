@@ -37,6 +37,7 @@ namespace StableCore::Storage::Editor
         void CloseDatabase();
         void CreateBackupCopy();
         void CreateTable();
+        void OpenSchemaTableConverter();
         void AddColumn();
         void EditSelectedColumn();
         void DeleteSelectedColumn();

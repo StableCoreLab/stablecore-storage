@@ -117,6 +117,9 @@ namespace StableCore::Storage::Editor
         bool BuildSchemaSnapshot(
             QVector<StableCore::Storage::SCColumnDef>* outColumns,
             QString* outError) const;
+        bool BuildSchemaSnapshot(
+            StableCore::Storage::SCSchemaSnapshot* outSnapshot,
+            QString* outError) const;
         bool BuildRecordSnapshot(StableCore::Storage::RecordId recordId,
                                  QVector<QPair<QString, QString>>* outFields,
                                  QString* outError) const;

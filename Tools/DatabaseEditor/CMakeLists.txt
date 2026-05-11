@@ -7,6 +7,10 @@ add_executable(SCStorageDatabaseEditor
     SCDatabaseEditorMainWindow.h
     SCDatabaseSession.cpp
     SCDatabaseSession.h
+    SCSchemaTableDialog.cpp
+    SCSchemaTableDialog.h
+    SCSchemaTableGenerator.cpp
+    SCSchemaTableGenerator.h
     SCRecordFilterProxyModel.cpp
     SCRecordFilterProxyModel.h
     SCRecordTableModel.cpp
@@ -25,6 +29,10 @@ SCStorageSourceGroupTree("${CMAKE_CURRENT_SOURCE_DIR}"
     SCDatabaseEditorMainWindow.h
     SCDatabaseSession.cpp
     SCDatabaseSession.h
+    SCSchemaTableDialog.cpp
+    SCSchemaTableDialog.h
+    SCSchemaTableGenerator.cpp
+    SCSchemaTableGenerator.h
     SCRecordFilterProxyModel.cpp
     SCRecordFilterProxyModel.h
     SCRecordTableModel.cpp

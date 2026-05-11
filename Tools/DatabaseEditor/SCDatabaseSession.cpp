@@ -1,6 +1,7 @@
 ﻿#include "SCDatabaseSession.h"
 
 #include <algorithm>
+#include <utility>
 
 #include <QIODevice>
 #include <QSaveFile>
@@ -77,6 +78,23 @@ namespace StableCore::Storage::Editor
                 }
 
                 return sc::SC_E_COLUMN_NOT_FOUND;
+            }
+
+            sc::ErrorCode GetSchemaSnapshot(
+                sc::SCTableSchemaSnapshot* outSnapshot) override
+            {
+                if (outSnapshot == nullptr)
+                {
+                    return sc::SC_E_POINTER;
+                }
+
+                outSnapshot->table.name.clear();
+                outSnapshot->table.description.clear();
+                outSnapshot->columns = columns_;
+                outSnapshot->constraints.clear();
+                outSnapshot->indexes.clear();
+
+                return sc::SC_OK;
             }
 
             sc::ErrorCode AddColumn(const sc::SCColumnDef&) override
@@ -2103,6 +2121,124 @@ namespace StableCore::Storage::Editor
             outColumns->push_back(column);
         }
 
+        return true;
+    }
+
+    bool SCDatabaseSession::BuildSchemaSnapshot(
+        sc::SCSchemaSnapshot* outSnapshot, QString* outError) const
+    {
+        if (outSnapshot == nullptr)
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("Output container is null.");
+            }
+            return false;
+        }
+
+        outSnapshot->schemaVersion =
+            db_ ? db_->GetSchemaVersion() : 0;
+        outSnapshot->tables.clear();
+
+        if (!currentTable_ || currentTableName_.isEmpty())
+        {
+            return true;
+        }
+
+        sc::SCSchemaPtr schema;
+        sc::ErrorCode rc = currentTable_->GetSchema(schema);
+        if (sc::Failed(rc))
+        {
+            if (outError != nullptr)
+            {
+                *outError = ErrorToString(rc);
+            }
+            return false;
+        }
+
+        sc::SCTableSchemaSnapshot tableSnapshot;
+        rc = schema->GetSchemaSnapshot(&tableSnapshot);
+        if (sc::Failed(rc))
+        {
+            if (outError != nullptr)
+            {
+                *outError = ErrorToString(rc);
+            }
+            return false;
+        }
+
+        if (tableSnapshot.table.name.empty())
+        {
+            tableSnapshot.table.name = currentTableName_.toStdWString();
+        }
+
+        const bool isLegacySchema = db_ && db_->GetSchemaVersion() < 3;
+        if (isLegacySchema)
+        {
+            const auto hasPrimaryKey = std::any_of(
+                tableSnapshot.constraints.begin(),
+                tableSnapshot.constraints.end(),
+                [](const sc::SCConstraintDef& constraint) {
+                    return constraint.kind == sc::SCConstraintKind::PrimaryKey;
+                });
+            if (!hasPrimaryKey)
+            {
+                const auto idColumn = std::find_if(
+                    tableSnapshot.columns.begin(), tableSnapshot.columns.end(),
+                    [](const sc::SCColumnDef& column) {
+                        return ToQString(column.name)
+                                   .compare(QStringLiteral("Id"),
+                                            Qt::CaseInsensitive) == 0;
+                    });
+                if (idColumn != tableSnapshot.columns.end())
+                {
+                    sc::SCConstraintDef constraint;
+                    constraint.kind = sc::SCConstraintKind::PrimaryKey;
+                    constraint.name = QStringLiteral("pk_legacy")
+                                          .toStdWString();
+                    constraint.columns.push_back(idColumn->name);
+                    constraint.sourceKind =
+                        sc::SCSchemaSourceKind::MigratedConvention;
+                    tableSnapshot.constraints.push_back(std::move(constraint));
+                }
+            }
+
+            const auto hasIndexForColumn = [&tableSnapshot](
+                                               const std::wstring& columnName) {
+                for (const sc::SCIndexDef& index : tableSnapshot.indexes)
+                {
+                    const auto columnIt = std::find_if(
+                        index.columns.begin(), index.columns.end(),
+                        [&columnName](const sc::SCIndexColumnDef& indexColumn) {
+                            return indexColumn.columnName == columnName;
+                        });
+                    if (columnIt != index.columns.end())
+                    {
+                        return true;
+                    }
+                }
+                return false;
+            };
+
+            for (const sc::SCColumnDef& column : tableSnapshot.columns)
+            {
+                if (!column.indexed || hasIndexForColumn(column.name))
+                {
+                    continue;
+                }
+
+                sc::SCIndexDef index;
+                index.name =
+                    (QStringLiteral("idx_legacy_") + ToQString(column.name))
+                        .toStdWString();
+                index.sourceKind = sc::SCSchemaSourceKind::LegacyHint;
+                index.columns.push_back(
+                    sc::SCIndexColumnDef{column.name, false});
+                tableSnapshot.indexes.push_back(std::move(index));
+            }
+        }
+
+        outSnapshot->tables.push_back(std::move(tableSnapshot));
         return true;
     }
 

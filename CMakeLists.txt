@@ -237,8 +237,11 @@ if (SCSTORAGE_BUILD_TESTS)
     if (SCSTORAGE_BUILD_DB_EDITOR)
         add_executable(${SCSTORAGE_DB_EDITOR_TESTS_TARGET}
             Tests/DatabaseEditorSessionTests.cpp
+            Tests/DatabaseEditorSchemaTableTests.cpp
             Tools/DatabaseEditor/SCDatabaseSession.cpp
             Tools/DatabaseEditor/SCDatabaseSession.h
+            Tools/DatabaseEditor/SCSchemaTableGenerator.cpp
+            Tools/DatabaseEditor/SCSchemaTableGenerator.h
         )
         SCStorageConfigureOutputDirs(${SCSTORAGE_DB_EDITOR_TESTS_TARGET})
         if (MSVC)
@@ -259,8 +262,11 @@ if (SCSTORAGE_BUILD_TESTS)
         )
         SCStorageSourceGroupTree("${CMAKE_CURRENT_SOURCE_DIR}"
             Tests/DatabaseEditorSessionTests.cpp
+            Tests/DatabaseEditorSchemaTableTests.cpp
             Tools/DatabaseEditor/SCDatabaseSession.cpp
             Tools/DatabaseEditor/SCDatabaseSession.h
+            Tools/DatabaseEditor/SCSchemaTableGenerator.cpp
+            Tools/DatabaseEditor/SCSchemaTableGenerator.h
         )
 
         target_compile_features(${SCSTORAGE_DB_EDITOR_TESTS_TARGET} PRIVATE cxx_std_20)

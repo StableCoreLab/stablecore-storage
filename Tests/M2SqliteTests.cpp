@@ -874,7 +874,7 @@ TEST(StorageM2Sqlite, VersionGraphReportsUpgradeWindow)
 {
     sc::SCVersionGraph graph;
     EXPECT_EQ(sc::BuildDefaultVersionGraph(&graph), sc::SC_OK);
-    EXPECT_GE(graph.latestSupportedVersion, 2);
+    EXPECT_GE(graph.latestSupportedVersion, 3);
     EXPECT_FALSE(graph.nodes.empty());
     EXPECT_FALSE(graph.edges.empty());
 
@@ -892,6 +892,102 @@ TEST(StorageM2Sqlite, VersionGraphReportsUpgradeWindow)
     EXPECT_FALSE(decision.needsUpgrade);
     EXPECT_FALSE(decision.readOnlyOnly);
     EXPECT_TRUE(decision.writable);
+}
+
+TEST(StorageM2Sqlite, UpgradeToV3BackfillsTableLevelMetadata)
+{
+    const fs::path dbPath =
+        MakeTempDbPath(L"StableCoreStorage_M2_UpgradeToV3.sqlite");
+
+    {
+        sc::SCDbPtr db;
+        EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
+
+        sc::SCTablePtr table;
+        EXPECT_EQ(db->CreateTable(L"Element", table), sc::SC_OK);
+
+        sc::SCSchemaPtr schema;
+        EXPECT_EQ(table->GetSchema(schema), sc::SC_OK);
+
+        sc::SCColumnDef id;
+        id.name = L"Id";
+        id.displayName = L"Id";
+        id.valueKind = sc::ValueKind::Int64;
+        id.nullable = false;
+        id.defaultValue = sc::SCValue::FromInt64(0);
+        EXPECT_EQ(schema->AddColumn(id), sc::SC_OK);
+
+        sc::SCColumnDef width;
+        width.name = L"Width";
+        width.displayName = L"Width";
+        width.valueKind = sc::ValueKind::Int64;
+        width.indexed = true;
+        width.defaultValue = sc::SCValue::FromInt64(0);
+        EXPECT_EQ(schema->AddColumn(width), sc::SC_OK);
+    }
+
+    EXPECT_TRUE(ExecSqliteScript(
+        dbPath,
+        "DROP TABLE IF EXISTS schema_index_columns;"
+        "DROP TABLE IF EXISTS schema_indexes;"
+        "DROP TABLE IF EXISTS schema_constraint_columns;"
+        "DROP TABLE IF EXISTS schema_constraints;"
+        "DROP TABLE IF EXISTS schema_tables;"
+        "UPDATE metadata SET value='2' WHERE key='schema_version';"));
+
+    sc::SCVersionGraph graph;
+    EXPECT_EQ(sc::BuildDefaultVersionGraph(&graph), sc::SC_OK);
+    EXPECT_GE(graph.latestSupportedVersion, 3);
+
+    sc::SCDbPtr reopened;
+    EXPECT_EQ(CreateFileDb(dbPath.c_str(), reopened), sc::SC_OK);
+    EXPECT_EQ(reopened->GetSchemaVersion(), graph.latestSupportedVersion);
+
+    std::int64_t value = 0;
+    EXPECT_TRUE(QuerySqliteInt64(
+        dbPath,
+        "SELECT COUNT(*) FROM schema_tables st "
+        "JOIN tables t ON t.table_id = st.table_id "
+        "WHERE t.name = 'Element';",
+        &value));
+    EXPECT_EQ(value, 1);
+
+    EXPECT_TRUE(QuerySqliteInt64(
+        dbPath,
+        "SELECT COUNT(*) FROM schema_constraints c "
+        "JOIN schema_constraint_columns cc ON cc.constraint_id = "
+        "c.constraint_id "
+        "JOIN tables t ON t.table_id = c.table_id "
+        "WHERE t.name = 'Element' AND c.kind = 0 AND cc.column_name = 'Id';",
+        &value));
+    EXPECT_EQ(value, 1);
+
+    EXPECT_TRUE(QuerySqliteInt64(
+        dbPath,
+        "SELECT COUNT(*) FROM schema_indexes i "
+        "JOIN schema_index_columns ic ON ic.index_id = i.index_id "
+        "JOIN tables t ON t.table_id = i.table_id "
+        "WHERE t.name = 'Element' AND ic.column_name = 'Width';",
+        &value));
+    EXPECT_EQ(value, 1);
+
+    sc::SCDbPtr reloaded;
+    EXPECT_EQ(CreateReadOnlyFileDb(dbPath.c_str(), reloaded), sc::SC_OK);
+    EXPECT_EQ(reloaded->GetSchemaVersion(), graph.latestSupportedVersion);
+
+    sc::SCTablePtr elementTable;
+    EXPECT_EQ(reloaded->GetTable(L"Element", elementTable), sc::SC_OK);
+    sc::SCSchemaPtr snapshotSchema;
+    EXPECT_EQ(elementTable->GetSchema(snapshotSchema), sc::SC_OK);
+
+    sc::SCTableSchemaSnapshot snapshot;
+    EXPECT_EQ(snapshotSchema->GetSchemaSnapshot(&snapshot), sc::SC_OK);
+    ASSERT_EQ(snapshot.table.name, L"Element");
+    ASSERT_FALSE(snapshot.constraints.empty());
+    ASSERT_FALSE(snapshot.indexes.empty());
+    EXPECT_EQ(snapshot.constraints.front().kind, sc::SCConstraintKind::PrimaryKey);
+    EXPECT_EQ(snapshot.constraints.front().columns.front(), L"Id");
+    EXPECT_EQ(snapshot.indexes.front().columns.front().columnName, L"Width");
 }
 
 TEST(StorageM2Sqlite, ReadOnlySqliteOpenRejectsWrites)
@@ -914,16 +1010,21 @@ TEST(StorageM2Sqlite, ReadOnlySqliteOpenRejectsWrites)
         EXPECT_EQ(db->Commit(edit.Get()), sc::SC_OK);
     }
 
+    EXPECT_TRUE(SetMetadataValue(dbPath, "schema_version", "2"));
+
+    sc::SCVersionGraph graph;
+    EXPECT_EQ(sc::BuildDefaultVersionGraph(&graph), sc::SC_OK);
+
     sc::SCDbPtr readOnlyDb;
     EXPECT_EQ(CreateReadOnlyFileDb(dbPath.c_str(), readOnlyDb), sc::SC_OK);
-    EXPECT_EQ(readOnlyDb->GetSchemaVersion(), 2);
+    EXPECT_EQ(readOnlyDb->GetSchemaVersion(), graph.latestSupportedVersion);
 
     sc::SCEditPtr edit;
     EXPECT_EQ(readOnlyDb->BeginEdit(L"read-only", edit),
               sc::SC_E_READ_ONLY_DATABASE);
 }
 
-TEST(StorageM2Sqlite, UpgradeExecutionIsExplicit)
+TEST(StorageM2Sqlite, OpenDatabaseAutoUpgradesToLatestFormat)
 {
     const fs::path dbPath =
         MakeTempDbPath(L"StableCoreStorage_M2_ExplicitUpgrade.sqlite");
@@ -944,29 +1045,23 @@ TEST(StorageM2Sqlite, UpgradeExecutionIsExplicit)
 
     EXPECT_TRUE(SetMetadataValue(dbPath, "schema_version", "1"));
 
-    sc::SCDbPtr reopened;
-    EXPECT_EQ(CreateFileDb(dbPath.c_str(), reopened), sc::SC_OK);
-    EXPECT_EQ(reopened->GetSchemaVersion(), 1);
-
     sc::SCVersionGraph graph;
     EXPECT_EQ(sc::BuildDefaultVersionGraph(&graph), sc::SC_OK);
 
+    sc::SCDbPtr reopened;
+    EXPECT_EQ(CreateFileDb(dbPath.c_str(), reopened), sc::SC_OK);
+    EXPECT_EQ(reopened->GetSchemaVersion(), graph.latestSupportedVersion);
+
     sc::SCUpgradePlan plan;
     EXPECT_EQ(
-        sc::BuildUpgradePlan(1, graph.latestSupportedVersion, graph, &plan),
+        sc::BuildUpgradePlan(graph.latestSupportedVersion,
+                             graph.latestSupportedVersion, graph, &plan),
         sc::SC_OK);
-    EXPECT_TRUE(plan.requiresConfirmation);
-    EXPECT_TRUE(plan.upgradeRequired);
+    EXPECT_FALSE(plan.upgradeRequired);
 
     sc::SCUpgradeResult result;
-    EXPECT_EQ(reopened->ExecuteUpgradePlan(plan, false, &result),
-              sc::SC_E_INVALIDARG);
-    EXPECT_EQ(result.status, sc::SCUpgradeStatus::Failed);
-    EXPECT_EQ(reopened->GetSchemaVersion(), 1);
-
     EXPECT_EQ(reopened->ExecuteUpgradePlan(plan, true, &result), sc::SC_OK);
-    EXPECT_EQ(result.status, sc::SCUpgradeStatus::Success);
-    EXPECT_EQ(result.rolledBack, false);
+    EXPECT_EQ(result.status, sc::SCUpgradeStatus::NotRequired);
     EXPECT_EQ(reopened->GetSchemaVersion(), graph.latestSupportedVersion);
 }
 
@@ -999,30 +1094,19 @@ TEST(StorageM2Sqlite, UpgradeFailureRollsBackOnObjectNameConflict)
         "UPDATE metadata SET value='1' WHERE key='clean_shutdown';"));
 
     sc::SCDbPtr reopened;
-    EXPECT_EQ(CreateFileDb(dbPath.c_str(), reopened), sc::SC_OK);
-    EXPECT_EQ(reopened->GetSchemaVersion(), 1);
+    EXPECT_NE(CreateFileDb(dbPath.c_str(), reopened), sc::SC_OK);
 
-    sc::SCVersionGraph graph;
-    EXPECT_EQ(sc::BuildDefaultVersionGraph(&graph), sc::SC_OK);
+    std::int64_t versionValue = 0;
+    EXPECT_TRUE(QuerySqliteInt64(
+        dbPath, "SELECT value FROM metadata WHERE key='schema_version';",
+        &versionValue));
+    EXPECT_EQ(versionValue, 1);
 
-    sc::SCUpgradePlan plan;
-    EXPECT_EQ(
-        sc::BuildUpgradePlan(1, graph.latestSupportedVersion, graph, &plan),
-        sc::SC_OK);
-
-    sc::SCUpgradeResult result;
-    EXPECT_NE(reopened->ExecuteUpgradePlan(plan, true, &result), sc::SC_OK);
-    EXPECT_EQ(result.status, sc::SCUpgradeStatus::RolledBack);
-    EXPECT_TRUE(result.rolledBack);
-    EXPECT_EQ(reopened->GetSchemaVersion(), 1);
-
-    sc::SCTablePtr beamTable;
-    EXPECT_EQ(reopened->GetTable(L"Beam", beamTable), sc::SC_OK);
-    sc::SCRecordCursorPtr cursor;
-    EXPECT_EQ(beamTable->EnumerateRecords(cursor), sc::SC_OK);
-    sc::SCRecordPtr beam;
-    EXPECT_EQ(cursor->Next(beam), sc::SC_OK);
-    EXPECT_TRUE(static_cast<bool>(beam));
+    std::int64_t beamCount = 0;
+    EXPECT_TRUE(QuerySqliteInt64(
+        dbPath, "SELECT COUNT(*) FROM tables WHERE name='Beam';",
+        &beamCount));
+    EXPECT_EQ(beamCount, 1);
 }
 
 TEST(StorageM2Sqlite, UncleanShutdownBlocksUpgradeExecution)
@@ -1048,29 +1132,19 @@ TEST(StorageM2Sqlite, UncleanShutdownBlocksUpgradeExecution)
     EXPECT_TRUE(SetMetadataValue(dbPath, "clean_shutdown", "0"));
 
     sc::SCDbPtr reopened;
-    EXPECT_EQ(CreateFileDb(dbPath.c_str(), reopened), sc::SC_OK);
-    EXPECT_EQ(reopened->GetSchemaVersion(), 1);
+    EXPECT_NE(CreateFileDb(dbPath.c_str(), reopened), sc::SC_OK);
 
-    sc::SCVersionGraph graph;
-    EXPECT_EQ(sc::BuildDefaultVersionGraph(&graph), sc::SC_OK);
+    std::int64_t versionValue = 0;
+    EXPECT_TRUE(QuerySqliteInt64(
+        dbPath, "SELECT value FROM metadata WHERE key='schema_version';",
+        &versionValue));
+    EXPECT_EQ(versionValue, 1);
 
-    sc::SCOpenDecision decision;
-    EXPECT_EQ(sc::EvaluateOpenDecision(graph, reopened->GetSchemaVersion(),
-                                       false, &decision),
-              sc::SC_OK);
-    EXPECT_EQ(decision.mode, sc::SCOpenMode::ReadOnly);
-
-    sc::SCUpgradePlan plan;
-    EXPECT_EQ(
-        sc::BuildUpgradePlan(1, graph.latestSupportedVersion, graph, &plan),
-        sc::SC_OK);
-
-    sc::SCUpgradeResult result;
-    EXPECT_EQ(reopened->ExecuteUpgradePlan(plan, true, &result),
-              sc::SC_E_WRITE_CONFLICT);
-    EXPECT_EQ(result.status, sc::SCUpgradeStatus::Unsupported);
-    EXPECT_EQ(result.rolledBack, false);
-    EXPECT_EQ(reopened->GetSchemaVersion(), 1);
+    std::int64_t cleanShutdownValue = 0;
+    EXPECT_TRUE(QuerySqliteInt64(
+        dbPath, "SELECT value FROM metadata WHERE key='clean_shutdown';",
+        &cleanShutdownValue));
+    EXPECT_EQ(cleanShutdownValue, 0);
 }
 
 TEST(StorageM2Sqlite, ImportSessionCheckpointIsNotLiveState)

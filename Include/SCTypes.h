@@ -338,6 +338,66 @@ namespace StableCore::Storage
         SCValue defaultValue;
     };
 
+    enum class SCSchemaSourceKind
+    {
+        Explicit,
+        MigratedConvention,
+        LegacyHint,
+        Unknown,
+    };
+
+    struct SCTableDef
+    {
+        std::wstring name;
+        std::wstring description;
+    };
+
+    enum class SCConstraintKind
+    {
+        PrimaryKey,
+        Unique,
+        ForeignKey,
+        Check,
+    };
+
+    struct SCConstraintDef
+    {
+        SCConstraintKind kind{SCConstraintKind::PrimaryKey};
+        std::wstring name;
+        std::vector<std::wstring> columns;
+        SCSchemaSourceKind sourceKind{SCSchemaSourceKind::Explicit};
+        std::wstring referencedTable;
+        std::vector<std::wstring> referencedColumns;
+        std::wstring checkExpression;
+    };
+
+    struct SCIndexColumnDef
+    {
+        std::wstring columnName;
+        bool descending{false};
+    };
+
+    struct SCIndexDef
+    {
+        std::wstring name;
+        std::vector<SCIndexColumnDef> columns;
+        SCSchemaSourceKind sourceKind{SCSchemaSourceKind::Explicit};
+    };
+
+    struct SCTableSchemaSnapshot
+    {
+        SCTableDef table;
+        std::vector<SCColumnDef> columns;
+        std::vector<SCConstraintDef> constraints;
+        std::vector<SCIndexDef> indexes;
+    };
+
+    struct SCSchemaSnapshot
+    {
+        std::int32_t schemaVersion{0};
+        std::vector<SCTableSchemaSnapshot> tables;
+    };
+
     enum class ComputedFieldKind
     {
         Expression,

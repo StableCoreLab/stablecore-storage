@@ -1509,6 +1509,22 @@ namespace StableCore::Storage
         {
             return static_cast<RecordState>(state);
         }
+        int ToSqliteSchemaSourceKind(SCSchemaSourceKind kind) noexcept
+        {
+            return static_cast<int>(kind);
+        }
+        SCSchemaSourceKind FromSqliteSchemaSourceKind(int kind) noexcept
+        {
+            return static_cast<SCSchemaSourceKind>(kind);
+        }
+        int ToSqliteConstraintKind(SCConstraintKind kind) noexcept
+        {
+            return static_cast<int>(kind);
+        }
+        SCConstraintKind FromSqliteConstraintKind(int kind) noexcept
+        {
+            return static_cast<SCConstraintKind>(kind);
+        }
         int ToSqliteJournalOp(JournalOp op) noexcept
         {
             return static_cast<int>(op);
@@ -1516,6 +1532,24 @@ namespace StableCore::Storage
         JournalOp FromSqliteJournalOp(int op) noexcept
         {
             return static_cast<JournalOp>(op);
+        }
+
+        bool EqualsIgnoreCase(const std::wstring& left,
+                              const std::wstring& right) noexcept
+        {
+            if (left.size() != right.size())
+            {
+                return false;
+            }
+
+            for (std::size_t index = 0; index < left.size(); ++index)
+            {
+                if (std::towlower(left[index]) != std::towlower(right[index]))
+                {
+                    return false;
+                }
+            }
+            return true;
         }
 
         std::wstring SanitizeIdentifier(const std::wstring& input)
@@ -1707,9 +1741,82 @@ namespace StableCore::Storage
                                 SCColumnDef* outDef) override;
             ErrorCode FindColumn(const wchar_t* name,
                                  SCColumnDef* outDef) override;
+            ErrorCode GetSchemaSnapshot(
+                SCTableSchemaSnapshot* outSnapshot) override;
             ErrorCode AddColumn(const SCColumnDef& def) override;
             ErrorCode UpdateColumn(const SCColumnDef& def) override;
             ErrorCode RemoveColumn(const wchar_t* name) override;
+
+            void LoadTableDescription(const std::wstring& description)
+            {
+                description_ = description;
+            }
+
+            void LoadConstraint(const SCConstraintDef& def)
+            {
+                constraints_.push_back(def);
+            }
+
+            void LoadIndex(const SCIndexDef& def)
+            {
+                indexes_.push_back(def);
+            }
+
+            std::wstring LegacyPrimaryKeyName() const
+            {
+                return L"pk_" + SanitizeIdentifier(tableName_);
+            }
+
+            std::wstring LegacyIndexName(const std::wstring& columnName) const
+            {
+                return L"idx_" + SanitizeIdentifier(tableName_) + L"_" +
+                       SanitizeIdentifier(columnName);
+            }
+
+            void SetLegacyIndexState(const std::wstring& columnName,
+                                     bool indexed)
+            {
+                const std::wstring indexName = LegacyIndexName(columnName);
+                const auto indexIt = std::find_if(
+                    indexes_.begin(), indexes_.end(),
+                    [&indexName](const SCIndexDef& index) {
+                        return index.name == indexName;
+                    });
+
+                if (!indexed)
+                {
+                    if (indexIt != indexes_.end())
+                    {
+                        indexes_.erase(indexIt);
+                    }
+                    return;
+                }
+
+                SCIndexDef index;
+                index.name = indexName;
+                index.sourceKind = SCSchemaSourceKind::LegacyHint;
+                index.columns.push_back(SCIndexColumnDef{columnName, false});
+                if (indexIt != indexes_.end())
+                {
+                    *indexIt = std::move(index);
+                } else
+                {
+                    indexes_.push_back(std::move(index));
+                }
+            }
+
+            void RemovePrimaryKeyIfColumnMatches(const std::wstring& columnName)
+            {
+                const auto it = std::remove_if(
+                    constraints_.begin(), constraints_.end(),
+                    [&columnName](const SCConstraintDef& constraint) {
+                        return constraint.kind == SCConstraintKind::PrimaryKey &&
+                               constraint.columns.size() == 1 &&
+                               EqualsIgnoreCase(constraint.columns.front(),
+                                                columnName);
+                    });
+                constraints_.erase(it, constraints_.end());
+            }
 
             const SCColumnDef* FindColumnDef(
                 const std::wstring& name) const noexcept
@@ -1814,8 +1921,11 @@ namespace StableCore::Storage
         private:
             SqliteDatabase* db_{nullptr};
             std::wstring tableName_;
+            std::wstring description_;
             std::int64_t tableRowId_{0};
             std::vector<SchemaColumnEntry> columns_;
+            std::vector<SCConstraintDef> constraints_;
+            std::vector<SCIndexDef> indexes_;
             std::unordered_map<std::wstring, SchemaColumnEntry> columnsByName_;
             std::unordered_map<std::wstring, std::int64_t> columnRowIdsByName_;
             std::int64_t nextColumnRowId_{1};
@@ -2071,6 +2181,14 @@ namespace StableCore::Storage
             {
                 return static_cast<bool>(activeEdit_);
             }
+            bool IsCleanShutdown() const noexcept
+            {
+                return cleanShutdown_;
+            }
+            void SuppressCleanShutdownOnDestroy() noexcept
+            {
+                persistCleanShutdownOnDestroy_ = false;
+            }
             RecordId AllocateRecordId() noexcept
             {
                 return nextRecordId_++;
@@ -2106,6 +2224,10 @@ namespace StableCore::Storage
             void SaveMetadata();
             void SaveMetadataKey(const wchar_t* key, const std::wstring& value);
             void LoadTables();
+            bool HasTable(const wchar_t* name);
+            void EnsureSchemaMetadataTables();
+            ErrorCode LoadSchemaMetadata(SqliteTable* table);
+            ErrorCode BackfillSchemaMetadataV3();
             void LoadJournalStacks();
             void MaterializeIndexes();
             ErrorCode EnsureImportSessionStore();
@@ -2148,6 +2270,11 @@ namespace StableCore::Storage
                                                 const SCColumnDef& def);
             ErrorCode PersistSchemaRemoveColumn(SqliteSchema* schema,
                                                const wchar_t* columnName);
+            ErrorCode SyncLegacyIndexMetadata(SqliteSchema* schema,
+                                              const std::wstring& columnName,
+                                              bool indexed);
+            ErrorCode RemoveLegacyPrimaryKeyMetadata(
+                SqliteSchema* schema, const std::wstring& columnName);
             ErrorCode ApplyJournalReverse(const JournalTransaction& tx);
             ErrorCode ApplyJournalForward(const JournalTransaction& tx);
             ErrorCode ApplyEntry(const JournalEntry& entry, bool reverse);
@@ -2195,6 +2322,7 @@ namespace StableCore::Storage
             bool referenceIndexBuilt_{false};
             VersionId referenceIndexVersion_{0};
             bool cleanShutdown_{true};
+            bool persistCleanShutdownOnDestroy_{true};
             bool dirtyStartupDetected_{false};
             bool corruptionDetected_{false};
             bool importSessionStoreReady_{false};
@@ -2249,6 +2377,32 @@ namespace StableCore::Storage
                 return SC_E_COLUMN_NOT_FOUND;
             }
             *outDef = it->second.def;
+            return SC_OK;
+        }
+
+        ErrorCode SqliteSchema::GetSchemaSnapshot(
+            SCTableSchemaSnapshot* outSnapshot)
+        {
+            if (outSnapshot == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+
+            outSnapshot->table.name = tableName_;
+            outSnapshot->table.description = description_;
+            outSnapshot->columns.clear();
+            outSnapshot->constraints.clear();
+            outSnapshot->indexes.clear();
+
+            outSnapshot->columns.reserve(columns_.size());
+            for (const auto& column : columns_)
+            {
+                outSnapshot->columns.push_back(column.def);
+            }
+
+            outSnapshot->constraints = constraints_;
+            outSnapshot->indexes = indexes_;
+
             return SC_OK;
         }
 
@@ -2553,8 +2707,15 @@ namespace StableCore::Storage
                                  : SCDatabaseOpenMode::Normal),
               readOnly_(readOnly)
         {
-            if (!readOnly_)
+            const bool hasMetadataTable = HasTable(L"metadata");
+            if (!hasMetadataTable)
             {
+                if (readOnly_)
+                {
+                    throw std::runtime_error(
+                        "metadata table is missing in read-only open");
+                }
+
                 InitializeSchema();
             }
 
@@ -2580,8 +2741,15 @@ namespace StableCore::Storage
               openMode_(options.openMode),
               readOnly_(options.openMode == SCDatabaseOpenMode::ReadOnly)
         {
-            if (!readOnly_)
+            const bool hasMetadataTable = HasTable(L"metadata");
+            if (!hasMetadataTable)
             {
+                if (readOnly_)
+                {
+                    throw std::runtime_error(
+                        "metadata table is missing in read-only open");
+                }
+
                 InitializeSchema();
             }
 
@@ -2601,7 +2769,7 @@ namespace StableCore::Storage
         {
             try
             {
-                if (!readOnly_)
+                if (!readOnly_ && persistCleanShutdownOnDestroy_)
                 {
                     SetCleanShutdownFlag(true);
                 }
@@ -2691,6 +2859,7 @@ namespace StableCore::Storage
                 "INTEGER, new_default_int64 INTEGER, new_default_double REAL, "
                 "new_default_bool INTEGER, new_default_text TEXT, "
                 "PRIMARY KEY(tx_id, sequence_index));");
+            EnsureSchemaMetadataTables();
         }
 
         void SqliteDatabase::LoadMetadata()
@@ -2767,6 +2936,56 @@ namespace StableCore::Storage
             stmt.Step();
         }
 
+        bool SqliteDatabase::HasTable(const wchar_t* name)
+        {
+            if (name == nullptr || *name == L'\0')
+            {
+                return false;
+            }
+
+            SqliteStmt stmt = db_.Prepare(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? "
+                "LIMIT 1;");
+            stmt.BindText(1, name);
+            bool hasRow = false;
+            return stmt.Step(&hasRow) == SC_OK && hasRow;
+        }
+
+        void SqliteDatabase::EnsureSchemaMetadataTables()
+        {
+            db_.Execute(
+                "CREATE TABLE IF NOT EXISTS schema_tables ("
+                "table_id INTEGER PRIMARY KEY, description TEXT NOT NULL "
+                "DEFAULT '');");
+            db_.Execute(
+                "CREATE TABLE IF NOT EXISTS schema_constraints ("
+                "constraint_id INTEGER PRIMARY KEY AUTOINCREMENT, table_id "
+                "INTEGER NOT NULL, kind INTEGER NOT NULL, name TEXT NOT NULL, "
+                "source_kind INTEGER NOT NULL, referenced_table TEXT NOT NULL, "
+                "check_expression TEXT NOT NULL DEFAULT '');");
+            db_.Execute(
+                "CREATE INDEX IF NOT EXISTS idx_schema_constraints_table ON "
+                "schema_constraints(table_id);");
+            db_.Execute(
+                "CREATE TABLE IF NOT EXISTS schema_constraint_columns ("
+                "constraint_id INTEGER NOT NULL, column_ordinal INTEGER NOT "
+                "NULL, column_name TEXT NOT NULL, referenced_column_name TEXT "
+                "NOT NULL DEFAULT '', PRIMARY KEY(constraint_id, "
+                "column_ordinal));");
+            db_.Execute(
+                "CREATE TABLE IF NOT EXISTS schema_indexes ("
+                "index_id INTEGER PRIMARY KEY AUTOINCREMENT, table_id INTEGER "
+                "NOT NULL, name TEXT NOT NULL, source_kind INTEGER NOT NULL);");
+            db_.Execute(
+                "CREATE INDEX IF NOT EXISTS idx_schema_indexes_table ON "
+                "schema_indexes(table_id);");
+            db_.Execute(
+                "CREATE TABLE IF NOT EXISTS schema_index_columns ("
+                "index_id INTEGER NOT NULL, column_ordinal INTEGER NOT NULL, "
+                "column_name TEXT NOT NULL, descending_flag INTEGER NOT NULL, "
+                "PRIMARY KEY(index_id, column_ordinal));");
+        }
+
         void SqliteDatabase::LoadTables()
         {
             SqliteStmt tablesStmt =
@@ -2813,6 +3032,12 @@ namespace StableCore::Storage
                         ReadValueFromStorage(columnsStmt, 12, 13, 14, 15, 16);
                     sqliteTable->Schema()->LoadColumn(def, rowId);
                 }
+                const ErrorCode metadataRc = LoadSchemaMetadata(sqliteTable);
+                if (Failed(metadataRc))
+                {
+                    throw std::runtime_error(
+                        "failed to load schema metadata");
+                }
 
                 SqliteStmt recordsStmt = db_.Prepare(
                     "SELECT record_id, state, last_modified_version FROM "
@@ -2852,6 +3077,345 @@ namespace StableCore::Storage
                         ReadValueFromStorage(valuesStmt, 2, 3, 4, 5, 6);
                 }
             }
+        }
+
+        ErrorCode SqliteDatabase::LoadSchemaMetadata(SqliteTable* table)
+        {
+            if (table == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+
+            auto* schema = table->Schema();
+            if (schema == nullptr)
+            {
+                return SC_E_FAIL;
+            }
+
+            const std::int64_t tableRowId = table->TableRowId();
+
+            if (HasTable(L"schema_tables"))
+            {
+                SqliteStmt tableMetaStmt = db_.Prepare(
+                    "SELECT description FROM schema_tables WHERE table_id = ?;");
+                tableMetaStmt.BindInt64(1, tableRowId);
+                bool hasMetaRow = false;
+                if (tableMetaStmt.Step(&hasMetaRow) == SC_OK && hasMetaRow)
+                {
+                    schema->LoadTableDescription(tableMetaStmt.ColumnText(0));
+                }
+            }
+
+            if (HasTable(L"schema_constraints") &&
+                HasTable(L"schema_constraint_columns"))
+            {
+                SqliteStmt constraintsStmt = db_.Prepare(
+                    "SELECT constraint_id, kind, name, source_kind, "
+                    "referenced_table, check_expression FROM "
+                    "schema_constraints WHERE table_id = ? ORDER BY "
+                    "constraint_id;");
+                constraintsStmt.BindInt64(1, tableRowId);
+                bool hasConstraint = false;
+                while (constraintsStmt.Step(&hasConstraint) == SC_OK &&
+                       hasConstraint)
+                {
+                    SCConstraintDef constraint;
+                    const std::int64_t constraintId =
+                        constraintsStmt.ColumnInt64(0);
+                    constraint.kind = FromSqliteConstraintKind(
+                        constraintsStmt.ColumnInt(1));
+                    constraint.name = constraintsStmt.ColumnText(2);
+                    constraint.sourceKind = FromSqliteSchemaSourceKind(
+                        constraintsStmt.ColumnInt(3));
+                    constraint.referencedTable =
+                        constraintsStmt.ColumnText(4);
+                    constraint.checkExpression =
+                        constraintsStmt.ColumnText(5);
+
+                    SqliteStmt constraintColumnsStmt = db_.Prepare(
+                        "SELECT column_name, referenced_column_name FROM "
+                        "schema_constraint_columns WHERE constraint_id = ? "
+                        "ORDER BY column_ordinal;");
+                    constraintColumnsStmt.BindInt64(1, constraintId);
+                    bool hasConstraintColumn = false;
+                    while (constraintColumnsStmt.Step(&hasConstraintColumn) ==
+                               SC_OK && hasConstraintColumn)
+                    {
+                        constraint.columns.push_back(
+                            constraintColumnsStmt.ColumnText(0));
+                        constraint.referencedColumns.push_back(
+                            constraintColumnsStmt.ColumnText(1));
+                    }
+
+                    schema->LoadConstraint(constraint);
+                }
+            }
+
+            if (HasTable(L"schema_indexes") &&
+                HasTable(L"schema_index_columns"))
+            {
+                SqliteStmt indexesStmt = db_.Prepare(
+                    "SELECT index_id, name, source_kind FROM schema_indexes "
+                    "WHERE table_id = ? ORDER BY index_id;");
+                indexesStmt.BindInt64(1, tableRowId);
+                bool hasIndex = false;
+                while (indexesStmt.Step(&hasIndex) == SC_OK && hasIndex)
+                {
+                    SCIndexDef index;
+                    const std::int64_t indexId = indexesStmt.ColumnInt64(0);
+                    index.name = indexesStmt.ColumnText(1);
+                    index.sourceKind = FromSqliteSchemaSourceKind(
+                        indexesStmt.ColumnInt(2));
+
+                    SqliteStmt indexColumnsStmt = db_.Prepare(
+                        "SELECT column_name, descending_flag FROM "
+                        "schema_index_columns WHERE index_id = ? ORDER BY "
+                        "column_ordinal;");
+                    indexColumnsStmt.BindInt64(1, indexId);
+                    bool hasIndexColumn = false;
+                    while (indexColumnsStmt.Step(&hasIndexColumn) == SC_OK &&
+                           hasIndexColumn)
+                    {
+                        index.columns.push_back(SCIndexColumnDef{
+                            indexColumnsStmt.ColumnText(0),
+                            indexColumnsStmt.ColumnBool(1)});
+                    }
+
+                    schema->LoadIndex(index);
+                }
+            }
+
+            return SC_OK;
+        }
+
+        ErrorCode SqliteDatabase::BackfillSchemaMetadataV3()
+        {
+            EnsureSchemaMetadataTables();
+
+            for (const auto& [_, tableRef] : tables_)
+            {
+                auto* table = static_cast<SqliteTable*>(tableRef.Get());
+                if (table == nullptr)
+                {
+                    continue;
+                }
+
+                SCSchemaPtr schema;
+                const ErrorCode schemaRc = tableRef->GetSchema(schema);
+                if (Failed(schemaRc) || !schema)
+                {
+                    return Failed(schemaRc) ? schemaRc : SC_E_FAIL;
+                }
+
+                SCTableSchemaSnapshot snapshot;
+                const ErrorCode snapshotRc = schema->GetSchemaSnapshot(&snapshot);
+                if (Failed(snapshotRc))
+                {
+                    return snapshotRc;
+                }
+
+                const auto toUpperCopy = [](std::wstring text) {
+                    std::transform(text.begin(), text.end(), text.begin(),
+                                   [](wchar_t ch) {
+                                       return static_cast<wchar_t>(
+                                           std::towupper(ch));
+                                   });
+                    return text;
+                };
+
+                if (snapshot.constraints.empty())
+                {
+                    const auto idColumn = std::find_if(
+                        snapshot.columns.begin(), snapshot.columns.end(),
+                        [&toUpperCopy](const SCColumnDef& column) {
+                            return toUpperCopy(column.name) == L"ID";
+                        });
+                    if (idColumn != snapshot.columns.end())
+                    {
+                        SCConstraintDef constraint;
+                        constraint.kind = SCConstraintKind::PrimaryKey;
+                        constraint.name = L"pk_legacy";
+                        constraint.columns.push_back(idColumn->name);
+                        constraint.sourceKind =
+                            SCSchemaSourceKind::MigratedConvention;
+                        snapshot.constraints.push_back(std::move(constraint));
+                    }
+                }
+
+                if (snapshot.indexes.empty())
+                {
+                    for (const SCColumnDef& column : snapshot.columns)
+                    {
+                        if (!column.indexed)
+                        {
+                            continue;
+                        }
+
+                        SCIndexDef index;
+                        index.name = L"idx_legacy_" + column.name;
+                        index.sourceKind = SCSchemaSourceKind::LegacyHint;
+                        index.columns.push_back(
+                            SCIndexColumnDef{column.name, false});
+                        snapshot.indexes.push_back(std::move(index));
+                    }
+                }
+
+                {
+                    SqliteStmt stmt = db_.Prepare(
+                        "INSERT INTO schema_tables(table_id, description) "
+                        "VALUES(?, ?) ON CONFLICT(table_id) DO UPDATE SET "
+                        "description=excluded.description;");
+                    stmt.BindInt64(1, table->TableRowId());
+                    stmt.BindText(2, snapshot.table.description);
+                    const ErrorCode rc = stmt.Step();
+                    if (Failed(rc))
+                    {
+                        return rc;
+                    }
+                }
+
+                {
+                    SqliteStmt stmt = db_.Prepare(
+                        "DELETE FROM schema_constraint_columns WHERE "
+                        "constraint_id IN (SELECT constraint_id FROM "
+                        "schema_constraints WHERE table_id = ?);");
+                    stmt.BindInt64(1, table->TableRowId());
+                    const ErrorCode rc = stmt.Step();
+                    if (Failed(rc))
+                    {
+                        return rc;
+                    }
+                }
+
+                {
+                    SqliteStmt stmt = db_.Prepare(
+                        "DELETE FROM schema_constraints WHERE table_id = ?;");
+                    stmt.BindInt64(1, table->TableRowId());
+                    const ErrorCode rc = stmt.Step();
+                    if (Failed(rc))
+                    {
+                        return rc;
+                    }
+                }
+
+                {
+                    SqliteStmt stmt = db_.Prepare(
+                        "DELETE FROM schema_index_columns WHERE index_id IN "
+                        "(SELECT index_id FROM schema_indexes WHERE table_id "
+                        "= ?);");
+                    stmt.BindInt64(1, table->TableRowId());
+                    const ErrorCode rc = stmt.Step();
+                    if (Failed(rc))
+                    {
+                        return rc;
+                    }
+                }
+
+                {
+                    SqliteStmt stmt = db_.Prepare(
+                        "DELETE FROM schema_indexes WHERE table_id = ?;");
+                    stmt.BindInt64(1, table->TableRowId());
+                    const ErrorCode rc = stmt.Step();
+                    if (Failed(rc))
+                    {
+                        return rc;
+                    }
+                }
+
+                for (const SCConstraintDef& constraint :
+                     snapshot.constraints)
+                {
+                    SqliteStmt stmt = db_.Prepare(
+                        "INSERT INTO schema_constraints(table_id, kind, "
+                        "name, source_kind, referenced_table, "
+                        "check_expression) VALUES(?, ?, ?, ?, ?, ?);");
+                    stmt.BindInt64(1, table->TableRowId());
+                    stmt.BindInt(2, ToSqliteConstraintKind(constraint.kind));
+                    stmt.BindText(3, constraint.name);
+                    stmt.BindInt(4, ToSqliteSchemaSourceKind(
+                                       constraint.sourceKind));
+                    stmt.BindText(5, constraint.referencedTable);
+                    stmt.BindText(6, constraint.checkExpression);
+                    const ErrorCode rc = stmt.Step();
+                    if (Failed(rc))
+                    {
+                        return rc;
+                    }
+
+                    const std::int64_t constraintId =
+                        db_.LastInsertRowId();
+                    for (std::size_t index = 0;
+                         index < constraint.columns.size(); ++index)
+                    {
+                        SqliteStmt columnStmt = db_.Prepare(
+                            "INSERT INTO schema_constraint_columns("
+                            "constraint_id, column_ordinal, column_name, "
+                            "referenced_column_name) VALUES(?, ?, ?, ?);");
+                        columnStmt.BindInt64(1, constraintId);
+                        columnStmt.BindInt64(
+                            2, static_cast<std::int64_t>(index));
+                        columnStmt.BindText(3, constraint.columns[index]);
+                        const std::wstring referencedColumn =
+                            index < constraint.referencedColumns.size()
+                                ? constraint.referencedColumns[index]
+                                : std::wstring{};
+                        columnStmt.BindText(4, referencedColumn);
+                        const ErrorCode columnRc = columnStmt.Step();
+                        if (Failed(columnRc))
+                        {
+                            return columnRc;
+                        }
+                    }
+                }
+
+                for (const SCIndexDef& index : snapshot.indexes)
+                {
+                    SqliteStmt stmt = db_.Prepare(
+                        "INSERT INTO schema_indexes(table_id, name, "
+                        "source_kind) VALUES(?, ?, ?);");
+                    stmt.BindInt64(1, table->TableRowId());
+                    stmt.BindText(2, index.name);
+                    stmt.BindInt(3, ToSqliteSchemaSourceKind(
+                                       index.sourceKind));
+                    const ErrorCode rc = stmt.Step();
+                    if (Failed(rc))
+                    {
+                        return rc;
+                    }
+
+                    const std::int64_t indexId = db_.LastInsertRowId();
+                    for (std::size_t columnIndex = 0;
+                         columnIndex < index.columns.size(); ++columnIndex)
+                    {
+                        SqliteStmt columnStmt = db_.Prepare(
+                            "INSERT INTO schema_index_columns(index_id, "
+                            "column_ordinal, column_name, descending_flag) "
+                            "VALUES(?, ?, ?, ?);");
+                        columnStmt.BindInt64(1, indexId);
+                        columnStmt.BindInt64(
+                            2, static_cast<std::int64_t>(columnIndex));
+                        columnStmt.BindText(
+                            3, index.columns[columnIndex].columnName);
+                        columnStmt.BindInt(
+                            4, index.columns[columnIndex].descending ? 1 : 0);
+                        const ErrorCode columnRc = columnStmt.Step();
+                        if (Failed(columnRc))
+                        {
+                            return columnRc;
+                        }
+                    }
+                }
+
+                std::wstringstream message;
+                message << L"Backfilled schema metadata for table "
+                        << snapshot.table.name << L" ("
+                        << snapshot.constraints.size() << L" constraints, "
+                        << snapshot.indexes.size() << L" indexes).";
+                LogStartupDiagnostic(SCDiagnosticSeverity::Info, L"upgrade",
+                                     message.str());
+            }
+
+            return SC_OK;
         }
 
         void SqliteDatabase::LoadJournalStacks()
@@ -3066,9 +3630,23 @@ namespace StableCore::Storage
                             result.status = SCUpgradeStatus::RolledBack;
                             result.rolledBack = true;
                             result.failureReason =
-                                L"Failed to create upgrade-required lookup "
-                                L"index.";
+                            L"Failed to create upgrade-required lookup "
+                            L"index.";
                             return finish(indexRc);
+                        }
+                    } else if (step.fromVersion == 2 && step.toVersion == 3)
+                    {
+                        const ErrorCode metadataRc =
+                            BackfillSchemaMetadataV3();
+                        if (Failed(metadataRc))
+                        {
+                            schemaVersion_ = originalSchemaVersion;
+                            result.status = SCUpgradeStatus::RolledBack;
+                            result.rolledBack = true;
+                            result.failureReason =
+                                L"Failed to persist table-level schema "
+                                L"metadata.";
+                            return finish(metadataRc);
                         }
                     } else
                     {
@@ -3888,9 +4466,22 @@ namespace StableCore::Storage
                     return rc;
                 }
 
+                const std::int64_t tableRowId = db_.LastInsertRowId();
                 SCTablePtr table = SCMakeRef<SqliteTable>(
-                    this, std::wstring{name}, db_.LastInsertRowId());
+                    this, std::wstring{name}, tableRowId);
                 tables_.emplace(name, table);
+
+                SqliteStmt metaStmt = db_.Prepare(
+                    "INSERT INTO schema_tables(table_id, description) "
+                    "VALUES(?, '') ON CONFLICT(table_id) DO UPDATE SET "
+                    "description=excluded.description;");
+                metaStmt.BindInt64(1, tableRowId);
+                const ErrorCode metaRc = metaStmt.Step();
+                if (Failed(metaRc))
+                {
+                    return metaRc;
+                }
+
                 SaveMetadata();
                 const ErrorCode commitRc = txn.Commit();
                 if (Failed(commitRc))
@@ -4671,6 +5262,126 @@ namespace StableCore::Storage
             referenceIndexDirty_ = true;
         }
 
+        ErrorCode SqliteDatabase::SyncLegacyIndexMetadata(
+            SqliteSchema* schema, const std::wstring& columnName, bool indexed)
+        {
+            if (schema == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+
+            const std::wstring indexName = schema->LegacyIndexName(columnName);
+
+            {
+                SqliteStmt deleteColumnsStmt = db_.Prepare(
+                    "DELETE FROM schema_index_columns WHERE index_id IN ("
+                    "SELECT index_id FROM schema_indexes WHERE table_id = ? "
+                    "AND name = ?);");
+                deleteColumnsStmt.BindInt64(1, schema->TableRowId());
+                deleteColumnsStmt.BindText(2, indexName);
+                const ErrorCode rc = deleteColumnsStmt.Step();
+                if (Failed(rc))
+                {
+                    return rc;
+                }
+            }
+
+            {
+                SqliteStmt deleteIndexStmt = db_.Prepare(
+                    "DELETE FROM schema_indexes WHERE table_id = ? AND "
+                    "name = ?;");
+                deleteIndexStmt.BindInt64(1, schema->TableRowId());
+                deleteIndexStmt.BindText(2, indexName);
+                const ErrorCode rc = deleteIndexStmt.Step();
+                if (Failed(rc))
+                {
+                    return rc;
+                }
+            }
+
+            if (!indexed)
+            {
+                schema->SetLegacyIndexState(columnName, false);
+                return SC_OK;
+            }
+
+            SqliteStmt insertIndexStmt = db_.Prepare(
+                "INSERT INTO schema_indexes(table_id, name, source_kind) "
+                "VALUES(?, ?, ?);");
+            insertIndexStmt.BindInt64(1, schema->TableRowId());
+            insertIndexStmt.BindText(2, indexName);
+            insertIndexStmt.BindInt(
+                3, ToSqliteSchemaSourceKind(SCSchemaSourceKind::LegacyHint));
+            const ErrorCode insertRc = insertIndexStmt.Step();
+            if (Failed(insertRc))
+            {
+                return insertRc;
+            }
+
+            const std::int64_t indexId = db_.LastInsertRowId();
+            SqliteStmt insertColumnStmt = db_.Prepare(
+                "INSERT INTO schema_index_columns(index_id, column_ordinal, "
+                "column_name, descending_flag) VALUES(?, 0, ?, 0);");
+            insertColumnStmt.BindInt64(1, indexId);
+            insertColumnStmt.BindText(2, columnName);
+            const ErrorCode columnRc = insertColumnStmt.Step();
+            if (Failed(columnRc))
+            {
+                return columnRc;
+            }
+
+            schema->SetLegacyIndexState(columnName, true);
+            return SC_OK;
+        }
+
+        ErrorCode SqliteDatabase::RemoveLegacyPrimaryKeyMetadata(
+            SqliteSchema* schema, const std::wstring& columnName)
+        {
+            if (schema == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+
+            if (!EqualsIgnoreCase(columnName, L"Id"))
+            {
+                return SC_OK;
+            }
+
+            const std::wstring pkName = schema->LegacyPrimaryKeyName();
+
+            {
+                SqliteStmt deleteColumnsStmt = db_.Prepare(
+                    "DELETE FROM schema_constraint_columns WHERE constraint_id "
+                    "IN (SELECT constraint_id FROM schema_constraints WHERE "
+                    "table_id = ? AND kind = ? AND name = ?);");
+                deleteColumnsStmt.BindInt64(1, schema->TableRowId());
+                deleteColumnsStmt.BindInt(
+                    2, ToSqliteConstraintKind(SCConstraintKind::PrimaryKey));
+                deleteColumnsStmt.BindText(3, pkName);
+                const ErrorCode rc = deleteColumnsStmt.Step();
+                if (Failed(rc))
+                {
+                    return rc;
+                }
+            }
+
+            SqliteStmt deleteConstraintStmt = db_.Prepare(
+                "DELETE FROM schema_constraints WHERE table_id = ? AND kind = ? "
+                "AND name = ?;");
+            deleteConstraintStmt.BindInt64(1, schema->TableRowId());
+            deleteConstraintStmt.BindInt(
+                2, ToSqliteConstraintKind(SCConstraintKind::PrimaryKey));
+            deleteConstraintStmt.BindText(3, pkName);
+            const ErrorCode deleteRc = deleteConstraintStmt.Step();
+            if (Failed(deleteRc))
+            {
+                return deleteRc;
+            }
+
+            schema->RemovePrimaryKeyIfColumnMatches(columnName);
+            return SC_OK;
+        }
+
         void SqliteDatabase::RefreshReferenceIndexState()
         {
             const ErrorCode rc = RebuildReferenceIndexes();
@@ -4824,6 +5535,12 @@ namespace StableCore::Storage
 
             const std::int64_t insertedRowId =
                 rowId > 0 ? rowId : db_.LastInsertRowId();
+            const ErrorCode metadataRc =
+                SyncLegacyIndexMetadata(schema, def.name, def.indexed);
+            if (Failed(metadataRc))
+            {
+                return metadataRc;
+            }
             schema->LoadColumn(def, insertedRowId);
             MarkReferenceIndexDirty();
             return SC_OK;
@@ -4903,6 +5620,12 @@ namespace StableCore::Storage
                 }
             }
 
+            const ErrorCode metadataRc =
+                SyncLegacyIndexMetadata(schema, def.name, def.indexed);
+            if (Failed(metadataRc))
+            {
+                return metadataRc;
+            }
             schema->ReplaceColumn(def);
             MarkReferenceIndexDirty();
             return SC_OK;
@@ -4921,7 +5644,6 @@ namespace StableCore::Storage
             {
                 return SC_E_COLUMN_NOT_FOUND;
             }
-            const std::int64_t rowId = schema->FindColumnRowId(columnName);
 
             auto tableIt = std::find_if(
                 tables_.begin(), tables_.end(),
@@ -4970,6 +5692,19 @@ namespace StableCore::Storage
             if (Failed(rc))
             {
                 return rc;
+            }
+
+            const ErrorCode metadataRc =
+                SyncLegacyIndexMetadata(schema, columnName, false);
+            if (Failed(metadataRc))
+            {
+                return metadataRc;
+            }
+            const ErrorCode pkMetadataRc =
+                RemoveLegacyPrimaryKeyMetadata(schema, columnName);
+            if (Failed(pkMetadataRc))
+            {
+                return pkMetadataRc;
             }
 
             for (const auto& [recordId, data] : sqliteTable->Records())
@@ -5990,11 +6725,178 @@ namespace StableCore::Storage
             return SC_E_POINTER;
         }
 
+        outDatabase.Reset();
         try
         {
-            outDatabase =
-                SCMakeRef<SqliteDatabase>(std::wstring{path}, options);
-            EnsureSqliteQueryDispatchRegistered(outDatabase.Get());
+            const auto openDatabase = [path](
+                                          const SCOpenDatabaseOptions& openOptions,
+                                          SCDbPtr* database) -> ErrorCode {
+                if (database == nullptr)
+                {
+                    return SC_E_POINTER;
+                }
+
+                try
+                {
+                    *database =
+                        SCMakeRef<SqliteDatabase>(std::wstring{path},
+                                                  openOptions);
+                    EnsureSqliteQueryDispatchRegistered(database->Get());
+                    return SC_OK;
+                } catch (...)
+                {
+                    if (database->Get() != nullptr)
+                    {
+                        if (auto* sqliteDb = dynamic_cast<SqliteDatabase*>(
+                                database->Get()))
+                        {
+                            sqliteDb->SuppressCleanShutdownOnDestroy();
+                        }
+                    }
+                    database->Reset();
+                    return SC_E_FAIL;
+                }
+            };
+
+            const auto upgradeDatabaseIfNeeded =
+                [](ISCDatabase* database) -> ErrorCode {
+                if (database == nullptr)
+                {
+                    return SC_E_POINTER;
+                }
+
+                SCVersionGraph versionGraph;
+                const ErrorCode graphRc =
+                    BuildDefaultVersionGraph(&versionGraph);
+                if (Failed(graphRc))
+                {
+                    return graphRc;
+                }
+
+                const std::int32_t currentVersion =
+                    database->GetSchemaVersion();
+                if (currentVersion > versionGraph.latestSupportedVersion)
+                {
+                    return SC_E_NOTIMPL;
+                }
+                if (currentVersion == versionGraph.latestSupportedVersion)
+                {
+                    return SC_OK;
+                }
+
+                SCUpgradePlan upgradePlan;
+                const ErrorCode planRc = BuildUpgradePlan(
+                    currentVersion, versionGraph.latestSupportedVersion,
+                    versionGraph, &upgradePlan);
+                if (Failed(planRc))
+                {
+                    return planRc;
+                }
+
+                SCUpgradeResult upgradeResult;
+                const ErrorCode upgradeRc =
+                    database->ExecuteUpgradePlan(upgradePlan, true,
+                                                 &upgradeResult);
+                if (Failed(upgradeRc))
+                {
+                    return upgradeRc;
+                }
+                return SC_OK;
+            };
+
+            if (options.openMode == SCDatabaseOpenMode::ReadOnly)
+            {
+                SCOpenDatabaseOptions readOnlyOptions = options;
+                readOnlyOptions.openMode = SCDatabaseOpenMode::ReadOnly;
+
+                SCDbPtr readOnlyDatabase;
+                ErrorCode rc = openDatabase(readOnlyOptions, &readOnlyDatabase);
+                if (Failed(rc))
+                {
+                    return rc;
+                }
+
+                SCVersionGraph versionGraph;
+                rc = BuildDefaultVersionGraph(&versionGraph);
+                if (Failed(rc))
+                {
+                    if (auto* sqliteDb = dynamic_cast<SqliteDatabase*>(
+                            readOnlyDatabase.Get()))
+                    {
+                        sqliteDb->SuppressCleanShutdownOnDestroy();
+                    }
+                    return rc;
+                }
+
+                const std::int32_t currentVersion =
+                    readOnlyDatabase->GetSchemaVersion();
+                if (currentVersion > versionGraph.latestSupportedVersion)
+                {
+                    if (auto* sqliteDb = dynamic_cast<SqliteDatabase*>(
+                            readOnlyDatabase.Get()))
+                    {
+                        sqliteDb->SuppressCleanShutdownOnDestroy();
+                    }
+                    return SC_E_NOTIMPL;
+                }
+                if (currentVersion == versionGraph.latestSupportedVersion)
+                {
+                    outDatabase = std::move(readOnlyDatabase);
+                    return SC_OK;
+                }
+
+                readOnlyDatabase.Reset();
+
+                SCOpenDatabaseOptions writableOptions = options;
+                writableOptions.openMode = SCDatabaseOpenMode::Normal;
+
+                SCDbPtr writableDatabase;
+                rc = openDatabase(writableOptions, &writableDatabase);
+                if (Failed(rc))
+                {
+                    return rc;
+                }
+
+                rc = upgradeDatabaseIfNeeded(writableDatabase.Get());
+                if (Failed(rc))
+                {
+                    if (auto* sqliteDb = dynamic_cast<SqliteDatabase*>(
+                            writableDatabase.Get()))
+                    {
+                        sqliteDb->SuppressCleanShutdownOnDestroy();
+                    }
+                    return rc;
+                }
+
+                writableDatabase.Reset();
+                rc = openDatabase(readOnlyOptions, &outDatabase);
+                if (Failed(rc))
+                {
+                    return rc;
+                }
+
+                return SC_OK;
+            }
+
+            SCDbPtr database;
+            ErrorCode rc = openDatabase(options, &database);
+            if (Failed(rc))
+            {
+                return rc;
+            }
+
+            rc = upgradeDatabaseIfNeeded(database.Get());
+            if (Failed(rc))
+            {
+                if (auto* sqliteDb = dynamic_cast<SqliteDatabase*>(
+                        database.Get()))
+                {
+                    sqliteDb->SuppressCleanShutdownOnDestroy();
+                }
+                return rc;
+            }
+
+            outDatabase = std::move(database);
             return SC_OK;
         } catch (...)
         {

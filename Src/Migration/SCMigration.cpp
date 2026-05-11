@@ -19,6 +19,13 @@ namespace StableCore::Storage
                     L"Add startup diagnostics table and field-value record "
                     L"lookup index.",
                 },
+                SCMigrationStep{
+                    2,
+                    3,
+                    L"sqlite-schema-v3",
+                    L"Persist table-level metadata, primary keys and "
+                    L"indexes.",
+                },
             };
         }
 

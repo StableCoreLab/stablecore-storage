@@ -30,6 +30,7 @@
 #include <vector>
 
 #include "SCBatch.h"
+#include "SCSchemaTableDialog.h"
 
 namespace sc = StableCore::Storage;
 
@@ -942,6 +943,8 @@ namespace StableCore::Storage::Editor
         auto* tableMenu = menuBar()->addMenu(QStringLiteral("&Table"));
         tableMenu->addAction(QStringLiteral("Create Table..."), this,
                              &SCDatabaseEditorMainWindow::CreateTable);
+        tableMenu->addAction(QStringLiteral("表结构..."), this,
+                             &SCDatabaseEditorMainWindow::OpenSchemaTableConverter);
         tableMenu->addAction(QStringLiteral("Add Column..."), this,
                              &SCDatabaseEditorMainWindow::AddColumn);
         tableMenu->addAction(QStringLiteral("Edit Selected Column..."), this,
@@ -1129,6 +1132,20 @@ namespace StableCore::Storage::Editor
         }
 
         SetStatusMessage(QStringLiteral("Backup copy created: ") + filePath);
+    }
+
+    void SCDatabaseEditorMainWindow::OpenSchemaTableConverter()
+    {
+        if (session_ == nullptr || !session_->IsOpen() ||
+            session_->CurrentTableName().isEmpty())
+        {
+            ShowError(QStringLiteral("Table Structure"),
+                      QStringLiteral("Select a current table first."));
+            return;
+        }
+
+        SCSchemaTableDialog dialog(session_, this);
+        dialog.exec();
     }
 
     void SCDatabaseEditorMainWindow::CreateTable()

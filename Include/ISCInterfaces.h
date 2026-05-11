@@ -139,6 +139,9 @@ namespace StableCore::Storage
         // Looks up a column by name.
         virtual ErrorCode FindColumn(const wchar_t* name,
                                      SCColumnDef* outDef) = 0;
+        // Returns a schema snapshot for code generation and metadata export.
+        virtual ErrorCode GetSchemaSnapshot(
+            SCTableSchemaSnapshot* outSnapshot) = 0;
         // Registers a new schema column. Unknown columns cannot be written
         // before registration.
         virtual ErrorCode AddColumn(const SCColumnDef& def) = 0;
