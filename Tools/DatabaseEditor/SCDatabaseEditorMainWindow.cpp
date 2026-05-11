@@ -30,6 +30,7 @@
 #include <vector>
 
 #include "SCBatch.h"
+#include "SCSchemaTableImportDialog.h"
 #include "SCSchemaTableDialog.h"
 
 namespace sc = StableCore::Storage;
@@ -943,6 +944,9 @@ namespace StableCore::Storage::Editor
         auto* tableMenu = menuBar()->addMenu(QStringLiteral("&Table"));
         tableMenu->addAction(QStringLiteral("Create Table..."), this,
                              &SCDatabaseEditorMainWindow::CreateTable);
+        tableMenu->addAction(QStringLiteral("Create Table From Schema..."),
+                             this,
+                             &SCDatabaseEditorMainWindow::CreateTableFromSchemaDescription);
         tableMenu->addAction(QStringLiteral("表结构..."), this,
                              &SCDatabaseEditorMainWindow::OpenSchemaTableConverter);
         tableMenu->addAction(QStringLiteral("Add Column..."), this,
@@ -1166,6 +1170,19 @@ namespace StableCore::Storage::Editor
         }
     }
 
+    void SCDatabaseEditorMainWindow::CreateTableFromSchemaDescription()
+    {
+        if (session_ == nullptr || !session_->IsOpen())
+        {
+            ShowError(QStringLiteral("Create Table From Schema Failed"),
+                      QStringLiteral("No database is open."));
+            return;
+        }
+
+        SCSchemaTableImportDialog dialog(session_, this);
+        dialog.exec();
+    }
+
     void SCDatabaseEditorMainWindow::AddColumn()
     {
         if (session_->CurrentTableName().isEmpty() && objectTree_ != nullptr &&
@@ -1253,6 +1270,9 @@ namespace StableCore::Storage::Editor
         {
             menu.addAction(QStringLiteral("Create Table..."), this,
                            &SCDatabaseEditorMainWindow::CreateTable);
+            menu.addAction(QStringLiteral("Create Table From Schema..."),
+                           this,
+                           &SCDatabaseEditorMainWindow::CreateTableFromSchemaDescription);
         } else if (nodeType == ExplorerNodeType::ComputedRoot)
         {
             menu.addAction(QStringLiteral("Add Session Computed Column..."),

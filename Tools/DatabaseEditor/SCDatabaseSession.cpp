@@ -7,6 +7,8 @@
 #include <QSaveFile>
 #include <QStringList>
 
+#include "SCSchemaTableImport.h"
+
 namespace sc = StableCore::Storage;
 
 namespace StableCore::Storage::Editor
@@ -913,6 +915,139 @@ namespace StableCore::Storage::Editor
         }
 
         emit TablesChanged();
+        return true;
+    }
+
+    bool SCDatabaseSession::CreateTableFromSchema(
+        const SCSchemaTableImportResult& schema, QString* outError)
+    {
+        if (!IsOpen())
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("No database is open.");
+            }
+            return false;
+        }
+
+        const QString tableName = schema.tableName.trimmed();
+        if (tableName.isEmpty())
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("Table name is required.");
+            }
+            return false;
+        }
+
+        if (schema.columns.isEmpty())
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("No columns were provided.");
+            }
+            return false;
+        }
+
+        sc::SCTablePtr existingTable;
+        const sc::ErrorCode lookupRc =
+            db_->GetTable(tableName.toStdWString().c_str(), existingTable);
+        if (lookupRc == sc::SC_OK)
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("Table already exists: ") +
+                            tableName;
+            }
+            return false;
+        }
+        if (lookupRc != sc::SC_E_TABLE_NOT_FOUND)
+        {
+            if (outError != nullptr)
+            {
+                *outError = ErrorToString(lookupRc);
+            }
+            return false;
+        }
+
+        const QString previousTableName = currentTableName_;
+        QStringList seenColumns;
+        for (const sc::SCColumnDef& column : schema.columns)
+        {
+            const QString columnName = ToQString(column.name).trimmed();
+            if (columnName.isEmpty())
+            {
+                if (outError != nullptr)
+                {
+                    *outError = QStringLiteral("A column name is empty.");
+                }
+                return false;
+            }
+            if (seenColumns.contains(columnName, Qt::CaseInsensitive))
+            {
+                if (outError != nullptr)
+                {
+                    *outError = QStringLiteral("Duplicate column name: ") +
+                                columnName;
+                }
+                return false;
+            }
+            seenColumns.push_back(columnName);
+        }
+
+        QString createError;
+        if (!CreateTable(tableName, &createError))
+        {
+            if (outError != nullptr)
+            {
+                *outError = createError;
+            }
+            return false;
+        }
+
+        std::int32_t addedColumns = 0;
+        for (const sc::SCColumnDef& column : schema.columns)
+        {
+            QString addError;
+            if (!AddColumn(column, &addError))
+            {
+                while (addedColumns > 0)
+                {
+                    QString undoError;
+                    if (!Undo(&undoError))
+                    {
+                        if (outError != nullptr)
+                        {
+                            *outError = QStringLiteral(
+                                            "Failed to add imported column: ") +
+                                        addError + QStringLiteral(
+                                            " (rollback failed: ") +
+                                        undoError + QStringLiteral(")");
+                        }
+                        return false;
+                    }
+                    --addedColumns;
+                }
+
+                Refresh(nullptr);
+                if (!previousTableName.isEmpty() &&
+                    previousTableName.compare(tableName, Qt::CaseInsensitive) !=
+                        0)
+                {
+                    QString restoreError;
+                    SelectTable(previousTableName, &restoreError);
+                }
+                if (outError != nullptr)
+                {
+                    *outError = QStringLiteral("Failed to add imported column \"") +
+                                ToQString(column.name) +
+                                QStringLiteral("\": ") + addError;
+                }
+                return false;
+            }
+            ++addedColumns;
+        }
+
         return true;
     }
 
@@ -2407,10 +2542,28 @@ namespace StableCore::Storage::Editor
             return false;
         }
 
+        sc::SCSchemaPtr schema;
+        const sc::ErrorCode schemaRc = currentTable_->GetSchema(schema);
+        if (sc::Failed(schemaRc))
+        {
+            if (outError != nullptr)
+            {
+                *outError = ErrorToString(schemaRc);
+            }
+            return false;
+        }
+
+        // Build the preview against a table wrapper so structural mutations
+        // are reflected without depending on a fresh lookup from the live DB.
+        sc::SCTablePtr previewTable =
+            sc::SCMakeRef<PreviewTable>(currentTable_, schema);
+        sc::SCDbPtr previewDb = sc::SCMakeRef<PreviewDatabase>(
+            db_, currentTableName_.toStdWString(), previewTable);
+
         const QVector<sc::SCComputedColumnDef> computedColumns =
             sessionComputedColumnsByTable_.value(currentTableName_);
         return BuildComputedTableView(
-            db_.Get(), currentTableName_.toStdWString(), computedColumns,
+            previewDb.Get(), currentTableName_.toStdWString(), computedColumns,
             [this](sc::ErrorCode error) { return ErrorToString(error); },
             outView, outError);
     }

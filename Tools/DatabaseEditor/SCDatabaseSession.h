@@ -15,6 +15,8 @@
 namespace StableCore::Storage::Editor
 {
 
+    struct SCSchemaTableImportResult;
+
     class SCDatabaseSession final : public QObject
     {
         Q_OBJECT
@@ -49,6 +51,9 @@ namespace StableCore::Storage::Editor
             QString* outError) const;
         bool Refresh(QString* outError);
         bool CreateTable(const QString& tableName, QString* outError);
+        bool CreateTableFromSchema(
+            const SCSchemaTableImportResult& schema,
+            QString* outError);
         bool SelectTable(const QString& tableName, QString* outError);
         bool AddColumn(const StableCore::Storage::SCColumnDef& column,
                        QString* outError);

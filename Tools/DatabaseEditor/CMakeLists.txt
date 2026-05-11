@@ -7,6 +7,10 @@ add_executable(SCStorageDatabaseEditor
     SCDatabaseEditorMainWindow.h
     SCDatabaseSession.cpp
     SCDatabaseSession.h
+    SCSchemaTableImport.cpp
+    SCSchemaTableImport.h
+    SCSchemaTableImportDialog.cpp
+    SCSchemaTableImportDialog.h
     SCSchemaTableDialog.cpp
     SCSchemaTableDialog.h
     SCSchemaTableGenerator.cpp
@@ -29,6 +33,10 @@ SCStorageSourceGroupTree("${CMAKE_CURRENT_SOURCE_DIR}"
     SCDatabaseEditorMainWindow.h
     SCDatabaseSession.cpp
     SCDatabaseSession.h
+    SCSchemaTableImport.cpp
+    SCSchemaTableImport.h
+    SCSchemaTableImportDialog.cpp
+    SCSchemaTableImportDialog.h
     SCSchemaTableDialog.cpp
     SCSchemaTableDialog.h
     SCSchemaTableGenerator.cpp
