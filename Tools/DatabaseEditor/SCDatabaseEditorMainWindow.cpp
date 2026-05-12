@@ -685,8 +685,11 @@ namespace StableCore::Storage::Editor
                     UpdateGridSummary();
                     RefreshOverviewPanels();
                     dataTable_->resizeColumnsToContents();
-                    SetStatusMessage(QStringLiteral("Table selected: ") +
-                                     session_->CurrentTableName());
+                    const QString currentTableName = session_->CurrentTableName();
+                    SetStatusMessage(currentTableName.isEmpty()
+                                         ? QStringLiteral("Table selection cleared.")
+                                         : QStringLiteral("Table selected: ") +
+                                               currentTableName);
                 });
         connect(recordModel_, &QAbstractItemModel::modelReset, this,
                 &SCDatabaseEditorMainWindow::UpdateGridSummary);
@@ -947,6 +950,8 @@ namespace StableCore::Storage::Editor
         tableMenu->addAction(QStringLiteral("Create Table From Schema..."),
                              this,
                              &SCDatabaseEditorMainWindow::CreateTableFromSchemaDescription);
+        tableMenu->addAction(QStringLiteral("Delete Selected Table"), this,
+                             &SCDatabaseEditorMainWindow::DeleteSelectedTable);
         tableMenu->addAction(QStringLiteral("表结构..."), this,
                              &SCDatabaseEditorMainWindow::OpenSchemaTableConverter);
         tableMenu->addAction(QStringLiteral("Add Column..."), this,
@@ -1266,6 +1271,8 @@ namespace StableCore::Storage::Editor
             selectAction->setEnabled(true);
             menu.addAction(QStringLiteral("Add Column..."), this,
                            &SCDatabaseEditorMainWindow::AddColumn);
+            menu.addAction(QStringLiteral("Delete Table..."), this,
+                           &SCDatabaseEditorMainWindow::DeleteSelectedTable);
         } else if (nodeType == ExplorerNodeType::TablesRoot)
         {
             menu.addAction(QStringLiteral("Create Table..."), this,
@@ -1285,6 +1292,59 @@ namespace StableCore::Storage::Editor
         }
 
         menu.exec(objectTree_->mapToGlobal(pos));
+    }
+
+    void SCDatabaseEditorMainWindow::DeleteSelectedTable()
+    {
+        if (session_ == nullptr || !session_->IsOpen())
+        {
+            ShowError(QStringLiteral("Delete Table Failed"),
+                      QStringLiteral("No database is open."));
+            return;
+        }
+
+        QString tableName;
+        if (objectTree_ != nullptr && objectTree_->currentItem() != nullptr)
+        {
+            const ExplorerNodeType nodeType = static_cast<ExplorerNodeType>(
+                objectTree_->currentItem()->data(0, kExplorerNodeTypeRole)
+                    .toInt());
+            if (nodeType == ExplorerNodeType::Table)
+            {
+                tableName =
+                    objectTree_->currentItem()->data(0, kExplorerNodeNameRole)
+                        .toString();
+            }
+        }
+
+        if (tableName.isEmpty())
+        {
+            tableName = session_->CurrentTableName();
+        }
+
+        if (tableName.isEmpty())
+        {
+            ShowError(QStringLiteral("Delete Table Failed"),
+                      QStringLiteral("Select a table first."));
+            return;
+        }
+
+        const QMessageBox::StandardButton answer = QMessageBox::question(
+            this, QStringLiteral("Delete Table"),
+            QStringLiteral("Delete table \"%1\"?").arg(tableName));
+        if (answer != QMessageBox::Yes)
+        {
+            return;
+        }
+
+        QString error;
+        if (!session_->DeleteTable(tableName, &error))
+        {
+            ShowError(QStringLiteral("Delete Table Failed"), error);
+            return;
+        }
+
+        SetStatusMessage(QStringLiteral("Table deleted: ") + tableName);
     }
 
     void SCDatabaseEditorMainWindow::DeleteSelectedColumn()

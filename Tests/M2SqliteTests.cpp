@@ -235,6 +235,10 @@ namespace
         {
             return inner_->CreateTable(name, outTable);
         }
+        sc::ErrorCode DeleteTable(const wchar_t* name) override
+        {
+            return inner_->DeleteTable(name);
+        }
         sc::ErrorCode ClearColumnValues(sc::ISCTable* table,
                                         const wchar_t* name) override
         {
@@ -347,6 +351,10 @@ namespace
                                   sc::SCTablePtr& outTable) override
         {
             return inner_->CreateTable(name, outTable);
+        }
+        sc::ErrorCode DeleteTable(const wchar_t* name) override
+        {
+            return inner_->DeleteTable(name);
         }
         sc::ErrorCode ClearColumnValues(sc::ISCTable* table,
                                         const wchar_t* name) override

@@ -254,6 +254,7 @@ namespace StableCore::Storage
                                    SCTablePtr& outTable) = 0;
         virtual ErrorCode CreateTable(const wchar_t* name,
                                       SCTablePtr& outTable) = 0;
+        virtual ErrorCode DeleteTable(const wchar_t* name) = 0;
         // Clears persisted values for a column across records in a table.
         virtual ErrorCode ClearColumnValues(ISCTable* table,
                                             const wchar_t* name) = 0;

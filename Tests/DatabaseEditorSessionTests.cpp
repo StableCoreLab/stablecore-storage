@@ -412,6 +412,55 @@ TEST(DatabaseEditorSession, CreateTableSelectsCurrentTableForEditing)
         << error.toStdString();
 }
 
+TEST(DatabaseEditorSession, DeleteTableRemovesTableAndKeepsFallbackSelection)
+{
+    const fs::path dbPath =
+        MakeTempDbPath(L"StableCoreStorage_DbEditor_DeleteTable.sqlite");
+
+    editor::SCDatabaseSession session;
+    QString error;
+
+    ASSERT_TRUE(session.CreateDatabase(
+        QString::fromStdWString(dbPath.wstring()), &error))
+        << error.toStdString();
+    ASSERT_TRUE(session.CreateTable(QStringLiteral("Beam"), &error))
+        << error.toStdString();
+    ASSERT_TRUE(session.AddColumn(MakeIntColumn(L"Width"), &error))
+        << error.toStdString();
+    ASSERT_TRUE(session.CreateTable(QStringLiteral("Colum"), &error))
+        << error.toStdString();
+    ASSERT_TRUE(session.AddColumn(MakeStringColumn(L"Name"), &error))
+        << error.toStdString();
+
+    ASSERT_TRUE(session.SelectTable(QStringLiteral("Beam"), &error))
+        << error.toStdString();
+    ASSERT_TRUE(session.DeleteTable(QStringLiteral("Beam"), &error))
+        << error.toStdString();
+
+    EXPECT_EQ(session.CurrentTableName(), QStringLiteral("Colum"));
+    EXPECT_EQ(session.TableNames(),
+              (QStringList{QStringLiteral("Colum")}));
+
+    QVector<sc::SCColumnDef> columns;
+    ASSERT_TRUE(session.BuildSchemaSnapshot(&columns, &error))
+        << error.toStdString();
+    ASSERT_EQ(columns.size(), 1);
+    EXPECT_EQ(columns[0].name, L"Name");
+
+    ASSERT_TRUE(session.CloseDatabase(&error)) << error.toStdString();
+    ASSERT_TRUE(session.OpenDatabase(
+        QString::fromStdWString(dbPath.wstring()), &error))
+        << error.toStdString();
+
+    EXPECT_FALSE(session.SelectTable(QStringLiteral("Beam"), &error));
+    ASSERT_TRUE(session.SelectTable(QStringLiteral("Colum"), &error))
+        << error.toStdString();
+    ASSERT_TRUE(session.BuildSchemaSnapshot(&columns, &error))
+        << error.toStdString();
+    ASSERT_EQ(columns.size(), 1);
+    EXPECT_EQ(columns[0].name, L"Name");
+}
+
 TEST(DatabaseEditorSession, AddAndDeleteRecordStayOnCurrentTable)
 {
     const fs::path dbPath =

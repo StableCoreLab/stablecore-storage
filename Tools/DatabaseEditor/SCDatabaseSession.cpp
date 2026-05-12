@@ -211,6 +211,10 @@ namespace StableCore::Storage::Editor
             {
                 return inner_->CreateTable(name, outTable);
             }
+            sc::ErrorCode DeleteTable(const wchar_t* name) override
+            {
+                return inner_->DeleteTable(name);
+            }
             sc::ErrorCode ClearColumnValues(sc::ISCTable* table,
                                             const wchar_t* name) override
             {
@@ -1048,6 +1052,110 @@ namespace StableCore::Storage::Editor
             ++addedColumns;
         }
 
+        return true;
+    }
+
+    bool SCDatabaseSession::DeleteTable(const QString& tableName,
+                                        QString* outError)
+    {
+        if (!IsOpen())
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("No database is open.");
+            }
+            return false;
+        }
+
+        const QString requestedName = tableName.trimmed();
+        if (requestedName.isEmpty())
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("Table name is required.");
+            }
+            return false;
+        }
+
+        QString canonicalName = requestedName;
+        for (const QString& existingName : tableNames_)
+        {
+            if (existingName.compare(requestedName, Qt::CaseInsensitive) == 0)
+            {
+                canonicalName = existingName;
+                break;
+            }
+        }
+
+        const QStringList previousTableNames = tableNames_;
+        const bool deletingCurrent =
+            currentTableName_.compare(canonicalName, Qt::CaseInsensitive) == 0;
+
+        const bool ok = BeginAndCommitSingleAction(
+            L"Delete Table",
+            [this, canonicalNameW = canonicalName.toStdWString()]() {
+                return db_->DeleteTable(canonicalNameW.c_str());
+            },
+            outError);
+        if (!ok)
+        {
+            return false;
+        }
+
+        sessionComputedColumnsByTable_.remove(canonicalName);
+
+        if (deletingCurrent)
+        {
+            currentTable_.Reset();
+            currentTableView_.Reset();
+            currentTableName_.clear();
+        }
+
+        if (!LoadTableNames(outError))
+        {
+            return false;
+        }
+
+        if (!deletingCurrent)
+        {
+            emit TablesChanged();
+            return true;
+        }
+
+        QString fallbackSelection;
+        const int deletedIndex = previousTableNames.indexOf(
+            canonicalName, 0, Qt::CaseInsensitive);
+        if (deletedIndex >= 0)
+        {
+            if (deletedIndex + 1 < previousTableNames.size())
+            {
+                fallbackSelection = previousTableNames.at(deletedIndex + 1);
+            }
+            else if (deletedIndex - 1 >= 0)
+            {
+                fallbackSelection = previousTableNames.at(deletedIndex - 1);
+            }
+        }
+
+        if (!fallbackSelection.isEmpty())
+        {
+            QString selectError;
+            if (!SelectTable(fallbackSelection, &selectError))
+            {
+                if (outError != nullptr)
+                {
+                    *outError = selectError;
+                }
+                return false;
+            }
+        }
+        else
+        {
+            emit CurrentTableChanged();
+            emit RecordsChanged();
+        }
+
+        emit TablesChanged();
         return true;
     }
 

@@ -2124,6 +2124,7 @@ namespace StableCore::Storage
                                SCTablePtr& outTable) override;
             ErrorCode CreateTable(const wchar_t* name,
                                   SCTablePtr& outTable) override;
+            ErrorCode DeleteTable(const wchar_t* name) override;
             ErrorCode AddObserver(ISCDatabaseObserver* observer) override;
             ErrorCode RemoveObserver(ISCDatabaseObserver* observer) override;
             ErrorCode ExecuteUpgradePlan(const SCUpgradePlan& plan,
@@ -4492,10 +4493,250 @@ namespace StableCore::Storage
                 MarkReferenceIndexDirty();
                 outTable = std::move(table);
                 return SC_OK;
+            }
+            catch (...)
+            {
+                return SC_E_FAIL;
+            }
+        }
+
+        ErrorCode SqliteDatabase::DeleteTable(const wchar_t* name)
+        {
+            const ErrorCode writableRc = EnsureWritable();
+            if (Failed(writableRc))
+            {
+                return writableRc;
+            }
+            if (name == nullptr || *name == L'\0')
+            {
+                return SC_E_INVALIDARG;
+            }
+
+            const std::wstring tableName{name};
+
+            const auto tableIt = tables_.find(tableName);
+            if (tableIt == tables_.end())
+            {
+                return SC_E_TABLE_NOT_FOUND;
+            }
+
+            auto* table = static_cast<SqliteTable*>(tableIt->second.Get());
+            if (table == nullptr)
+            {
+                return SC_E_FAIL;
+            }
+
+            for (const auto& [otherName, otherTableRef] : tables_)
+            {
+                if (EqualsIgnoreCase(otherName, tableName))
+                {
+                    continue;
+                }
+
+                auto* otherTable = static_cast<SqliteTable*>(otherTableRef.Get());
+                if (otherTable == nullptr)
+                {
+                    continue;
+                }
+
+                SCSchemaPtr otherSchema;
+                const ErrorCode schemaRc = otherTable->GetSchema(otherSchema);
+                if (Failed(schemaRc) || !otherSchema)
+                {
+                    continue;
+                }
+
+                std::int32_t columnCount = 0;
+                const ErrorCode columnCountRc =
+                    otherSchema->GetColumnCount(&columnCount);
+                if (Failed(columnCountRc))
+                {
+                    return columnCountRc;
+                }
+
+                for (std::int32_t columnIndex = 0; columnIndex < columnCount;
+                     ++columnIndex)
+                {
+                    SCColumnDef column;
+                    const ErrorCode columnRc =
+                        otherSchema->GetColumn(columnIndex, &column);
+                    if (Failed(columnRc))
+                    {
+                        return columnRc;
+                    }
+                    if (column.columnKind == ColumnKind::Relation &&
+                        EqualsIgnoreCase(column.referenceTable, tableName))
+                    {
+                        return SC_E_CONSTRAINT_VIOLATION;
+                    }
+                }
+            }
+
+            SCSchemaPtr schema;
+            if (Failed(table->GetSchema(schema)) || !schema)
+            {
+                return SC_E_FAIL;
+            }
+
+            std::vector<std::wstring> indexedColumns;
+            std::int32_t schemaColumnCount = 0;
+            const ErrorCode schemaCountRc =
+                schema->GetColumnCount(&schemaColumnCount);
+            if (Failed(schemaCountRc))
+            {
+                return schemaCountRc;
+            }
+
+            for (std::int32_t columnIndex = 0; columnIndex < schemaColumnCount;
+                 ++columnIndex)
+            {
+                SCColumnDef column;
+                const ErrorCode columnRc =
+                    schema->GetColumn(columnIndex, &column);
+                if (Failed(columnRc))
+                {
+                    return columnRc;
+                }
+                if (column.indexed)
+                {
+                    indexedColumns.push_back(column.name);
+                }
+            }
+
+            try
+            {
+                SqliteTxn txn(db_);
+
+                if (HasTable(L"schema_constraint_columns"))
+                {
+                    SqliteStmt deleteConstraintColumnsStmt = db_.Prepare(
+                        "DELETE FROM schema_constraint_columns WHERE "
+                        "constraint_id IN (SELECT constraint_id FROM "
+                        "schema_constraints WHERE table_id = ?);");
+                    deleteConstraintColumnsStmt.BindInt64(1, table->TableRowId());
+                    const ErrorCode rc = deleteConstraintColumnsStmt.Step();
+                    if (Failed(rc))
+                    {
+                        return rc;
+                    }
+                }
+
+                if (HasTable(L"schema_constraints"))
+                {
+                    SqliteStmt deleteConstraintsStmt = db_.Prepare(
+                        "DELETE FROM schema_constraints WHERE table_id = ?;");
+                    deleteConstraintsStmt.BindInt64(1, table->TableRowId());
+                    const ErrorCode rc = deleteConstraintsStmt.Step();
+                    if (Failed(rc))
+                    {
+                        return rc;
+                    }
+                }
+
+                if (HasTable(L"schema_index_columns"))
+                {
+                    SqliteStmt deleteIndexColumnsStmt = db_.Prepare(
+                        "DELETE FROM schema_index_columns WHERE index_id IN "
+                        "(SELECT index_id FROM schema_indexes WHERE "
+                        "table_id = ?);");
+                    deleteIndexColumnsStmt.BindInt64(1, table->TableRowId());
+                    const ErrorCode rc = deleteIndexColumnsStmt.Step();
+                    if (Failed(rc))
+                    {
+                        return rc;
+                    }
+                }
+
+                if (HasTable(L"schema_indexes"))
+                {
+                    SqliteStmt deleteIndexesStmt = db_.Prepare(
+                        "DELETE FROM schema_indexes WHERE table_id = ?;");
+                    deleteIndexesStmt.BindInt64(1, table->TableRowId());
+                    const ErrorCode rc = deleteIndexesStmt.Step();
+                    if (Failed(rc))
+                    {
+                        return rc;
+                    }
+                }
+
+                if (HasTable(L"schema_tables"))
+                {
+                    SqliteStmt deleteTableMetaStmt = db_.Prepare(
+                        "DELETE FROM schema_tables WHERE table_id = ?;");
+                    deleteTableMetaStmt.BindInt64(1, table->TableRowId());
+                    const ErrorCode rc = deleteTableMetaStmt.Step();
+                    if (Failed(rc))
+                    {
+                        return rc;
+                    }
+                }
+
+                for (const std::wstring& columnName : indexedColumns)
+                {
+                    const std::wstring indexName =
+                        L"idx_fv_" + std::to_wstring(table->TableRowId()) + L"_" +
+                        SanitizeIdentifier(columnName);
+                    const std::string dropIndexSql =
+                        "DROP INDEX IF EXISTS " + ToUtf8(indexName) + ";";
+                    SqliteStmt dropIndexStmt = db_.Prepare(dropIndexSql.c_str());
+                    const ErrorCode rc = dropIndexStmt.Step();
+                    if (Failed(rc))
+                    {
+                        return rc;
+                    }
+                }
+
+                SqliteStmt deleteFieldValuesStmt = db_.Prepare(
+                    "DELETE FROM field_values WHERE table_id = ?;");
+                deleteFieldValuesStmt.BindInt64(1, table->TableRowId());
+                const ErrorCode deleteFieldValuesRc =
+                    deleteFieldValuesStmt.Step();
+                if (Failed(deleteFieldValuesRc))
+                {
+                    return deleteFieldValuesRc;
+                }
+
+                SqliteStmt deleteRecordsStmt = db_.Prepare(
+                    "DELETE FROM records WHERE table_id = ?;");
+                deleteRecordsStmt.BindInt64(1, table->TableRowId());
+                const ErrorCode deleteRecordsRc = deleteRecordsStmt.Step();
+                if (Failed(deleteRecordsRc))
+                {
+                    return deleteRecordsRc;
+                }
+
+                SqliteStmt deleteColumnsStmt = db_.Prepare(
+                    "DELETE FROM schema_columns WHERE table_id = ?;");
+                deleteColumnsStmt.BindInt64(1, table->TableRowId());
+                const ErrorCode deleteColumnsRc = deleteColumnsStmt.Step();
+                if (Failed(deleteColumnsRc))
+                {
+                    return deleteColumnsRc;
+                }
+
+                SqliteStmt deleteTableStmt = db_.Prepare(
+                    "DELETE FROM tables WHERE table_id = ?;");
+                deleteTableStmt.BindInt64(1, table->TableRowId());
+                const ErrorCode deleteRc = deleteTableStmt.Step();
+                if (Failed(deleteRc))
+                {
+                    return deleteRc;
+                }
+
+                SaveMetadata();
+                const ErrorCode commitRc = txn.Commit();
+                if (Failed(commitRc))
+                {
+                    return commitRc;
+                }
             } catch (...)
             {
                 return SC_E_FAIL;
             }
+
+            tables_.erase(tableIt);
+            MarkReferenceIndexDirty();
+            return SC_OK;
         }
 
         ErrorCode SqliteDatabase::AddObserver(ISCDatabaseObserver* observer)

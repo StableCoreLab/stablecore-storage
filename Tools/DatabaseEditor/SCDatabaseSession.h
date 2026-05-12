@@ -54,6 +54,7 @@ namespace StableCore::Storage::Editor
         bool CreateTableFromSchema(
             const SCSchemaTableImportResult& schema,
             QString* outError);
+        bool DeleteTable(const QString& tableName, QString* outError);
         bool SelectTable(const QString& tableName, QString* outError);
         bool AddColumn(const StableCore::Storage::SCColumnDef& column,
                        QString* outError);

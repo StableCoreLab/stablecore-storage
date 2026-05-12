@@ -6,6 +6,7 @@ Current capabilities:
 
 - Create and open SQLite databases
 - Create tables from a table name or from `SC_SCHEMA_TABLE(...)` schema text
+- Delete tables from the object explorer or Table menu
 - Add fact columns and relation columns
 - Browse, add, delete, and edit records
 - Inspect schema, selected records, computed columns, and relation bindings
@@ -67,10 +68,17 @@ SC_SCHEMA_TABLE(ProjectInfo)
 
 This feature creates the table and its columns from the schema description. Column descriptions are imported as display names. Table descriptions and primary keys are treated as import hints unless the underlying storage model can persist them.
 
+## Table Deletion
+
+`Delete Selected Table` removes the chosen table explicitly.
+
+- The operation is treated as destructive and is not currently undoable.
+- Use it only after confirming the table is no longer needed.
+- See [Docs/DatabaseEditorTableDeletionSemantics.md](../../Docs/DatabaseEditorTableDeletionSemantics.md) for the current behavior contract.
+
 ## Related Files
 
 - `Tools/DatabaseEditor/SCDatabaseEditorMainWindow.cpp`
 - `Tools/DatabaseEditor/SCDatabaseSession.cpp`
 - `Tools/DatabaseEditor/SCSchemaTableImport.cpp`
 - `Tools/DatabaseEditor/SCSchemaTableImportDialog.cpp`
-
