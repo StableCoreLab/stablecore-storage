@@ -38,6 +38,16 @@ namespace
         return column;
     }
 
+    sc::SCColumnDef MakeRequiredIntColumnWithoutDefault(const wchar_t* name)
+    {
+        sc::SCColumnDef column;
+        column.name = name;
+        column.displayName = name;
+        column.valueKind = sc::ValueKind::Int64;
+        column.nullable = false;
+        return column;
+    }
+
     sc::SCColumnDef MakeStringColumn(const wchar_t* name)
     {
         sc::SCColumnDef column;
@@ -126,6 +136,160 @@ TEST(DatabaseEditorSession, ExecuteBatchEditCreatesRecordsWithValues)
     std::wstring code;
     ASSERT_EQ(record->GetStringCopy(L"Code", &code), sc::SC_OK);
     EXPECT_EQ(code, L"Beam-A");
+}
+
+TEST(DatabaseEditorSession,
+     AddColumnAllowsNonNullableColumnsWithoutDefaultOnEmptyTable)
+{
+    const fs::path dbPath = MakeTempDbPath(
+        L"StableCoreStorage_DbEditor_AddColumnRequiresDefault.sqlite");
+
+    editor::SCDatabaseSession session;
+    QString error;
+
+    ASSERT_TRUE(session.CreateDatabase(
+        QString::fromStdWString(dbPath.wstring()), &error))
+        << error.toStdString();
+    ASSERT_TRUE(session.CreateTable(QStringLiteral("Beam"), &error))
+        << error.toStdString();
+
+    EXPECT_TRUE(
+        session.AddColumn(MakeRequiredIntColumnWithoutDefault(L"Width"), &error))
+        << error.toStdString();
+}
+
+TEST(DatabaseEditorSession,
+     AddColumnRejectsNonNullableColumnsWithoutDefaultWhenTableHasRecords)
+{
+    const fs::path dbPath = MakeTempDbPath(
+        L"StableCoreStorage_DbEditor_AddColumnHasRecords.sqlite");
+
+    editor::SCDatabaseSession session;
+    QString error;
+
+    ASSERT_TRUE(session.CreateDatabase(
+        QString::fromStdWString(dbPath.wstring()), &error))
+        << error.toStdString();
+    ASSERT_TRUE(session.CreateTable(QStringLiteral("Beam"), &error))
+        << error.toStdString();
+    ASSERT_TRUE(session.AddColumn(MakeIntColumn(L"Id"), &error))
+        << error.toStdString();
+    ASSERT_TRUE(session.AddRecord(&error)) << error.toStdString();
+
+    EXPECT_FALSE(
+        session.AddColumn(MakeRequiredIntColumnWithoutDefault(L"Width"), &error));
+    EXPECT_EQ(error, QStringLiteral("Storage error: 0xffffffffa0010008"));
+}
+
+TEST(DatabaseEditorSession,
+     AddRecordCreatesPendingEditForRequiredColumnsAndSaveRequiresValues)
+{
+    const fs::path dbPath = MakeTempDbPath(
+        L"StableCoreStorage_DbEditor_AddRecordNeedsRequiredValue.sqlite");
+
+    editor::SCDatabaseSession session;
+    QString error;
+
+    ASSERT_TRUE(session.CreateDatabase(
+        QString::fromStdWString(dbPath.wstring()), &error))
+        << error.toStdString();
+    ASSERT_TRUE(session.CreateTable(QStringLiteral("Beam"), &error))
+        << error.toStdString();
+    ASSERT_TRUE(session.AddColumn(MakeRequiredIntColumnWithoutDefault(L"Width"),
+                                  &error))
+        << error.toStdString();
+
+    ASSERT_TRUE(session.AddRecord(&error)) << error.toStdString();
+
+    EXPECT_TRUE(session.HasPendingEdit());
+
+    EXPECT_FALSE(session.SavePendingChanges(&error));
+    EXPECT_EQ(error, QStringLiteral("Storage error: 0xffffffffa0010008"));
+
+    ASSERT_TRUE(session.DiscardPendingChanges(&error)) << error.toStdString();
+
+    ASSERT_TRUE(session.CurrentTable() != nullptr);
+    sc::SCRecordCursorPtr cursor;
+    ASSERT_EQ(session.CurrentTable()->EnumerateRecords(cursor), sc::SC_OK);
+    sc::SCRecordPtr record;
+    ASSERT_EQ(cursor->Next(record), sc::SC_OK);
+    EXPECT_FALSE(static_cast<bool>(record));
+}
+
+TEST(DatabaseEditorSession,
+     AddRecordAllowsExplicitRequiredValuesBeforeSave)
+{
+    const fs::path dbPath = MakeTempDbPath(
+        L"StableCoreStorage_DbEditor_AddRecordRequiredSave.sqlite");
+
+    editor::SCDatabaseSession session;
+    QString error;
+
+    ASSERT_TRUE(session.CreateDatabase(
+        QString::fromStdWString(dbPath.wstring()), &error))
+        << error.toStdString();
+    ASSERT_TRUE(session.CreateTable(QStringLiteral("Beam"), &error))
+        << error.toStdString();
+    ASSERT_TRUE(session.AddColumn(MakeRequiredIntColumnWithoutDefault(L"Width"),
+                                  &error))
+        << error.toStdString();
+
+    ASSERT_TRUE(session.AddRecord(&error)) << error.toStdString();
+    ASSERT_TRUE(session.CurrentTable() != nullptr);
+
+    sc::SCRecordCursorPtr cursor;
+    ASSERT_EQ(session.CurrentTable()->EnumerateRecords(cursor), sc::SC_OK);
+    sc::SCRecordPtr record;
+    ASSERT_EQ(cursor->Next(record), sc::SC_OK);
+    ASSERT_TRUE(static_cast<bool>(record));
+    ASSERT_TRUE(session.SetCellValue(record->GetId(), QStringLiteral("Width"),
+                                     QVariant::fromValue<qlonglong>(42),
+                                     &error))
+        << error.toStdString();
+
+    ASSERT_TRUE(session.SavePendingChanges(&error)) << error.toStdString();
+
+    EXPECT_FALSE(session.HasPendingEdit());
+
+    ASSERT_EQ(session.CurrentTable()->EnumerateRecords(cursor), sc::SC_OK);
+    ASSERT_EQ(cursor->Next(record), sc::SC_OK);
+    ASSERT_TRUE(static_cast<bool>(record));
+    std::int64_t width = 0;
+    ASSERT_EQ(record->GetInt64(L"Width", &width), sc::SC_OK);
+    EXPECT_EQ(width, 42);
+}
+
+TEST(DatabaseEditorSession, PendingRequiredEditBlocksTableSwitchUntilSaved)
+{
+    const fs::path dbPath = MakeTempDbPath(
+        L"StableCoreStorage_DbEditor_AddRecordBlocksTableSwitch.sqlite");
+
+    editor::SCDatabaseSession session;
+    QString error;
+
+    ASSERT_TRUE(session.CreateDatabase(
+        QString::fromStdWString(dbPath.wstring()), &error))
+        << error.toStdString();
+    ASSERT_TRUE(session.CreateTable(QStringLiteral("Beam"), &error))
+        << error.toStdString();
+    ASSERT_TRUE(session.AddColumn(MakeRequiredIntColumnWithoutDefault(L"Width"),
+                                  &error))
+        << error.toStdString();
+    ASSERT_TRUE(session.CreateTable(QStringLiteral("Other"), &error))
+        << error.toStdString();
+
+    ASSERT_TRUE(session.SelectTable(QStringLiteral("Beam"), &error))
+        << error.toStdString();
+    ASSERT_TRUE(session.AddRecord(&error)) << error.toStdString();
+
+    EXPECT_FALSE(session.SelectTable(QStringLiteral("Other"), &error));
+    EXPECT_EQ(error, QStringLiteral(
+                         "Save or discard pending changes before switching "
+                         "tables."));
+
+    ASSERT_TRUE(session.DiscardPendingChanges(&error)) << error.toStdString();
+    ASSERT_TRUE(session.SelectTable(QStringLiteral("Other"), &error))
+        << error.toStdString();
 }
 
 TEST(DatabaseEditorSession, ExecuteBatchEditRollsBackOnInvalidAssignment)

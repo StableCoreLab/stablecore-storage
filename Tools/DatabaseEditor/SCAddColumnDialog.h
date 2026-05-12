@@ -5,7 +5,9 @@
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QFormLayout>
+#include <QLabel>
 #include <QLineEdit>
+#include <QPushButton>
 
 #include "SCStorage.h"
 
@@ -23,9 +25,11 @@ namespace StableCore::Storage::Editor
             QWidget* parent = nullptr);
 
         StableCore::Storage::SCColumnDef BuildColumnDef() const;
+        void SetCurrentTableHasRecords(bool hasRecords);
 
     private:
         void ApplyInitialValue(const StableCore::Storage::SCColumnDef& value);
+        void UpdateValidationState();
         QLineEdit* nameEdit_{nullptr};
         QLineEdit* displayNameEdit_{nullptr};
         QComboBox* valueKindCombo_{nullptr};
@@ -38,6 +42,10 @@ namespace StableCore::Storage::Editor
         QLineEdit* unitEdit_{nullptr};
         QLineEdit* referenceTableEdit_{nullptr};
         QLineEdit* defaultValueEdit_{nullptr};
+        QLabel* validationLabel_{nullptr};
+        QDialogButtonBox* buttonBox_{nullptr};
+        QPushButton* okButton_{nullptr};
+        bool currentTableHasRecords_{false};
     };
 
 }  // namespace StableCore::Storage::Editor

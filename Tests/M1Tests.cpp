@@ -79,6 +79,16 @@ namespace
         return table;
     }
 
+    sc::SCColumnDef MakeRequiredIntColumnWithoutDefault(const wchar_t* name)
+    {
+        sc::SCColumnDef column;
+        column.name = name;
+        column.displayName = name;
+        column.valueKind = sc::ValueKind::Int64;
+        column.nullable = false;
+        return column;
+    }
+
 }  // namespace
 
 TEST(StorageM1, ValueTypedAccess)
@@ -172,6 +182,33 @@ TEST(StorageM1, SchemaUpdateColumnReplacesDefinition)
     EXPECT_EQ(loaded.valueKind, sc::ValueKind::String);
 }
 
+TEST(StorageM1, UpdateColumnAllowsRequiredColumnOnEmptyTableWithoutDefault)
+{
+    sc::SCDbPtr db;
+    EXPECT_EQ(CreateFileDb(
+                  L"StableCoreStorage_M1_UpdateColumnAllowsRequiredColumnOnEmptyTableWithoutDefault.sqlite",
+                  db),
+              sc::SC_OK);
+
+    sc::SCTablePtr table;
+    EXPECT_EQ(db->CreateTable(L"Beam", table), sc::SC_OK);
+
+    sc::SCSchemaPtr schema;
+    EXPECT_EQ(table->GetSchema(schema), sc::SC_OK);
+
+    sc::SCColumnDef width;
+    width.name = L"Width";
+    width.displayName = L"Width";
+    width.valueKind = sc::ValueKind::Int64;
+    width.defaultValue = sc::SCValue::FromInt64(0);
+    EXPECT_EQ(schema->AddColumn(width), sc::SC_OK);
+
+    sc::SCColumnDef updated = width;
+    updated.nullable = false;
+    updated.defaultValue = sc::SCValue::Null();
+    EXPECT_EQ(schema->UpdateColumn(updated), sc::SC_OK);
+}
+
 TEST(StorageM1, SchemaUpdateColumnMigratesCompatibleValues)
 {
     sc::SCDbPtr db;
@@ -250,6 +287,85 @@ TEST(StorageM1, SchemaUpdateColumnRejectsIncompatibleValues)
     sc::SCColumnDef loaded;
     EXPECT_EQ(schema->FindColumn(L"Name", &loaded), sc::SC_OK);
     EXPECT_EQ(loaded.valueKind, sc::ValueKind::String);
+}
+
+TEST(StorageM1, AddColumnAllowsRequiredColumnOnEmptyTableWithoutDefault)
+{
+    sc::SCDbPtr db;
+    EXPECT_EQ(CreateFileDb(
+                  L"StableCoreStorage_M1_AddColumnAllowsRequiredColumnOnEmptyTableWithoutDefault.sqlite",
+                  db),
+              sc::SC_OK);
+
+    sc::SCTablePtr table;
+    EXPECT_EQ(db->CreateTable(L"Beam", table), sc::SC_OK);
+
+    sc::SCSchemaPtr schema;
+    EXPECT_EQ(table->GetSchema(schema), sc::SC_OK);
+
+    EXPECT_EQ(schema->AddColumn(MakeRequiredIntColumnWithoutDefault(L"Width")),
+              sc::SC_OK);
+}
+
+TEST(StorageM1, CommitRejectsMissingRequiredValuesForNewRecords)
+{
+    sc::SCDbPtr db;
+    EXPECT_EQ(CreateFileDb(
+                  L"StableCoreStorage_M1_CommitRejectsMissingRequiredValuesForNewRecords.sqlite",
+                  db),
+              sc::SC_OK);
+
+    sc::SCTablePtr table;
+    EXPECT_EQ(db->CreateTable(L"Beam", table), sc::SC_OK);
+
+    sc::SCSchemaPtr schema;
+    EXPECT_EQ(table->GetSchema(schema), sc::SC_OK);
+    EXPECT_EQ(schema->AddColumn(MakeRequiredIntColumnWithoutDefault(L"Width")),
+              sc::SC_OK);
+
+    sc::SCEditPtr edit;
+    EXPECT_EQ(db->BeginEdit(L"seed", edit), sc::SC_OK);
+
+    sc::SCRecordPtr beam;
+    EXPECT_EQ(table->CreateRecord(beam), sc::SC_OK);
+
+    EXPECT_EQ(db->Commit(edit.Get()), sc::SC_E_SCHEMA_VIOLATION);
+    EXPECT_EQ(db->Rollback(edit.Get()), sc::SC_OK);
+}
+
+TEST(StorageM1, CommitAllowsExplicitValuesForRequiredColumns)
+{
+    sc::SCDbPtr db;
+    EXPECT_EQ(CreateFileDb(
+                  L"StableCoreStorage_M1_CommitAllowsExplicitValuesForRequiredColumns.sqlite",
+                  db),
+              sc::SC_OK);
+
+    sc::SCTablePtr table;
+    EXPECT_EQ(db->CreateTable(L"Beam", table), sc::SC_OK);
+
+    sc::SCSchemaPtr schema;
+    EXPECT_EQ(table->GetSchema(schema), sc::SC_OK);
+    EXPECT_EQ(schema->AddColumn(MakeRequiredIntColumnWithoutDefault(L"Width")),
+              sc::SC_OK);
+
+    sc::SCEditPtr edit;
+    EXPECT_EQ(db->BeginEdit(L"seed", edit), sc::SC_OK);
+
+    sc::SCRecordPtr beam;
+    EXPECT_EQ(table->CreateRecord(beam), sc::SC_OK);
+    EXPECT_EQ(beam->SetInt64(L"Width", 42), sc::SC_OK);
+    EXPECT_EQ(db->Commit(edit.Get()), sc::SC_OK);
+
+    sc::SCRecordCursorPtr cursor;
+    EXPECT_EQ(table->EnumerateRecords(cursor), sc::SC_OK);
+    sc::SCRecordPtr record;
+    EXPECT_EQ(cursor->Next(record), sc::SC_OK);
+    EXPECT_TRUE(static_cast<bool>(record));
+
+    std::int64_t width = 0;
+    EXPECT_EQ(record->GetInt64(L"Width", &width), sc::SC_OK);
+    EXPECT_EQ(width, 42);
 }
 
 TEST(StorageM1, SchemaColumnJournalSupportsAddUpdateRemoveUndoRedo)

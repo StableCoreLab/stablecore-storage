@@ -1445,7 +1445,7 @@ namespace StableCore::Storage
             return value.GetKind() == expected ? SC_OK : SC_E_TYPE_MISMATCH;
         }
 
-        ErrorCode ValidateColumnDef(const SCColumnDef& def)
+        ErrorCode ValidateColumnDefShape(const SCColumnDef& def)
         {
             if (def.name.empty())
             {
@@ -1477,10 +1477,6 @@ namespace StableCore::Storage
                 {
                     return SC_E_SCHEMA_VIOLATION;
                 }
-            }
-            if (!def.nullable && def.defaultValue.IsNull())
-            {
-                return SC_E_SCHEMA_VIOLATION;
             }
             return SC_OK;
         }
@@ -2178,6 +2174,8 @@ namespace StableCore::Storage
                 const ReferenceIndex& forwardDelta,
                 const ReverseReferenceIndex& reverseDelta) override;
 
+            friend class SqliteSchema;
+
             bool HasActiveEdit() const noexcept
             {
                 return static_cast<bool>(activeEdit_);
@@ -2245,6 +2243,10 @@ namespace StableCore::Storage
                 SqliteTable* table,
                 const std::shared_ptr<SqliteRecordData>& data,
                 const std::wstring& fieldName, const SCValue& value);
+            ErrorCode ValidateColumnDefForSchema(SqliteSchema* schema,
+                                                 const SCColumnDef& def) const;
+            ErrorCode ValidateRequiredValuesForCommit() const;
+            bool HasAliveRecords(SqliteSchema* schema) const;
             bool IsRecordReferenced(const std::wstring& tableName,
                                     RecordId recordId) const;
             void MarkReferenceIndexDirty() noexcept;
@@ -2409,7 +2411,7 @@ namespace StableCore::Storage
 
         ErrorCode SqliteSchema::AddColumn(const SCColumnDef& def)
         {
-            const ErrorCode validate = ValidateColumnDef(def);
+            const ErrorCode validate = db_->ValidateColumnDefForSchema(this, def);
             if (Failed(validate))
             {
                 return validate;
@@ -2424,7 +2426,7 @@ namespace StableCore::Storage
 
         ErrorCode SqliteSchema::UpdateColumn(const SCColumnDef& def)
         {
-            const ErrorCode validate = ValidateColumnDef(def);
+            const ErrorCode validate = db_->ValidateColumnDefForSchema(this, def);
             if (Failed(validate))
             {
                 return validate;
@@ -4186,6 +4188,12 @@ namespace StableCore::Storage
                 return SC_OK;
             }
 
+            const ErrorCode requiredValueRc = ValidateRequiredValuesForCommit();
+            if (Failed(requiredValueRc))
+            {
+                return requiredValueRc;
+            }
+
             try
             {
                 const VersionId committedVersion = version_ + 1;
@@ -5061,6 +5069,126 @@ namespace StableCore::Storage
                     if (!target || target->state == RecordState::Deleted)
                     {
                         return SC_E_REFERENCE_INVALID;
+                    }
+                }
+            }
+
+            return SC_OK;
+        }
+
+        ErrorCode SqliteDatabase::ValidateColumnDefForSchema(
+            SqliteSchema* schema, const SCColumnDef& def) const
+        {
+            if (schema == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+
+            const ErrorCode shapeRc = ValidateColumnDefShape(def);
+            if (Failed(shapeRc))
+            {
+                return shapeRc;
+            }
+
+            if (!def.nullable && def.defaultValue.IsNull() &&
+                HasAliveRecords(schema))
+            {
+                return SC_E_SCHEMA_VIOLATION;
+            }
+
+            return SC_OK;
+        }
+
+        bool SqliteDatabase::HasAliveRecords(SqliteSchema* schema) const
+        {
+            if (schema == nullptr)
+            {
+                return false;
+            }
+
+            const auto tableIt = std::find_if(
+                tables_.begin(), tables_.end(),
+                [tableRowId = schema->TableRowId()](
+                    const std::pair<const std::wstring, SCTablePtr>& entry) {
+                    const auto* table =
+                        static_cast<SqliteTable*>(entry.second.Get());
+                    return table != nullptr &&
+                           table->TableRowId() == tableRowId;
+                });
+            if (tableIt == tables_.end())
+            {
+                return false;
+            }
+
+            auto* table = static_cast<SqliteTable*>(tableIt->second.Get());
+            if (table == nullptr)
+            {
+                return false;
+            }
+
+            for (const auto& [_, data] : table->Records())
+            {
+                if (data != nullptr && data->state == RecordState::Alive)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        ErrorCode SqliteDatabase::ValidateRequiredValuesForCommit() const
+        {
+            for (const auto& [_, tableRef] : tables_)
+            {
+                auto* table = static_cast<SqliteTable*>(tableRef.Get());
+                if (table == nullptr)
+                {
+                    continue;
+                }
+
+                SCSchemaPtr schema;
+                const ErrorCode schemaRc = table->GetSchema(schema);
+                if (Failed(schemaRc) || !schema)
+                {
+                    return Failed(schemaRc) ? schemaRc : SC_E_FAIL;
+                }
+
+                std::int32_t columnCount = 0;
+                const ErrorCode countRc = schema->GetColumnCount(&columnCount);
+                if (Failed(countRc))
+                {
+                    return countRc;
+                }
+
+                for (std::int32_t columnIndex = 0; columnIndex < columnCount;
+                     ++columnIndex)
+                {
+                    SCColumnDef column;
+                    const ErrorCode columnRc = schema->GetColumn(columnIndex, &column);
+                    if (Failed(columnRc))
+                    {
+                        return columnRc;
+                    }
+
+                    if (column.nullable || !column.defaultValue.IsNull())
+                    {
+                        continue;
+                    }
+
+                    for (const auto& [recordId, data] : table->Records())
+                    {
+                        (void)recordId;
+                        if (data == nullptr || data->state == RecordState::Deleted)
+                        {
+                            continue;
+                        }
+
+                        const auto valueIt = data->values.find(column.name);
+                        if (valueIt == data->values.end() ||
+                            valueIt->second.IsNull())
+                        {
+                            return SC_E_SCHEMA_VIOLATION;
+                        }
                     }
                 }
             }

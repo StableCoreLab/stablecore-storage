@@ -761,6 +761,20 @@ namespace StableCore::Storage::Editor
 
     bool SCDatabaseSession::CloseDatabase(QString* outError)
     {
+        if (pendingEdit_ && db_)
+        {
+            const sc::ErrorCode rollbackRc = db_->Rollback(pendingEdit_.Get());
+            if (sc::Failed(rollbackRc))
+            {
+                if (outError != nullptr)
+                {
+                    *outError = ErrorToString(rollbackRc);
+                }
+                return false;
+            }
+            pendingEdit_.Reset();
+        }
+
         if (!db_ && currentTable_.Get() == nullptr &&
             currentTableView_.Get() == nullptr && databasePath_.isEmpty() &&
             currentTableName_.isEmpty() && tableNames_.isEmpty() &&
@@ -1167,6 +1181,17 @@ namespace StableCore::Storage::Editor
             if (outError != nullptr)
             {
                 *outError = QStringLiteral("No database is open.");
+            }
+            return false;
+        }
+
+        if (HasPendingEdit() &&
+            currentTableName_.compare(tableName, Qt::CaseInsensitive) != 0)
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral(
+                    "Save or discard pending changes before switching tables.");
             }
             return false;
         }
@@ -1662,19 +1687,106 @@ namespace StableCore::Storage::Editor
             return false;
         }
 
-        const bool ok = BeginAndCommitSingleAction(
-            L"Add Record",
-            [&]() {
-                sc::SCRecordPtr record;
-                return currentTable_->CreateRecord(record);
-            },
-            outError);
-
-        if (ok)
+        bool requiresPendingEdit = pendingEdit_.Get() != nullptr;
+        if (!requiresPendingEdit)
         {
-            emit RecordsChanged();
+            sc::SCSchemaPtr schema;
+            const sc::ErrorCode schemaRc = currentTable_->GetSchema(schema);
+            if (sc::Failed(schemaRc))
+            {
+                if (outError != nullptr)
+                {
+                    *outError = ErrorToString(schemaRc);
+                }
+                return false;
+            }
+
+            std::int32_t columnCount = 0;
+            const sc::ErrorCode countRc = schema->GetColumnCount(&columnCount);
+            if (sc::Failed(countRc))
+            {
+                if (outError != nullptr)
+                {
+                    *outError = ErrorToString(countRc);
+                }
+                return false;
+            }
+
+            for (std::int32_t index = 0; index < columnCount; ++index)
+            {
+                sc::SCColumnDef column;
+                const sc::ErrorCode columnRc = schema->GetColumn(index, &column);
+                if (sc::Failed(columnRc))
+                {
+                    if (outError != nullptr)
+                    {
+                        *outError = ErrorToString(columnRc);
+                    }
+                    return false;
+                }
+
+                if (!column.nullable && column.defaultValue.IsNull())
+                {
+                    requiresPendingEdit = true;
+                    break;
+                }
+            }
         }
-        return ok;
+
+        if (!requiresPendingEdit)
+        {
+            const bool ok = BeginAndCommitSingleAction(
+                L"Add Record",
+                [&]() {
+                    sc::SCRecordPtr record;
+                    return currentTable_->CreateRecord(record);
+                },
+                outError);
+
+            if (ok)
+            {
+                emit RecordsChanged();
+            }
+            return ok;
+        }
+
+        if (!pendingEdit_)
+        {
+            const sc::ErrorCode beginRc =
+                db_->BeginEdit(L"Add Record", pendingEdit_);
+            if (sc::Failed(beginRc))
+            {
+                if (outError != nullptr)
+                {
+                    *outError = ErrorToString(beginRc);
+                }
+                return false;
+            }
+        }
+
+        sc::SCRecordPtr record;
+        const sc::ErrorCode createRc = currentTable_->CreateRecord(record);
+        if (sc::Failed(createRc))
+        {
+            if (pendingEdit_)
+            {
+                const sc::ErrorCode rollbackRc =
+                    db_->Rollback(pendingEdit_.Get());
+                if (sc::Failed(rollbackRc) && outError != nullptr)
+                {
+                    *outError = ErrorToString(rollbackRc);
+                }
+                pendingEdit_.Reset();
+            }
+            if (outError != nullptr && outError->isEmpty())
+            {
+                *outError = ErrorToString(createRc);
+            }
+            return false;
+        }
+
+        emit RecordsChanged();
+        return true;
     }
 
     bool SCDatabaseSession::CreateBackupCopy(
@@ -1695,6 +1807,16 @@ namespace StableCore::Storage::Editor
             if (outError != nullptr)
             {
                 *outError = QStringLiteral("Target backup path is required.");
+            }
+            return false;
+        }
+
+        if (pendingEdit_)
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral(
+                    "Save or discard pending changes before creating a backup.");
             }
             return false;
         }
@@ -1734,6 +1856,21 @@ namespace StableCore::Storage::Editor
             return false;
         }
 
+        if (HasPendingEdit())
+        {
+            const sc::ErrorCode deleteRc = currentTable_->DeleteRecord(recordId);
+            if (sc::Failed(deleteRc))
+            {
+                if (outError != nullptr)
+                {
+                    *outError = ErrorToString(deleteRc);
+                }
+                return false;
+            }
+            emit RecordsChanged();
+            return true;
+        }
+
         const bool ok = BeginAndCommitSingleAction(
             L"Delete Record",
             [&]() { return currentTable_->DeleteRecord(recordId); }, outError);
@@ -1745,6 +1882,76 @@ namespace StableCore::Storage::Editor
         return ok;
     }
 
+    bool SCDatabaseSession::SavePendingChanges(QString* outError)
+    {
+        if (!db_)
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("No database is open.");
+            }
+            return false;
+        }
+
+        if (!pendingEdit_)
+        {
+            if (outError != nullptr)
+            {
+                outError->clear();
+            }
+            return true;
+        }
+
+        const sc::ErrorCode rc = db_->Commit(pendingEdit_.Get());
+        if (sc::Failed(rc))
+        {
+            if (outError != nullptr)
+            {
+                *outError = ErrorToString(rc);
+            }
+            return false;
+        }
+
+        pendingEdit_.Reset();
+        emit RecordsChanged();
+        return true;
+    }
+
+    bool SCDatabaseSession::DiscardPendingChanges(QString* outError)
+    {
+        if (!db_)
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("No database is open.");
+            }
+            return false;
+        }
+
+        if (!pendingEdit_)
+        {
+            if (outError != nullptr)
+            {
+                outError->clear();
+            }
+            return true;
+        }
+
+        const sc::ErrorCode rc = db_->Rollback(pendingEdit_.Get());
+        if (sc::Failed(rc))
+        {
+            if (outError != nullptr)
+            {
+                *outError = ErrorToString(rc);
+            }
+            return false;
+        }
+
+        pendingEdit_.Reset();
+        emit RecordsChanged();
+        return true;
+    }
+
     bool SCDatabaseSession::Undo(QString* outError)
     {
         if (!IsOpen())
@@ -1752,6 +1959,16 @@ namespace StableCore::Storage::Editor
             if (outError != nullptr)
             {
                 *outError = QStringLiteral("No database is open.");
+            }
+            return false;
+        }
+
+        if (HasPendingEdit())
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral(
+                    "Save or discard pending changes before undoing.");
             }
             return false;
         }
@@ -1778,6 +1995,16 @@ namespace StableCore::Storage::Editor
             if (outError != nullptr)
             {
                 *outError = QStringLiteral("No database is open.");
+            }
+            return false;
+        }
+
+        if (HasPendingEdit())
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral(
+                    "Save or discard pending changes before redoing.");
             }
             return false;
         }
@@ -1844,20 +2071,34 @@ namespace StableCore::Storage::Editor
             return false;
         }
 
-        const bool ok = BeginAndCommitSingleAction(
-            L"Edit Cell",
-            [&]() {
-                sc::SCRecordPtr record;
-                sc::ErrorCode getRc =
-                    currentTable_->GetRecord(recordId, record);
-                if (sc::Failed(getRc))
+        auto applyValue = [&]() {
+            sc::SCRecordPtr record;
+            sc::ErrorCode getRc = currentTable_->GetRecord(recordId, record);
+            if (sc::Failed(getRc))
+            {
+                return getRc;
+            }
+            return record->SetValue(columnName.toStdWString().c_str(),
+                                    storageValue);
+        };
+
+        if (HasPendingEdit())
+        {
+            const sc::ErrorCode applyRc = applyValue();
+            if (sc::Failed(applyRc))
+            {
+                if (outError != nullptr)
                 {
-                    return getRc;
+                    *outError = ErrorToString(applyRc);
                 }
-                return record->SetValue(columnName.toStdWString().c_str(),
-                                        storageValue);
-            },
-            outError);
+                return false;
+            }
+            emit RecordsChanged();
+            return true;
+        }
+
+        const bool ok = BeginAndCommitSingleAction(
+            L"Edit Cell", [&]() { return applyValue(); }, outError);
 
         if (ok)
         {
@@ -2485,6 +2726,62 @@ namespace StableCore::Storage::Editor
         return true;
     }
 
+    bool SCDatabaseSession::CurrentTableHasRecords(bool* outHasRecords,
+                                                  QString* outError) const
+    {
+        if (outHasRecords == nullptr)
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("Output flag is null.");
+            }
+            return false;
+        }
+
+        *outHasRecords = false;
+        if (!currentTable_)
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("No table is selected.");
+            }
+            return false;
+        }
+
+        sc::SCRecordCursorPtr cursor;
+        const sc::ErrorCode rc = currentTable_->EnumerateRecords(cursor);
+        if (sc::Failed(rc))
+        {
+            if (outError != nullptr)
+            {
+                *outError = ErrorToString(rc);
+            }
+            return false;
+        }
+        if (!cursor)
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("Failed to enumerate records.");
+            }
+            return false;
+        }
+
+        sc::SCRecordPtr record;
+        const sc::ErrorCode nextRc = cursor->Next(record);
+        if (sc::Failed(nextRc))
+        {
+            if (outError != nullptr)
+            {
+                *outError = ErrorToString(nextRc);
+            }
+            return false;
+        }
+
+        *outHasRecords = static_cast<bool>(record);
+        return true;
+    }
+
     bool SCDatabaseSession::BuildRecordSnapshot(
         sc::RecordId recordId, QVector<QPair<QString, QString>>* outFields,
         QString* outError) const
@@ -2688,6 +2985,16 @@ namespace StableCore::Storage::Editor
             outError->clear();
         }
 
+        if (HasPendingEdit())
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral(
+                    "Save or discard pending changes before changing schema.");
+            }
+            return false;
+        }
+
         if (!currentTable_)
         {
             if (outError != nullptr)
@@ -2778,6 +3085,17 @@ namespace StableCore::Storage::Editor
         const wchar_t* actionName, const std::function<sc::ErrorCode()>& action,
         QString* outError)
     {
+        if (HasPendingEdit())
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral(
+                    "A pending edit is active. Save or discard it before "
+                    "starting a new action.");
+            }
+            return false;
+        }
+
         sc::SCEditPtr edit;
         sc::ErrorCode rc = db_->BeginEdit(actionName, edit);
         if (sc::Failed(rc))
@@ -2812,6 +3130,11 @@ namespace StableCore::Storage::Editor
         }
 
         return true;
+    }
+
+    bool SCDatabaseSession::HasPendingEdit() const noexcept
+    {
+        return pendingEdit_.Get() != nullptr;
     }
 
     bool SCDatabaseSession::ExportDebugPackage(

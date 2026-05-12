@@ -1,5 +1,8 @@
 #include "SCAddColumnDialog.h"
 
+#include <QDialogButtonBox>
+#include <QVBoxLayout>
+
 namespace sc = StableCore::Storage;
 
 namespace StableCore::Storage::Editor
@@ -43,7 +46,8 @@ namespace StableCore::Storage::Editor
     {
         setWindowTitle(QStringLiteral("Add Column"));
 
-        auto* layout = new QFormLayout(this);
+        auto* layout = new QVBoxLayout(this);
+        auto* form = new QFormLayout();
 
         nameEdit_ = new QLineEdit(this);
         displayNameEdit_ = new QLineEdit(this);
@@ -57,6 +61,8 @@ namespace StableCore::Storage::Editor
         unitEdit_ = new QLineEdit(this);
         referenceTableEdit_ = new QLineEdit(this);
         defaultValueEdit_ = new QLineEdit(this);
+        defaultValueEdit_->setPlaceholderText(
+            QStringLiteral("Required only when the table already has rows"));
 
         valueKindCombo_->addItem(QStringLiteral("Int64"),
                                  static_cast<int>(sc::ValueKind::Int64));
@@ -74,25 +80,42 @@ namespace StableCore::Storage::Editor
         nullableCheck_->setChecked(true);
         editableCheck_->setChecked(true);
 
-        layout->addRow(QStringLiteral("Name"), nameEdit_);
-        layout->addRow(QStringLiteral("Display Name"), displayNameEdit_);
-        layout->addRow(QStringLiteral("SCValue Kind"), valueKindCombo_);
-        layout->addRow(QStringLiteral("Column Kind"), relationCheck_);
-        layout->addRow(QStringLiteral("Nullable"), nullableCheck_);
-        layout->addRow(QStringLiteral("Editable"), editableCheck_);
-        layout->addRow(QStringLiteral("User Defined"), userDefinedCheck_);
-        layout->addRow(QStringLiteral("Indexed"), indexedCheck_);
-        layout->addRow(QStringLiteral("Participates In Calc"),
-                       participatesInCalcCheck_);
-        layout->addRow(QStringLiteral("Unit"), unitEdit_);
-        layout->addRow(QStringLiteral("Reference Table"), referenceTableEdit_);
-        layout->addRow(QStringLiteral("Default SCValue"), defaultValueEdit_);
+        form->addRow(QStringLiteral("Name"), nameEdit_);
+        form->addRow(QStringLiteral("Display Name"), displayNameEdit_);
+        form->addRow(QStringLiteral("SCValue Kind"), valueKindCombo_);
+        form->addRow(QStringLiteral("Column Kind"), relationCheck_);
+        form->addRow(QStringLiteral("Nullable"), nullableCheck_);
+        form->addRow(QStringLiteral("Editable"), editableCheck_);
+        form->addRow(QStringLiteral("User Defined"), userDefinedCheck_);
+        form->addRow(QStringLiteral("Indexed"), indexedCheck_);
+        form->addRow(QStringLiteral("Participates In Calc"),
+                     participatesInCalcCheck_);
+        form->addRow(QStringLiteral("Unit"), unitEdit_);
+        form->addRow(QStringLiteral("Reference Table"), referenceTableEdit_);
+        form->addRow(QStringLiteral("Default SCValue"), defaultValueEdit_);
+        layout->addLayout(form);
 
-        auto* buttons = new QDialogButtonBox(
+        validationLabel_ = new QLabel(this);
+        validationLabel_->setWordWrap(true);
+        layout->addWidget(validationLabel_);
+
+        buttonBox_ = new QDialogButtonBox(
             QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
-        connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
-        connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
-        layout->addRow(buttons);
+        okButton_ = buttonBox_->button(QDialogButtonBox::Ok);
+        connect(buttonBox_, &QDialogButtonBox::accepted, this, &QDialog::accept);
+        connect(buttonBox_, &QDialogButtonBox::rejected, this, &QDialog::reject);
+        layout->addWidget(buttonBox_);
+
+        connect(nullableCheck_, &QCheckBox::toggled, this,
+                &SCAddColumnDialog::UpdateValidationState);
+        connect(relationCheck_, &QCheckBox::toggled, this,
+                &SCAddColumnDialog::UpdateValidationState);
+        connect(valueKindCombo_, qOverload<int>(&QComboBox::currentIndexChanged),
+                this, &SCAddColumnDialog::UpdateValidationState);
+        connect(defaultValueEdit_, &QLineEdit::textChanged, this,
+                &SCAddColumnDialog::UpdateValidationState);
+
+        UpdateValidationState();
     }
 
     SCAddColumnDialog::SCAddColumnDialog(
@@ -173,6 +196,8 @@ namespace StableCore::Storage::Editor
                 defaultValueEdit_->clear();
                 break;
         }
+
+        UpdateValidationState();
     }
 
     sc::SCColumnDef SCAddColumnDialog::BuildColumnDef() const
@@ -201,6 +226,54 @@ namespace StableCore::Storage::Editor
         column.defaultValue =
             ParseDefaultValue(column.valueKind, defaultValueEdit_->text());
         return column;
+    }
+
+    void SCAddColumnDialog::SetCurrentTableHasRecords(bool hasRecords)
+    {
+        currentTableHasRecords_ = hasRecords;
+        UpdateValidationState();
+    }
+
+    void SCAddColumnDialog::UpdateValidationState()
+    {
+        const bool hasDefaultValue =
+            !defaultValueEdit_->text().trimmed().isEmpty();
+        const bool nonNullableWithoutDefault =
+            !nullableCheck_->isChecked() && !hasDefaultValue;
+        const bool requiresDefault = nonNullableWithoutDefault &&
+                                     currentTableHasRecords_;
+
+        if (validationLabel_ != nullptr)
+        {
+            if (nonNullableWithoutDefault)
+            {
+                if (currentTableHasRecords_)
+                {
+                    validationLabel_->setStyleSheet(
+                        QStringLiteral("color: #b00020;"));
+                    validationLabel_->setText(QStringLiteral(
+                        "This table already has records. Non-null columns "
+                        "need a default value."));
+                } else
+                {
+                    validationLabel_->setStyleSheet(
+                        QStringLiteral("color: #0b5fff;"));
+                    validationLabel_->setText(QStringLiteral(
+                        "This table is empty. You can create a non-null "
+                        "column without a default, but future inserts must "
+                        "set a value explicitly."));
+                }
+            } else
+            {
+                validationLabel_->clear();
+            }
+            validationLabel_->setVisible(nonNullableWithoutDefault);
+        }
+
+        if (okButton_ != nullptr)
+        {
+            okButton_->setEnabled(!requiresDefault);
+        }
     }
 
 }  // namespace StableCore::Storage::Editor

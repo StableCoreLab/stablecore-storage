@@ -70,9 +70,13 @@ namespace StableCore::Storage::Editor
             const QString& computedName,
             const StableCore::Storage::SCColumnDef& column,
             QString* outError);
+        // Creates a record draft. Tables with required no-default columns
+        // stay in a pending edit until the caller saves or discards it.
         bool AddRecord(QString* outError);
         bool DeleteRecord(StableCore::Storage::RecordId recordId,
                           QString* outError);
+        bool SavePendingChanges(QString* outError);
+        bool DiscardPendingChanges(QString* outError);
         bool Undo(QString* outError);
         bool Redo(QString* outError);
         bool BeginImportSession(const QString& sessionName,
@@ -126,6 +130,9 @@ namespace StableCore::Storage::Editor
         bool BuildSchemaSnapshot(
             StableCore::Storage::SCSchemaSnapshot* outSnapshot,
             QString* outError) const;
+        bool CurrentTableHasRecords(bool* outHasRecords,
+                                   QString* outError) const;
+        bool HasPendingEdit() const noexcept;
         bool BuildRecordSnapshot(StableCore::Storage::RecordId recordId,
                                  QVector<QPair<QString, QString>>* outFields,
                                  QString* outError) const;
@@ -167,6 +174,7 @@ namespace StableCore::Storage::Editor
         StableCore::Storage::SCDbPtr db_;
         StableCore::Storage::SCTablePtr currentTable_;
         StableCore::Storage::SCComputedTableViewPtr currentTableView_;
+        StableCore::Storage::SCEditPtr pendingEdit_;
         StableCore::Storage::SCImportStagingArea importSession_;
         bool importSessionActive_{false};
         QString databasePath_;

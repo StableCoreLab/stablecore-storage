@@ -50,6 +50,8 @@ namespace StableCore::Storage::Editor
         void DeleteSelectedComputedColumn();
         void AddRecord();
         void DeleteSelectedRecord();
+        void SavePendingChanges();
+        void DiscardPendingChanges();
         void EditSelectedRelation();
         void UndoLastAction();
         void RedoLastAction();
@@ -108,6 +110,8 @@ namespace StableCore::Storage::Editor
         QLabel* tableTitleLabel_{nullptr};
         QToolBar* tableToolBar_{nullptr};
         QAction* closeDatabaseAction_{nullptr};
+        QAction* savePendingChangesAction_{nullptr};
+        QAction* discardPendingChangesAction_{nullptr};
         QTableView* dataTable_{nullptr};
         QLineEdit* filterEdit_{nullptr};
         QDockWidget* inspectorDock_{nullptr};

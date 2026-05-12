@@ -645,6 +645,18 @@ namespace StableCore::Storage::Editor
             return -1;
         }
 
+        bool IsBlankAllowedForRequiredColumn(sc::ValueKind kind) noexcept
+        {
+            switch (kind)
+            {
+                case sc::ValueKind::String:
+                case sc::ValueKind::Enum:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
     }  // namespace
 
     SCDatabaseEditorMainWindow::SCDatabaseEditorMainWindow(QWidget* parent)
@@ -704,6 +716,7 @@ namespace StableCore::Storage::Editor
                     UpdateRecordInspector();
                     UpdateRelationInspector();
                     RefreshOverviewPanels();
+                    UpdateDatabaseStatusBar();
                 });
     }
 
@@ -772,6 +785,11 @@ namespace StableCore::Storage::Editor
                                 &SCDatabaseEditorMainWindow::EditSelectedColumn);
         tableToolBar_->addAction(QStringLiteral("Pick Relation"), this,
                                 &SCDatabaseEditorMainWindow::EditSelectedRelation);
+        tableToolBar_->addSeparator();
+        tableToolBar_->addAction(QStringLiteral("Save Pending"), this,
+                                 &SCDatabaseEditorMainWindow::SavePendingChanges);
+        tableToolBar_->addAction(QStringLiteral("Discard Pending"), this,
+                                 &SCDatabaseEditorMainWindow::DiscardPendingChanges);
         tableToolBar_->addSeparator();
         tableToolBar_->addAction(QStringLiteral("Add Computed"), this,
                                 &SCDatabaseEditorMainWindow::AddSessionComputedColumn);
@@ -941,6 +959,13 @@ namespace StableCore::Storage::Editor
                             &SCDatabaseEditorMainWindow::UndoLastAction);
         editMenu->addAction(QStringLiteral("Redo"), this,
                             &SCDatabaseEditorMainWindow::RedoLastAction);
+        editMenu->addSeparator();
+        savePendingChangesAction_ = editMenu->addAction(
+            QStringLiteral("Save Pending Changes"), this,
+            &SCDatabaseEditorMainWindow::SavePendingChanges);
+        discardPendingChangesAction_ = editMenu->addAction(
+            QStringLiteral("Discard Pending Changes"), this,
+            &SCDatabaseEditorMainWindow::DiscardPendingChanges);
         editMenu->addAction(QStringLiteral("Refresh"), this,
                             &SCDatabaseEditorMainWindow::RefreshCurrentView);
 
@@ -1041,6 +1066,17 @@ namespace StableCore::Storage::Editor
 
     void SCDatabaseEditorMainWindow::CreateDatabase()
     {
+        if (session_->IsOpen() && session_->HasPendingEdit())
+        {
+            const QMessageBox::StandardButton answer = QMessageBox::question(
+                this, QStringLiteral("Create Database"),
+                QStringLiteral("Pending changes will be discarded. Continue?"));
+            if (answer != QMessageBox::Yes)
+            {
+                return;
+            }
+        }
+
         const QString filePath = QFileDialog::getSaveFileName(
             this, QStringLiteral("Create Database"), QString(),
             QStringLiteral("SQLite Database (*.sqlite);;All Files (*)"));
@@ -1058,6 +1094,17 @@ namespace StableCore::Storage::Editor
 
     void SCDatabaseEditorMainWindow::OpenDatabase()
     {
+        if (session_->IsOpen() && session_->HasPendingEdit())
+        {
+            const QMessageBox::StandardButton answer = QMessageBox::question(
+                this, QStringLiteral("Open Database"),
+                QStringLiteral("Pending changes will be discarded. Continue?"));
+            if (answer != QMessageBox::Yes)
+            {
+                return;
+            }
+        }
+
         const QString filePath = QFileDialog::getOpenFileName(
             this, QStringLiteral("Open Database"), QString(),
             QStringLiteral("SQLite Database (*.sqlite *.db);;All Files (*)"));
@@ -1081,9 +1128,24 @@ namespace StableCore::Storage::Editor
             return;
         }
 
+        sc::SCEditingDatabaseState editingState;
+        QString stateError;
+        const bool stateLoaded =
+            session_->GetEditingState(&editingState, &stateError);
+        if (!stateLoaded && !stateError.isEmpty())
+        {
+            ShowError(QStringLiteral("Close Database Failed"), stateError);
+            return;
+        }
+        const bool hasPendingChanges = session_->HasPendingEdit();
+
         const QMessageBox::StandardButton answer = QMessageBox::question(
             this, QStringLiteral("Close Database"),
-            QStringLiteral("Close the current database?"));
+            hasPendingChanges
+                ? QStringLiteral(
+                      "Close the current database? Pending changes will be "
+                      "discarded.")
+                : QStringLiteral("Close the current database?"));
         if (answer != QMessageBox::Yes)
         {
             return;
@@ -1218,7 +1280,31 @@ namespace StableCore::Storage::Editor
             return;
         }
 
+        sc::SCEditingDatabaseState editingState;
+        QString editingError;
+        if (!session_->GetEditingState(&editingState, &editingError))
+        {
+            ShowError(QStringLiteral("Add Column Failed"), editingError);
+            return;
+        }
+        if (session_->HasPendingEdit())
+        {
+            ShowError(QStringLiteral("Add Column Failed"),
+                      QStringLiteral(
+                          "Save or discard pending changes before changing "
+                          "schema."));
+            return;
+        }
+
         SCAddColumnDialog dialog(this);
+        bool tableHasRecords = false;
+        QString stateError;
+        if (!session_->CurrentTableHasRecords(&tableHasRecords, &stateError))
+        {
+            ShowError(QStringLiteral("Add Column Failed"), stateError);
+            return;
+        }
+        dialog.SetCurrentTableHasRecords(tableHasRecords);
         if (dialog.exec() != QDialog::Accepted)
         {
             return;
@@ -1427,7 +1513,31 @@ namespace StableCore::Storage::Editor
             return;
         }
 
+        sc::SCEditingDatabaseState editingState;
+        QString editingError;
+        if (!session_->GetEditingState(&editingState, &editingError))
+        {
+            ShowError(QStringLiteral("Edit Column Failed"), editingError);
+            return;
+        }
+        if (session_->HasPendingEdit())
+        {
+            ShowError(QStringLiteral("Edit Column Failed"),
+                      QStringLiteral(
+                          "Save or discard pending changes before changing "
+                          "schema."));
+            return;
+        }
+
         SCAddColumnDialog dialog(existing, this);
+        bool tableHasRecords = false;
+        QString stateError;
+        if (!session_->CurrentTableHasRecords(&tableHasRecords, &stateError))
+        {
+            ShowError(QStringLiteral("Edit Column Failed"), stateError);
+            return;
+        }
+        dialog.SetCurrentTableHasRecords(tableHasRecords);
         if (dialog.exec() != QDialog::Accepted)
         {
             return;
@@ -1610,8 +1720,33 @@ namespace StableCore::Storage::Editor
             return;
         }
 
+        sc::SCEditingDatabaseState editingState;
+        QString editingError;
+        if (!session_->GetEditingState(&editingState, &editingError))
+        {
+            ShowError(QStringLiteral("Convert To Column Failed"),
+                      editingError);
+            return;
+        }
+        if (session_->HasPendingEdit())
+        {
+            ShowError(QStringLiteral("Convert To Column Failed"),
+                      QStringLiteral(
+                          "Save or discard pending changes before changing "
+                          "schema."));
+            return;
+        }
+
         SCAddColumnDialog dialog(BuildColumnTemplate(existing), this);
         dialog.setWindowTitle(QStringLiteral("Convert Computed To Column"));
+        bool tableHasRecords = false;
+        QString stateError;
+        if (!session_->CurrentTableHasRecords(&tableHasRecords, &stateError))
+        {
+            ShowError(QStringLiteral("Convert To Column Failed"), stateError);
+            return;
+        }
+        dialog.SetCurrentTableHasRecords(tableHasRecords);
         if (dialog.exec() != QDialog::Accepted)
         {
             return;
@@ -1709,7 +1844,62 @@ namespace StableCore::Storage::Editor
             return;
         }
 
-        SetStatusMessage(QStringLiteral("Record added."));
+        recordModel_->Refresh();
+        UpdateRecordInspector();
+        UpdateRelationInspector();
+        RefreshOverviewPanels();
+        UpdateGridSummary();
+        UpdateDatabaseStatusBar();
+
+        sc::SCEditingDatabaseState editingState;
+        if (session_->GetEditingState(&editingState, &error) &&
+            session_->HasPendingEdit())
+        {
+            SetStatusMessage(QStringLiteral(
+                "Record draft created. Fill required fields, then save "
+                "pending changes."));
+        }
+        else
+        {
+            SetStatusMessage(QStringLiteral("Record added."));
+        }
+    }
+
+    void SCDatabaseEditorMainWindow::SavePendingChanges()
+    {
+        QString error;
+        if (!session_->SavePendingChanges(&error))
+        {
+            ShowError(QStringLiteral("Save Pending Changes Failed"), error);
+            return;
+        }
+
+        recordModel_->Refresh();
+        UpdateRecordInspector();
+        UpdateRelationInspector();
+        RefreshOverviewPanels();
+        UpdateGridSummary();
+        UpdateDatabaseStatusBar();
+        SetStatusMessage(QStringLiteral("Pending changes saved."));
+    }
+
+    void SCDatabaseEditorMainWindow::DiscardPendingChanges()
+    {
+        QString error;
+        if (!session_->DiscardPendingChanges(&error))
+        {
+            ShowError(QStringLiteral("Discard Pending Changes Failed"),
+                      error);
+            return;
+        }
+
+        recordModel_->Refresh();
+        UpdateRecordInspector();
+        UpdateRelationInspector();
+        RefreshOverviewPanels();
+        UpdateGridSummary();
+        UpdateDatabaseStatusBar();
+        SetStatusMessage(QStringLiteral("Pending changes discarded."));
     }
 
     void SCDatabaseEditorMainWindow::DeleteSelectedRecord()
@@ -2024,6 +2214,14 @@ namespace StableCore::Storage::Editor
             ShowError(QStringLiteral("Import CSV Failed"), stateError);
             return;
         }
+        if (session_->HasPendingEdit())
+        {
+            ShowError(QStringLiteral("Import CSV Failed"),
+                      QStringLiteral(
+                          "Save or discard pending changes before importing "
+                          "CSV."));
+            return;
+        }
         if (editingState.openMode == sc::SCDatabaseOpenMode::ReadOnly)
         {
             ShowError(QStringLiteral("Import CSV Failed"),
@@ -2222,6 +2420,7 @@ namespace StableCore::Storage::Editor
         QVector<int> columnMapping;
         columnMapping.reserve(headerRow.size());
         QVector<bool> columnUsed(viewColumns.size(), false);
+        QVector<int> headerIndexByColumn(viewColumns.size(), -1);
         int importableColumnCount = 0;
         for (const QString& rawHeader : headerRow)
         {
@@ -2262,6 +2461,8 @@ namespace StableCore::Storage::Editor
                     return false;
                 }
                 columnUsed[columnIndex] = true;
+                headerIndexByColumn[columnIndex] =
+                    static_cast<int>(columnMapping.size());
                 ++importableColumnCount;
                 columnMapping.push_back(columnIndex);
             }
@@ -2279,6 +2480,39 @@ namespace StableCore::Storage::Editor
                     QStringLiteral("CSV file does not contain any editable columns.");
             }
             return false;
+        }
+
+        QVector<int> requiredColumns;
+        requiredColumns.reserve(viewColumns.size());
+        for (int columnIndex = 0; columnIndex < viewColumns.size(); ++columnIndex)
+        {
+            const sc::SCTableViewColumnDef& definition = viewColumns[columnIndex];
+            if (definition.layer != sc::TableColumnLayer::Fact ||
+                !definition.editable)
+            {
+                continue;
+            }
+            sc::SCColumnDef schemaColumn;
+            if (!session_->GetColumnDef(
+                    QString::fromStdWString(definition.name), &schemaColumn,
+                    outError))
+            {
+                return false;
+            }
+            if (!schemaColumn.nullable && schemaColumn.defaultValue.IsNull())
+            {
+                requiredColumns.push_back(columnIndex);
+                if (headerIndexByColumn[columnIndex] < 0)
+                {
+                    if (outError != nullptr)
+                    {
+                        *outError = QStringLiteral(
+                            "CSV header is missing required column: ") +
+                                     QString::fromStdWString(definition.name);
+                    }
+                    return false;
+                }
+            }
         }
 
         const QString tableName = session_->CurrentTableName();
@@ -2301,6 +2535,38 @@ namespace StableCore::Storage::Editor
             sc::SCBatchTableRequest request;
             request.tableName = tableName.toStdWString();
 
+            for (int requiredColumnIndex : requiredColumns)
+            {
+                const sc::SCTableViewColumnDef& definition =
+                    viewColumns[requiredColumnIndex];
+                sc::SCColumnDef schemaColumn;
+                if (!session_->GetColumnDef(
+                        QString::fromStdWString(definition.name),
+                        &schemaColumn, outError))
+                {
+                    return false;
+                }
+                const int headerIndex = headerIndexByColumn[requiredColumnIndex];
+                const QString cellText =
+                    headerIndex < row.size() ? row[headerIndex].trimmed()
+                                             : QString();
+
+                if (!IsBlankAllowedForRequiredColumn(schemaColumn.valueKind) &&
+                    cellText.isEmpty())
+                {
+                    if (outError != nullptr)
+                    {
+                        *outError = QStringLiteral(
+                            "CSV row %1 is missing required field \"%2\".")
+                                        .arg(rowIndex + 2)
+                                        .arg(QString::fromStdWString(
+                                            definition.name));
+                    }
+                    return false;
+                }
+            }
+
+            sc::SCBatchCreateRecordRequest createRecord;
             for (int headerIndex = 0; headerIndex < headerRow.size(); ++headerIndex)
             {
                 const int columnIndex = columnMapping[headerIndex];
@@ -2330,11 +2596,10 @@ namespace StableCore::Storage::Editor
                 sc::SCFieldValueAssignment assignment;
                 assignment.fieldName = definition.name;
                 assignment.SCValue = value;
-                sc::SCBatchCreateRecordRequest createRecord;
                 createRecord.values.push_back(std::move(assignment));
-                request.creates.push_back(std::move(createRecord));
             }
 
+            request.creates.push_back(std::move(createRecord));
             requests.emplace_back(std::move(request));
         }
 
@@ -3024,6 +3289,20 @@ namespace StableCore::Storage::Editor
                 }
             }
             transactionStateLabel_->setText(transactionState);
+        }
+
+        if (savePendingChangesAction_ != nullptr)
+        {
+            savePendingChangesAction_->setEnabled(
+                stateLoaded && session_->HasPendingEdit() &&
+                editingState.openMode != sc::SCDatabaseOpenMode::ReadOnly);
+        }
+
+        if (discardPendingChangesAction_ != nullptr)
+        {
+            discardPendingChangesAction_->setEnabled(
+                stateLoaded && session_->HasPendingEdit() &&
+                editingState.openMode != sc::SCDatabaseOpenMode::ReadOnly);
         }
     }
 
