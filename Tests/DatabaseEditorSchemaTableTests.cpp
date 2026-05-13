@@ -61,6 +61,33 @@ TEST(DatabaseEditorSchemaTable, ParsesSchemaDescriptionForCreateTable)
     EXPECT_FALSE(result.warnings.isEmpty());
 }
 
+TEST(DatabaseEditorSchemaTable, ParsesNotNullWithTrailingSemicolon)
+{
+    const QString schemaText = QStringLiteral(R"(SC_SCHEMA_TABLE(t1)
+{
+    Table("t1")
+        .Column("f1", SCType::Int64)
+            .NotNull();
+        .Column("f2", SCType::String)
+            .NotNull();
+})");
+
+    editor::SCSchemaTableImportResult result;
+    QString error;
+    EXPECT_TRUE(editor::ParseSchemaTableDescription(schemaText, &result, &error))
+        << error.toStdString();
+
+    ASSERT_EQ(result.columns.size(), 2);
+    EXPECT_FALSE(result.columns[0].nullable);
+    EXPECT_FALSE(result.columns[1].nullable);
+    for (const QString& warning : result.warnings)
+    {
+        EXPECT_FALSE(warning.startsWith(
+            QStringLiteral("Ignored schema token:")))
+            << warning.toStdString();
+    }
+}
+
 TEST(DatabaseEditorSchemaTable, UsesMacroNameAsCreatedTableName)
 {
     const QString schemaText = QStringLiteral(R"(SC_SCHEMA_TABLE(Beam)

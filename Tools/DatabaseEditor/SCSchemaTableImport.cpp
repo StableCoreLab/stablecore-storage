@@ -460,7 +460,9 @@ namespace StableCore::Storage::Editor
 
             if (haveCurrentColumn)
             {
-                if (line == QStringLiteral(".NotNull()"))
+                const QRegularExpression notNullRegex(QStringLiteral(
+                    "^\\s*\\.NotNull\\(\\)\\s*;?\\s*$"));
+                if (notNullRegex.match(line).hasMatch())
                 {
                     currentColumn.nullable = false;
                     continue;
