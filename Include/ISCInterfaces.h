@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstddef>
+
 #include "SCErrors.h"
 #include "ISCRefPtr.h"
 #include "SCTypes.h"
@@ -190,6 +192,15 @@ namespace StableCore::Storage
                                         std::wstring* outValue) = 0;
         virtual ErrorCode SetString(const wchar_t* name,
                                     const wchar_t* value) = 0;
+
+        virtual ErrorCode GetBinary(const wchar_t* name,
+                                    const std::uint8_t** outValue,
+                                    std::size_t* outSize) = 0;
+        virtual ErrorCode GetBinaryCopy(
+            const wchar_t* name, std::vector<std::uint8_t>* outValue) = 0;
+        virtual ErrorCode SetBinary(const wchar_t* name,
+                                    const std::uint8_t* value,
+                                    std::size_t size) = 0;
 
         virtual ErrorCode GetRef(const wchar_t* name, RecordId* outValue) = 0;
         virtual ErrorCode SetRef(const wchar_t* name, RecordId value) = 0;

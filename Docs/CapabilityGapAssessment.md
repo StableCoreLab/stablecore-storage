@@ -49,7 +49,7 @@
 
 说明：
 
-- SCValue 已覆盖 Null、Int64、Double、Bool、String、RecordId、Enum 等基础类型。
+- SCValue 已覆盖 Null、Int64、Double、Bool、String、RecordId、Enum、Binary 等基础类型。
 - 已提供类型化访问和错误返回。
 - 字符串复制语义和直接访问语义已区分。
 

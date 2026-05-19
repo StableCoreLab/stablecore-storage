@@ -98,6 +98,12 @@ TEST(StorageM1, ValueTypedAccess)
     EXPECT_EQ(SCValue.AsRecordId(&id), sc::SC_OK);
     EXPECT_EQ(id, 42);
 
+    const std::vector<std::uint8_t> bytes{0x01, 0x7F, 0xFF};
+    SCValue = sc::SCValue::FromBinary(bytes);
+    std::vector<std::uint8_t> copied;
+    EXPECT_EQ(SCValue.AsBinaryCopy(&copied), sc::SC_OK);
+    EXPECT_EQ(copied, bytes);
+
     std::wstring text;
     EXPECT_EQ(sc::SCValue::Null().AsStringCopy(&text), sc::SC_E_VALUE_IS_NULL);
 }

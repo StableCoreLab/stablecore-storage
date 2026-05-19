@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <iomanip>
+#include <cstring>
 #include <cwctype>
 #include <mutex>
 #include <map>
@@ -183,6 +184,70 @@ namespace StableCore::Storage
             return false;
         }
 
+        std::wstring BytesToHex(const std::vector<std::uint8_t>& bytes)
+        {
+            static constexpr wchar_t kHexDigits[] = L"0123456789ABCDEF";
+            std::wstring hex;
+            hex.reserve(bytes.size() * 2);
+            for (std::uint8_t byte : bytes)
+            {
+                hex.push_back(kHexDigits[(byte >> 4) & 0x0F]);
+                hex.push_back(kHexDigits[byte & 0x0F]);
+            }
+            return hex;
+        }
+
+        bool HexValue(wchar_t ch, std::uint8_t* outValue)
+        {
+            if (outValue == nullptr)
+            {
+                return false;
+            }
+
+            if (ch >= L'0' && ch <= L'9')
+            {
+                *outValue = static_cast<std::uint8_t>(ch - L'0');
+                return true;
+            }
+            if (ch >= L'a' && ch <= L'f')
+            {
+                *outValue = static_cast<std::uint8_t>(10 + ch - L'a');
+                return true;
+            }
+            if (ch >= L'A' && ch <= L'F')
+            {
+                *outValue = static_cast<std::uint8_t>(10 + ch - L'A');
+                return true;
+            }
+            return false;
+        }
+
+        bool HexToBytes(const std::wstring& hex,
+                        std::vector<std::uint8_t>* outBytes)
+        {
+            if (outBytes == nullptr || (hex.size() % 2) != 0)
+            {
+                return false;
+            }
+
+            std::vector<std::uint8_t> bytes;
+            bytes.reserve(hex.size() / 2);
+            for (std::size_t index = 0; index < hex.size(); index += 2)
+            {
+                std::uint8_t high = 0;
+                std::uint8_t low = 0;
+                if (!HexValue(hex[index], &high) ||
+                    !HexValue(hex[index + 1], &low))
+                {
+                    return false;
+                }
+                bytes.push_back(static_cast<std::uint8_t>((high << 4) | low));
+            }
+
+            *outBytes = std::move(bytes);
+            return true;
+        }
+
         ErrorCode ConvertColumnValue(const SCValue& source,
                                      ValueKind targetKind, SCValue* outValue)
         {
@@ -192,6 +257,25 @@ namespace StableCore::Storage
             }
             if (source.IsNull())
             {
+                *outValue = SCValue::Null();
+                return SC_OK;
+            }
+            if (source.GetKind() == ValueKind::Binary ||
+                targetKind == ValueKind::Binary)
+            {
+                if (source.GetKind() == ValueKind::Binary &&
+                    targetKind == ValueKind::Binary)
+                {
+                    std::vector<std::uint8_t> bytes;
+                    const ErrorCode rc = source.AsBinaryCopy(&bytes);
+                    if (Failed(rc))
+                    {
+                        return rc;
+                    }
+                    *outValue = SCValue::FromBinary(std::move(bytes));
+                    return SC_OK;
+                }
+
                 *outValue = SCValue::Null();
                 return SC_OK;
             }
@@ -702,6 +786,12 @@ namespace StableCore::Storage
                     ss << v;
                     break;
                 }
+                case ValueKind::Binary: {
+                    std::vector<std::uint8_t> v;
+                    value.AsBinaryCopy(&v);
+                    ss << BytesToHex(v);
+                    break;
+                }
             }
             return ss.str();
         }
@@ -885,6 +975,15 @@ namespace StableCore::Storage
                 case ValueKind::Enum:
                     *outValue = SCValue::FromEnum(payload);
                     return true;
+                case ValueKind::Binary: {
+                    std::vector<std::uint8_t> bytes;
+                    if (!HexToBytes(payload, &bytes))
+                    {
+                        return false;
+                    }
+                    *outValue = SCValue::FromBinary(std::move(bytes));
+                    return true;
+                }
                 default:
                     return false;
             }
@@ -1259,6 +1358,14 @@ namespace StableCore::Storage
                     SQLITE_TRANSIENT));
             }
 
+            ErrorCode BindBlob(int index,
+                               const std::vector<std::uint8_t>& SCValue)
+            {
+                return MapSqliteError(sqlite3_bind_blob(
+                    stmt_, index, SCValue.empty() ? nullptr : SCValue.data(),
+                    static_cast<int>(SCValue.size()), SQLITE_TRANSIENT));
+            }
+
             ErrorCode Step(bool* outHasRow = nullptr)
             {
                 const int rc = sqlite3_step(stmt_);
@@ -1300,6 +1407,18 @@ namespace StableCore::Storage
             {
                 return FromUtf8(reinterpret_cast<const char*>(
                     sqlite3_column_text(stmt_, index)));
+            }
+            std::vector<std::uint8_t> ColumnBlob(int index) const
+            {
+                const auto* data = static_cast<const std::uint8_t*>(
+                    sqlite3_column_blob(stmt_, index));
+                const int size = sqlite3_column_bytes(stmt_, index);
+                if (data == nullptr || size <= 0)
+                {
+                    return {};
+                }
+                return std::vector<std::uint8_t>(
+                    data, data + static_cast<std::size_t>(size));
             }
 
         private:
@@ -1567,7 +1686,7 @@ namespace StableCore::Storage
 
         void BindValueForStorage(SqliteStmt& stmt, int kindIndex, int intIndex,
                                  int doubleIndex, int boolIndex, int textIndex,
-                                 const SCValue& value)
+                                 int blobIndex, const SCValue& value)
         {
             stmt.BindInt(kindIndex, ToSqliteValueKind(value.GetKind()));
 
@@ -1578,6 +1697,7 @@ namespace StableCore::Storage
                     stmt.BindNull(doubleIndex);
                     stmt.BindNull(boolIndex);
                     stmt.BindNull(textIndex);
+                    stmt.BindNull(blobIndex);
                     break;
                 case ValueKind::Int64: {
                     std::int64_t v = 0;
@@ -1586,6 +1706,7 @@ namespace StableCore::Storage
                     stmt.BindNull(doubleIndex);
                     stmt.BindNull(boolIndex);
                     stmt.BindNull(textIndex);
+                    stmt.BindNull(blobIndex);
                     break;
                 }
                 case ValueKind::Double: {
@@ -1595,6 +1716,7 @@ namespace StableCore::Storage
                     stmt.BindDouble(doubleIndex, v);
                     stmt.BindNull(boolIndex);
                     stmt.BindNull(textIndex);
+                    stmt.BindNull(blobIndex);
                     break;
                 }
                 case ValueKind::Bool: {
@@ -1604,6 +1726,7 @@ namespace StableCore::Storage
                     stmt.BindNull(doubleIndex);
                     stmt.BindInt(boolIndex, v ? 1 : 0);
                     stmt.BindNull(textIndex);
+                    stmt.BindNull(blobIndex);
                     break;
                 }
                 case ValueKind::String: {
@@ -1613,6 +1736,7 @@ namespace StableCore::Storage
                     stmt.BindNull(doubleIndex);
                     stmt.BindNull(boolIndex);
                     stmt.BindText(textIndex, text);
+                    stmt.BindNull(blobIndex);
                     break;
                 }
                 case ValueKind::RecordId: {
@@ -1622,6 +1746,7 @@ namespace StableCore::Storage
                     stmt.BindNull(doubleIndex);
                     stmt.BindNull(boolIndex);
                     stmt.BindNull(textIndex);
+                    stmt.BindNull(blobIndex);
                     break;
                 }
                 case ValueKind::Enum: {
@@ -1631,6 +1756,17 @@ namespace StableCore::Storage
                     stmt.BindNull(doubleIndex);
                     stmt.BindNull(boolIndex);
                     stmt.BindText(textIndex, text);
+                    stmt.BindNull(blobIndex);
+                    break;
+                }
+                case ValueKind::Binary: {
+                    std::vector<std::uint8_t> bytes;
+                    value.AsBinaryCopy(&bytes);
+                    stmt.BindNull(intIndex);
+                    stmt.BindNull(doubleIndex);
+                    stmt.BindNull(boolIndex);
+                    stmt.BindNull(textIndex);
+                    stmt.BindBlob(blobIndex, bytes);
                     break;
                 }
             }
@@ -1638,7 +1774,8 @@ namespace StableCore::Storage
 
         SCValue ReadValueFromStorage(const SqliteStmt& stmt, int kindIndex,
                                      int intIndex, int doubleIndex,
-                                     int boolIndex, int textIndex)
+                                     int boolIndex, int textIndex,
+                                     int blobIndex)
         {
             switch (FromSqliteValueKind(stmt.ColumnInt(kindIndex)))
             {
@@ -1656,6 +1793,8 @@ namespace StableCore::Storage
                     return SCValue::FromRecordId(stmt.ColumnInt64(intIndex));
                 case ValueKind::Enum:
                     return SCValue::FromEnum(stmt.ColumnText(textIndex));
+                case ValueKind::Binary:
+                    return SCValue::FromBinary(stmt.ColumnBlob(blobIndex));
                 default:
                     return SCValue::Null();
             }
@@ -1672,6 +1811,7 @@ namespace StableCore::Storage
                                      int defaultDoubleIndex,
                                      int defaultBoolIndex,
                                      int defaultTextIndex,
+                                     int defaultBlobIndex,
                                      const SCColumnDef& def)
         {
             stmt.BindText(displayNameIndex, def.displayName);
@@ -1686,7 +1826,8 @@ namespace StableCore::Storage
             stmt.BindText(referenceTableIndex, def.referenceTable);
             BindValueForStorage(stmt, defaultKindIndex, defaultInt64Index,
                                 defaultDoubleIndex, defaultBoolIndex,
-                                defaultTextIndex, def.defaultValue);
+                                defaultTextIndex, defaultBlobIndex,
+                                def.defaultValue);
         }
 
         SCColumnDef ReadColumnDefFromStorage(
@@ -1695,7 +1836,7 @@ namespace StableCore::Storage
             int userDefinedIndex, int indexedIndex, int participatesIndex,
             int unitIndex, int referenceTableIndex, int defaultKindIndex,
             int defaultInt64Index, int defaultDoubleIndex, int defaultBoolIndex,
-            int defaultTextIndex)
+            int defaultTextIndex, int defaultBlobIndex)
         {
             SCColumnDef def;
             def.displayName = stmt.ColumnText(displayNameIndex);
@@ -1711,7 +1852,7 @@ namespace StableCore::Storage
             def.referenceTable = stmt.ColumnText(referenceTableIndex);
             def.defaultValue = ReadValueFromStorage(
                 stmt, defaultKindIndex, defaultInt64Index, defaultDoubleIndex,
-                defaultBoolIndex, defaultTextIndex);
+                defaultBoolIndex, defaultTextIndex, defaultBlobIndex);
             return def;
         }
 
@@ -1995,11 +2136,23 @@ namespace StableCore::Storage
             ErrorCode SetString(const wchar_t* name,
                                 const wchar_t* value) override;
 
+            ErrorCode GetBinary(const wchar_t* name,
+                                const std::uint8_t** outValue,
+                                std::size_t* outSize) override;
+            ErrorCode GetBinaryCopy(
+                const wchar_t* name, std::vector<std::uint8_t>* outValue)
+                override;
+            ErrorCode SetBinary(const wchar_t* name,
+                                const std::uint8_t* value,
+                                std::size_t size) override;
+
             ErrorCode GetRef(const wchar_t* name, RecordId* outValue) override;
             ErrorCode SetRef(const wchar_t* name, RecordId value) override;
 
         private:
             ErrorCode ReadTypedValue(const wchar_t* name, SCValue* outValue);
+            ErrorCode ResolveValueStorage(const wchar_t* name,
+                                          const SCValue** outValue) const;
 
             SqliteDatabase* db_{nullptr};
             SqliteTable* table_{nullptr};
@@ -2474,7 +2627,8 @@ namespace StableCore::Storage
             return GetValue(name, outValue);
         }
 
-        ErrorCode SqliteRecord::GetValue(const wchar_t* name, SCValue* outValue)
+        ErrorCode SqliteRecord::ResolveValueStorage(const wchar_t* name,
+                                                    const SCValue** outValue) const
         {
             if (name == nullptr)
             {
@@ -2497,8 +2651,29 @@ namespace StableCore::Storage
 
             const auto it = data_->values.find(name);
             *outValue =
-                (it != data_->values.end()) ? it->second : column->defaultValue;
-            return outValue->IsNull() ? SC_E_VALUE_IS_NULL : SC_OK;
+                (it != data_->values.end()) ? &it->second : &column->defaultValue;
+            return (*outValue)->IsNull() ? SC_E_VALUE_IS_NULL : SC_OK;
+        }
+
+        ErrorCode SqliteRecord::GetValue(const wchar_t* name, SCValue* outValue)
+        {
+            if (outValue == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+            const SCValue* storage = nullptr;
+            const ErrorCode rc = ResolveValueStorage(name, &storage);
+            if (rc == SC_E_VALUE_IS_NULL)
+            {
+                *outValue = SCValue::Null();
+                return rc;
+            }
+            if (Failed(rc))
+            {
+                return rc;
+            }
+            *outValue = *storage;
+            return SC_OK;
         }
 
         ErrorCode SqliteRecord::SetValue(const wchar_t* name,
@@ -2564,13 +2739,13 @@ namespace StableCore::Storage
         ErrorCode SqliteRecord::GetString(const wchar_t* name,
                                           const wchar_t** outValue)
         {
-            SCValue value;
-            const ErrorCode rc = ReadTypedValue(name, &value);
+            const SCValue* storage = nullptr;
+            const ErrorCode rc = ResolveValueStorage(name, &storage);
             if (Failed(rc))
             {
                 return rc;
             }
-            return value.AsString(outValue);
+            return storage->AsString(outValue);
         }
 
         ErrorCode SqliteRecord::GetStringCopy(const wchar_t* name,
@@ -2591,6 +2766,47 @@ namespace StableCore::Storage
             return SetValue(name, value == nullptr
                                       ? SCValue::Null()
                                       : SCValue::FromString(value));
+        }
+
+        ErrorCode SqliteRecord::GetBinary(const wchar_t* name,
+                                          const std::uint8_t** outValue,
+                                          std::size_t* outSize)
+        {
+            const SCValue* storage = nullptr;
+            const ErrorCode rc = ResolveValueStorage(name, &storage);
+            if (Failed(rc))
+            {
+                return rc;
+            }
+            return storage->AsBinary(outValue, outSize);
+        }
+
+        ErrorCode SqliteRecord::GetBinaryCopy(
+            const wchar_t* name, std::vector<std::uint8_t>* outValue)
+        {
+            SCValue value;
+            const ErrorCode rc = ReadTypedValue(name, &value);
+            if (Failed(rc))
+            {
+                return rc;
+            }
+            return value.AsBinaryCopy(outValue);
+        }
+
+        ErrorCode SqliteRecord::SetBinary(const wchar_t* name,
+                                          const std::uint8_t* value,
+                                          std::size_t size)
+        {
+            if (value == nullptr && size > 0)
+            {
+                return SC_E_POINTER;
+            }
+            std::vector<std::uint8_t> bytes;
+            if (size > 0)
+            {
+                bytes.assign(value, value + size);
+            }
+            return SetValue(name, SCValue::FromBinary(std::move(bytes)));
         }
 
         ErrorCode SqliteRecord::GetRef(const wchar_t* name, RecordId* outValue)
@@ -2804,6 +3020,7 @@ namespace StableCore::Storage
                 "unit TEXT NOT NULL, reference_table TEXT NOT NULL, "
                 "default_kind INTEGER NOT NULL, default_int64 INTEGER,"
                 "default_double REAL, default_bool INTEGER, default_text TEXT, "
+                "default_blob BLOB, "
                 "PRIMARY KEY(table_id, column_name));");
             db_.Execute(
                 "CREATE TABLE IF NOT EXISTS records ("
@@ -2815,7 +3032,7 @@ namespace StableCore::Storage
                 "table_id INTEGER NOT NULL, record_id INTEGER NOT NULL, "
                 "column_name TEXT NOT NULL, value_kind INTEGER NOT NULL,"
                 "int64_value INTEGER, double_value REAL, bool_value INTEGER, "
-                "text_value TEXT,"
+                "text_value TEXT, blob_value BLOB,"
                 "PRIMARY KEY(table_id, record_id, column_name));");
             db_.Execute(
                 "CREATE INDEX IF NOT EXISTS idx_records_table_state ON "
@@ -2838,9 +3055,9 @@ namespace StableCore::Storage
                 "INTEGER NOT NULL, table_name TEXT NOT NULL,"
                 "record_id INTEGER NOT NULL, field_name TEXT NOT NULL, "
                 "old_kind INTEGER NOT NULL, old_int64 INTEGER,"
-                "old_double REAL, old_bool INTEGER, old_text TEXT, new_kind "
+                "old_double REAL, old_bool INTEGER, old_text TEXT, old_blob BLOB, new_kind "
                 "INTEGER NOT NULL, new_int64 INTEGER,"
-                "new_double REAL, new_bool INTEGER, new_text TEXT, old_deleted "
+                "new_double REAL, new_bool INTEGER, new_text TEXT, new_blob BLOB, old_deleted "
                 "INTEGER NOT NULL, new_deleted INTEGER NOT NULL,"
                 "PRIMARY KEY(tx_id, sequence_index));");
             db_.Execute(
@@ -2854,6 +3071,7 @@ namespace StableCore::Storage
                 "old_reference_table TEXT, old_default_kind INTEGER, "
                 "old_default_int64 INTEGER, old_default_double REAL, "
                 "old_default_bool INTEGER, old_default_text TEXT, "
+                "old_default_blob BLOB, "
                 "new_display_name TEXT, new_value_kind INTEGER, "
                 "new_column_kind INTEGER, new_nullable INTEGER, "
                 "new_editable INTEGER, new_user_defined INTEGER, "
@@ -2861,6 +3079,7 @@ namespace StableCore::Storage
                 "new_unit TEXT, new_reference_table TEXT, new_default_kind "
                 "INTEGER, new_default_int64 INTEGER, new_default_double REAL, "
                 "new_default_bool INTEGER, new_default_text TEXT, "
+                "new_default_blob BLOB, "
                 "PRIMARY KEY(tx_id, sequence_index));");
             EnsureSchemaMetadataTables();
         }
@@ -2954,6 +3173,43 @@ namespace StableCore::Storage
             return stmt.Step(&hasRow) == SC_OK && hasRow;
         }
 
+        bool HasTableColumn(sqlite3* db, const char* tableName,
+                            const char* columnName)
+        {
+            if (db == nullptr || tableName == nullptr || columnName == nullptr)
+            {
+                return false;
+            }
+
+            std::string sql = std::string("PRAGMA table_info(") + tableName +
+                              ");";
+            sqlite3_stmt* stmt = nullptr;
+            if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) !=
+                SQLITE_OK)
+            {
+                if (stmt != nullptr)
+                {
+                    sqlite3_finalize(stmt);
+                }
+                return false;
+            }
+
+            bool hasColumn = false;
+            while (sqlite3_step(stmt) == SQLITE_ROW)
+            {
+                const auto* name = reinterpret_cast<const char*>(
+                    sqlite3_column_text(stmt, 1));
+                if (name != nullptr && std::strcmp(name, columnName) == 0)
+                {
+                    hasColumn = true;
+                    break;
+                }
+            }
+
+            sqlite3_finalize(stmt);
+            return hasColumn;
+        }
+
         void SqliteDatabase::EnsureSchemaMetadataTables()
         {
             db_.Execute(
@@ -2991,6 +3247,7 @@ namespace StableCore::Storage
 
         void SqliteDatabase::LoadTables()
         {
+            const bool supportsBinaryStorage = schemaVersion_ >= 4;
             SqliteStmt tablesStmt =
                 db_.Prepare("SELECT table_id, name FROM tables ORDER BY name;");
             bool hasRow = false;
@@ -3004,14 +3261,21 @@ namespace StableCore::Storage
                 auto* sqliteTable = static_cast<SqliteTable*>(table.Get());
 
                 SqliteStmt columnsStmt = db_.Prepare(
-                    "SELECT rowid, column_name, display_name, value_kind, "
-                    "column_kind, nullable_flag, editable_flag, "
-                    "user_defined_flag,"
-                    " indexed_flag, participates_in_calc_flag, unit, "
-                    "reference_table, default_kind, default_int64, "
-                    "default_double,"
-                    " default_bool, default_text FROM schema_columns WHERE "
-                    "table_id = ? ORDER BY rowid;");
+                    supportsBinaryStorage
+                        ? "SELECT rowid, column_name, display_name, "
+                          "value_kind, column_kind, nullable_flag, "
+                          "editable_flag, user_defined_flag, indexed_flag, "
+                          "participates_in_calc_flag, unit, reference_table, "
+                          "default_kind, default_int64, default_double, "
+                          "default_bool, default_text, default_blob FROM "
+                          "schema_columns WHERE table_id = ? ORDER BY rowid;"
+                        : "SELECT rowid, column_name, display_name, "
+                          "value_kind, column_kind, nullable_flag, "
+                          "editable_flag, user_defined_flag, indexed_flag, "
+                          "participates_in_calc_flag, unit, reference_table, "
+                          "default_kind, default_int64, default_double, "
+                          "default_bool, default_text FROM schema_columns "
+                          "WHERE table_id = ? ORDER BY rowid;");
                 columnsStmt.BindInt64(1, tableRowId);
                 bool hasColumn = false;
                 while (columnsStmt.Step(&hasColumn) == SC_OK && hasColumn)
@@ -3031,8 +3295,13 @@ namespace StableCore::Storage
                     def.participatesInCalc = columnsStmt.ColumnBool(9);
                     def.unit = columnsStmt.ColumnText(10);
                     def.referenceTable = columnsStmt.ColumnText(11);
-                    def.defaultValue =
-                        ReadValueFromStorage(columnsStmt, 12, 13, 14, 15, 16);
+                    def.defaultValue = supportsBinaryStorage
+                                            ? ReadValueFromStorage(
+                                                  columnsStmt, 12, 13, 14, 15,
+                                                  16, 17)
+                                            : ReadValueFromStorage(
+                                                  columnsStmt, 12, 13, 14, 15,
+                                                  16, 16);
                     sqliteTable->Schema()->LoadColumn(def, rowId);
                 }
                 const ErrorCode metadataRc = LoadSchemaMetadata(sqliteTable);
@@ -3063,9 +3332,13 @@ namespace StableCore::Storage
                 }
 
                 SqliteStmt valuesStmt = db_.Prepare(
-                    "SELECT record_id, column_name, value_kind, int64_value, "
-                    "double_value, bool_value, text_value"
-                    " FROM field_values WHERE table_id = ?;");
+                    supportsBinaryStorage
+                        ? "SELECT record_id, column_name, value_kind, "
+                          "int64_value, double_value, bool_value, text_value, "
+                          "blob_value FROM field_values WHERE table_id = ?;"
+                        : "SELECT record_id, column_name, value_kind, "
+                          "int64_value, double_value, bool_value, text_value "
+                          "FROM field_values WHERE table_id = ?;");
                 valuesStmt.BindInt64(1, tableRowId);
                 bool hasValue = false;
                 while (valuesStmt.Step(&hasValue) == SC_OK && hasValue)
@@ -3076,8 +3349,15 @@ namespace StableCore::Storage
                     {
                         continue;
                     }
-                    record->values[valuesStmt.ColumnText(1)] =
-                        ReadValueFromStorage(valuesStmt, 2, 3, 4, 5, 6);
+                    record->values[valuesStmt.ColumnText(1)] = supportsBinaryStorage
+                                                                  ? ReadValueFromStorage(
+                                                                        valuesStmt,
+                                                                        2, 3, 4,
+                                                                        5, 6, 7)
+                                                                  : ReadValueFromStorage(
+                                                                        valuesStmt,
+                                                                        2, 3, 4,
+                                                                        5, 6, 6);
                 }
             }
         }
@@ -3423,6 +3703,7 @@ namespace StableCore::Storage
 
         void SqliteDatabase::LoadJournalStacks()
         {
+            const bool supportsBinaryStorage = schemaVersion_ >= 4;
             SqliteStmt txStmt = db_.Prepare(
                 "SELECT tx_id, action_name, committed_version, stack_kind FROM "
                 "journal_transactions ORDER BY stack_kind, stack_order;");
@@ -3440,11 +3721,18 @@ namespace StableCore::Storage
                 std::vector<SqlitePersistedJournalEntry> entries;
 
                 SqliteStmt entryStmt = db_.Prepare(
-                    "SELECT sequence_index, op, table_name, record_id, "
-                    "field_name, old_kind, old_int64, old_double, old_bool, "
-                    "old_text, new_kind, new_int64, new_double, new_bool, "
-                    "new_text, old_deleted, new_deleted"
-                    " FROM journal_entries WHERE tx_id = ?;");
+                    supportsBinaryStorage
+                        ? "SELECT sequence_index, op, table_name, record_id, "
+                          "field_name, old_kind, old_int64, old_double, "
+                          "old_bool, old_text, old_blob, new_kind, "
+                          "new_int64, new_double, new_bool, new_text, "
+                          "new_blob, old_deleted, new_deleted FROM "
+                          "journal_entries WHERE tx_id = ?;"
+                        : "SELECT sequence_index, op, table_name, record_id, "
+                          "field_name, old_kind, old_int64, old_double, "
+                          "old_bool, old_text, new_kind, new_int64, "
+                          "new_double, new_bool, new_text, old_deleted, "
+                          "new_deleted FROM journal_entries WHERE tx_id = ?;");
                 entryStmt.BindInt64(1, persisted.txId);
                 bool hasEntry = false;
                 while (entryStmt.Step(&hasEntry) == SC_OK && hasEntry)
@@ -3456,32 +3744,62 @@ namespace StableCore::Storage
                     entry.tableName = entryStmt.ColumnText(2);
                     entry.recordId = entryStmt.ColumnInt64(3);
                     entry.fieldName = entryStmt.ColumnText(4);
-                    entry.oldValue =
-                        ReadValueFromStorage(entryStmt, 5, 6, 7, 8, 9);
-                    entry.newValue =
-                        ReadValueFromStorage(entryStmt, 10, 11, 12, 13, 14);
-                    entry.oldDeleted = entryStmt.ColumnBool(15);
-                    entry.newDeleted = entryStmt.ColumnBool(16);
+                    entry.oldValue = supportsBinaryStorage
+                                         ? ReadValueFromStorage(entryStmt, 5, 6,
+                                                                7, 8, 9, 10)
+                                         : ReadValueFromStorage(entryStmt, 5, 6,
+                                                                7, 8, 9, 9);
+                    entry.newValue = supportsBinaryStorage
+                                         ? ReadValueFromStorage(entryStmt, 11,
+                                                                12, 13, 14, 15,
+                                                                16)
+                                         : ReadValueFromStorage(entryStmt, 10,
+                                                                11, 12, 13, 14,
+                                                                14);
+                    entry.oldDeleted = supportsBinaryStorage
+                                            ? entryStmt.ColumnBool(17)
+                                            : entryStmt.ColumnBool(15);
+                    entry.newDeleted = supportsBinaryStorage
+                                            ? entryStmt.ColumnBool(18)
+                                            : entryStmt.ColumnBool(16);
                     persistedEntry.entry = std::move(entry);
                     entries.push_back(std::move(persistedEntry));
                 }
 
                 SqliteStmt schemaStmt = db_.Prepare(
-                    "SELECT sequence_index, op, table_name, column_name, "
-                    "column_rowid, old_display_name, old_value_kind, "
-                    "old_column_kind, old_nullable, old_editable, "
-                    "old_user_defined, old_indexed, "
-                    "old_participates_in_calc, old_unit, "
-                    "old_reference_table, old_default_kind, "
-                    "old_default_int64, old_default_double, old_default_bool, "
-                    "old_default_text, "
-                    "new_display_name, new_value_kind, new_column_kind, "
-                    "new_nullable, new_editable, new_user_defined, "
-                    "new_indexed, new_participates_in_calc, new_unit, "
-                    "new_reference_table, new_default_kind, "
-                    "new_default_int64, new_default_double, "
-                    "new_default_bool, new_default_text "
-                    "FROM journal_schema_entries WHERE tx_id = ?;");
+                    supportsBinaryStorage
+                        ? "SELECT sequence_index, op, table_name, column_name, "
+                          "column_rowid, old_display_name, old_value_kind, "
+                          "old_column_kind, old_nullable, old_editable, "
+                          "old_user_defined, old_indexed, "
+                          "old_participates_in_calc, old_unit, "
+                          "old_reference_table, old_default_kind, "
+                          "old_default_int64, old_default_double, "
+                          "old_default_bool, old_default_text, "
+                          "old_default_blob, new_display_name, "
+                          "new_value_kind, new_column_kind, new_nullable, "
+                          "new_editable, new_user_defined, new_indexed, "
+                          "new_participates_in_calc, new_unit, "
+                          "new_reference_table, new_default_kind, "
+                          "new_default_int64, new_default_double, "
+                          "new_default_bool, new_default_text, "
+                          "new_default_blob FROM journal_schema_entries "
+                          "WHERE tx_id = ?;"
+                        : "SELECT sequence_index, op, table_name, column_name, "
+                          "column_rowid, old_display_name, old_value_kind, "
+                          "old_column_kind, old_nullable, old_editable, "
+                          "old_user_defined, old_indexed, "
+                          "old_participates_in_calc, old_unit, "
+                          "old_reference_table, old_default_kind, "
+                          "old_default_int64, old_default_double, "
+                          "old_default_bool, old_default_text, "
+                          "new_display_name, new_value_kind, new_column_kind, "
+                          "new_nullable, new_editable, new_user_defined, "
+                          "new_indexed, new_participates_in_calc, new_unit, "
+                          "new_reference_table, new_default_kind, "
+                          "new_default_int64, new_default_double, "
+                          "new_default_bool, new_default_text FROM "
+                          "journal_schema_entries WHERE tx_id = ?;");
                 schemaStmt.BindInt64(1, persisted.txId);
                 hasEntry = false;
                 while (schemaStmt.Step(&hasEntry) == SC_OK && hasEntry)
@@ -3493,12 +3811,24 @@ namespace StableCore::Storage
                     entry.tableName = schemaStmt.ColumnText(2);
                     entry.fieldName = schemaStmt.ColumnText(3);
                     entry.columnRowId = schemaStmt.ColumnInt64(4);
-                    entry.oldColumn = ReadColumnDefFromStorage(
-                        schemaStmt, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
-                        16, 17, 18, 19);
-                    entry.newColumn = ReadColumnDefFromStorage(
-                        schemaStmt, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29,
-                        30, 31, 32, 33, 34);
+                    entry.oldColumn = supportsBinaryStorage
+                                           ? ReadColumnDefFromStorage(
+                                                 schemaStmt, 5, 6, 7, 8, 9,
+                                                 10, 11, 12, 13, 14, 15, 16,
+                                                 17, 18, 19, 20)
+                                           : ReadColumnDefFromStorage(
+                                                 schemaStmt, 5, 6, 7, 8, 9,
+                                                 10, 11, 12, 13, 14, 15, 16,
+                                                 17, 18, 19, 19);
+                    entry.newColumn = supportsBinaryStorage
+                                           ? ReadColumnDefFromStorage(
+                                                 schemaStmt, 21, 22, 23, 24,
+                                                 25, 26, 27, 28, 29, 30, 31,
+                                                 32, 33, 34, 35, 36)
+                                           : ReadColumnDefFromStorage(
+                                                 schemaStmt, 20, 21, 22, 23,
+                                                 24, 25, 26, 27, 28, 29, 30,
+                                                 31, 32, 33, 34, 34);
                     persistedEntry.entry = std::move(entry);
                     entries.push_back(std::move(persistedEntry));
                 }
@@ -3650,6 +3980,114 @@ namespace StableCore::Storage
                                 L"Failed to persist table-level schema "
                                 L"metadata.";
                             return finish(metadataRc);
+                        }
+                    } else if (step.fromVersion == 3 && step.toVersion == 4)
+                    {
+                        if (!HasTableColumn(db_.Raw(), "field_values",
+                                            "blob_value"))
+                        {
+                            const ErrorCode fieldValuesRc = db_.Execute(
+                                "ALTER TABLE field_values ADD COLUMN "
+                                "blob_value BLOB;");
+                            if (Failed(fieldValuesRc))
+                            {
+                                schemaVersion_ = originalSchemaVersion;
+                                result.status = SCUpgradeStatus::RolledBack;
+                                result.rolledBack = true;
+                                result.failureReason =
+                                    L"Failed to add binary field storage.";
+                                return finish(fieldValuesRc);
+                            }
+                        }
+
+                        if (!HasTableColumn(db_.Raw(), "schema_columns",
+                                            "default_blob"))
+                        {
+                            const ErrorCode schemaColumnsRc = db_.Execute(
+                                "ALTER TABLE schema_columns ADD COLUMN "
+                                "default_blob BLOB;");
+                            if (Failed(schemaColumnsRc))
+                            {
+                                schemaVersion_ = originalSchemaVersion;
+                                result.status = SCUpgradeStatus::RolledBack;
+                                result.rolledBack = true;
+                                result.failureReason =
+                                    L"Failed to add schema default binary "
+                                    L"storage.";
+                                return finish(schemaColumnsRc);
+                            }
+                        }
+
+                        if (!HasTableColumn(db_.Raw(), "journal_entries",
+                                            "old_blob"))
+                        {
+                            const ErrorCode journalEntriesRc = db_.Execute(
+                                "ALTER TABLE journal_entries ADD COLUMN "
+                                "old_blob BLOB;");
+                            if (Failed(journalEntriesRc))
+                            {
+                                schemaVersion_ = originalSchemaVersion;
+                                result.status = SCUpgradeStatus::RolledBack;
+                                result.rolledBack = true;
+                                result.failureReason =
+                                    L"Failed to extend journal entry storage.";
+                                return finish(journalEntriesRc);
+                            }
+                        }
+
+                        if (!HasTableColumn(db_.Raw(), "journal_entries",
+                                            "new_blob"))
+                        {
+                            const ErrorCode journalEntriesRc2 = db_.Execute(
+                                "ALTER TABLE journal_entries ADD COLUMN "
+                                "new_blob BLOB;");
+                            if (Failed(journalEntriesRc2))
+                            {
+                                schemaVersion_ = originalSchemaVersion;
+                                result.status = SCUpgradeStatus::RolledBack;
+                                result.rolledBack = true;
+                                result.failureReason =
+                                    L"Failed to extend journal entry storage.";
+                                return finish(journalEntriesRc2);
+                            }
+                        }
+
+                        if (!HasTableColumn(db_.Raw(),
+                                            "journal_schema_entries",
+                                            "old_default_blob"))
+                        {
+                            const ErrorCode schemaJournalRc = db_.Execute(
+                                "ALTER TABLE journal_schema_entries ADD "
+                                "COLUMN old_default_blob BLOB;");
+                            if (Failed(schemaJournalRc))
+                            {
+                                schemaVersion_ = originalSchemaVersion;
+                                result.status = SCUpgradeStatus::RolledBack;
+                                result.rolledBack = true;
+                                result.failureReason =
+                                    L"Failed to extend schema journal "
+                                    L"storage.";
+                                return finish(schemaJournalRc);
+                            }
+                        }
+
+                        if (!HasTableColumn(db_.Raw(),
+                                            "journal_schema_entries",
+                                            "new_default_blob"))
+                        {
+                            const ErrorCode schemaJournalRc2 = db_.Execute(
+                                "ALTER TABLE journal_schema_entries ADD "
+                                "COLUMN new_default_blob BLOB;");
+                            if (Failed(schemaJournalRc2))
+                            {
+                                schemaVersion_ = originalSchemaVersion;
+                                result.status = SCUpgradeStatus::RolledBack;
+                                result.rolledBack = true;
+                                result.failureReason =
+                                    L"Failed to extend schema journal "
+                                    L"storage.";
+                                return finish(schemaJournalRc2);
+                            }
                         }
                     } else
                     {
@@ -5864,8 +6302,8 @@ namespace StableCore::Storage
                 " user_defined_flag, indexed_flag, "
                 "participates_in_calc_flag, unit, reference_table,"
                 " default_kind, default_int64, default_double, "
-                "default_bool, default_text)"
-                " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+                "default_bool, default_text, default_blob)"
+                " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
                 "?);");
             if (rowId > 0)
             {
@@ -5877,7 +6315,7 @@ namespace StableCore::Storage
             stmt.BindInt64(2, schema->TableRowId());
             stmt.BindText(3, def.name);
             BindColumnDefForStorage(stmt, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13,
-                                    14, 15, 16, 17, 18, def);
+                                    14, 15, 16, 17, 18, 19, def);
             const ErrorCode rc = stmt.Step();
             if (Failed(rc))
             {
@@ -5935,7 +6373,8 @@ namespace StableCore::Storage
                 "nullable_flag = ?, editable_flag = ?, user_defined_flag = ?, "
                 "indexed_flag = ?, participates_in_calc_flag = ?, unit = ?, "
                 "reference_table = ?, default_kind = ?, default_int64 = ?, "
-                "default_double = ?, default_bool = ?, default_text = ? "
+                "default_double = ?, default_bool = ?, default_text = ?, "
+                "default_blob = ? "
                 "WHERE table_id = ? AND column_name = ?;");
             stmt.BindText(1, def.displayName);
             stmt.BindInt(2, ToSqliteValueKind(def.valueKind));
@@ -5947,9 +6386,10 @@ namespace StableCore::Storage
             stmt.BindInt(8, def.participatesInCalc ? 1 : 0);
             stmt.BindText(9, def.unit);
             stmt.BindText(10, def.referenceTable);
-            BindValueForStorage(stmt, 11, 12, 13, 14, 15, def.defaultValue);
-            stmt.BindInt64(16, schema->TableRowId());
-            stmt.BindText(17, def.name);
+            BindValueForStorage(stmt, 11, 12, 13, 14, 15, 16,
+                                def.defaultValue);
+            stmt.BindInt64(17, schema->TableRowId());
+            stmt.BindText(18, def.name);
             const ErrorCode rc = stmt.Step();
             if (Failed(rc))
             {
@@ -6253,7 +6693,7 @@ namespace StableCore::Storage
                     SqliteStmt insertValueStmt = db_.Prepare(
                         "INSERT INTO field_values(table_id, record_id, "
                         "column_name, value_kind, int64_value, double_value, "
-                        "bool_value, text_value) VALUES(?, ?, ?, ?, ?, ?, ?, ?);");
+                        "bool_value, text_value, blob_value) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?);");
                     for (auto& update : updates)
                     {
                         deleteValueStmt.BindInt64(1, schema->TableRowId());
@@ -6274,6 +6714,7 @@ namespace StableCore::Storage
                             insertValueStmt.BindInt64(2, update.data->id);
                             insertValueStmt.BindText(3, def.name);
                             BindValueForStorage(insertValueStmt, 4, 5, 6, 7, 8,
+                                                9,
                                                 update.newValue);
                             const ErrorCode insertRc = insertValueStmt.Step();
                             insertValueStmt.Reset();
@@ -6514,10 +6955,17 @@ namespace StableCore::Storage
 
             try
             {
+                const bool supportsBinaryStorage = schemaVersion_ >= 4;
                 SqliteStmt valuesStmt = db_.Prepare(
-                    "SELECT record_id, value_kind, int64_value, "
-                    "double_value, bool_value, text_value FROM field_values "
-                    "WHERE table_id = ? AND column_name = ?;");
+                    supportsBinaryStorage
+                        ? "SELECT record_id, value_kind, int64_value, "
+                          "double_value, bool_value, text_value, blob_value "
+                          "FROM field_values WHERE table_id = ? AND "
+                          "column_name = ?;"
+                        : "SELECT record_id, value_kind, int64_value, "
+                          "double_value, bool_value, text_value FROM "
+                          "field_values WHERE table_id = ? AND column_name = "
+                          "?;");
                 valuesStmt.BindInt64(1, table->TableRowId());
                 valuesStmt.BindText(2, columnName);
                 bool hasValue = false;
@@ -6532,7 +6980,9 @@ namespace StableCore::Storage
                     }
 
                     recordIt->second->values[std::wstring(columnName)] =
-                        ReadValueFromStorage(valuesStmt, 1, 2, 3, 4, 5);
+                        supportsBinaryStorage
+                            ? ReadValueFromStorage(valuesStmt, 1, 2, 3, 4, 5, 6)
+                            : ReadValueFromStorage(valuesStmt, 1, 2, 3, 4, 5, 5);
                 }
             } catch (...)
             {
@@ -6891,8 +7341,8 @@ namespace StableCore::Storage
                 "?;");
             SqliteStmt insertValue = db_.Prepare(
                 "INSERT INTO field_values(table_id, record_id, column_name, "
-                "value_kind, int64_value, double_value, bool_value, text_value)"
-                " VALUES(?, ?, ?, ?, ?, ?, ?, ?);");
+                "value_kind, int64_value, double_value, bool_value, text_value, blob_value)"
+                " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?);");
 
             for (const auto& [tableName, recordId] : GetTouchedRecordKeys(tx))
             {
@@ -6931,7 +7381,8 @@ namespace StableCore::Storage
                     insertValue.BindInt64(1, table->TableRowId());
                     insertValue.BindInt64(2, data->id);
                     insertValue.BindText(3, fieldName);
-                    BindValueForStorage(insertValue, 4, 5, 6, 7, 8, SCValue);
+                    BindValueForStorage(insertValue, 4, 5, 6, 7, 8, 9,
+                                        SCValue);
                     insertValue.Step();
                     insertValue.Reset();
                 }
@@ -6960,11 +7411,10 @@ namespace StableCore::Storage
                 "INSERT INTO journal_entries("
                 " tx_id, sequence_index, op, table_name, record_id, "
                 "field_name, old_kind, old_int64, old_double, old_bool, "
-                "old_text,"
-                " new_kind, new_int64, new_double, new_bool, new_text, "
+                "old_text, old_blob,"
+                " new_kind, new_int64, new_double, new_bool, new_text, new_blob, "
                 "old_deleted, new_deleted)"
-                " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
-                "?);");
+                " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);");
 
             int sequence = 0;
             for (const auto& entry : tx.entries)
@@ -6982,11 +7432,12 @@ namespace StableCore::Storage
                 valueStmt.BindText(4, entry.tableName);
                 valueStmt.BindInt64(5, entry.recordId);
                 valueStmt.BindText(6, entry.fieldName);
-                BindValueForStorage(valueStmt, 7, 8, 9, 10, 11, entry.oldValue);
-                BindValueForStorage(valueStmt, 12, 13, 14, 15, 16,
+                BindValueForStorage(valueStmt, 7, 8, 9, 10, 11, 12,
+                                    entry.oldValue);
+                BindValueForStorage(valueStmt, 13, 14, 15, 16, 17, 18,
                                     entry.newValue);
-                valueStmt.BindInt(17, entry.oldDeleted ? 1 : 0);
-                valueStmt.BindInt(18, entry.newDeleted ? 1 : 0);
+                valueStmt.BindInt(19, entry.oldDeleted ? 1 : 0);
+                valueStmt.BindInt(20, entry.newDeleted ? 1 : 0);
                 valueStmt.Step();
                 valueStmt.Reset();
             }
@@ -7010,14 +7461,14 @@ namespace StableCore::Storage
                 "old_user_defined, old_indexed, old_participates_in_calc, "
                 "old_unit, old_reference_table, old_default_kind, "
                 "old_default_int64, old_default_double, old_default_bool, "
-                "old_default_text, new_display_name, new_value_kind, "
+                "old_default_text, old_default_blob, new_display_name, new_value_kind, "
                 "new_column_kind, new_nullable, new_editable, "
                 "new_user_defined, new_indexed, new_participates_in_calc, "
                 "new_unit, new_reference_table, new_default_kind, "
                 "new_default_int64, new_default_double, new_default_bool, "
-                "new_default_text)"
+                "new_default_text, new_default_blob)"
                 " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
-                "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);");
+                "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);");
 
             for (const auto& entry : tx.entries)
             {
@@ -7035,9 +7486,9 @@ namespace StableCore::Storage
                 stmt.BindText(5, entry.fieldName);
                 stmt.BindInt64(6, entry.columnRowId);
                 BindColumnDefForStorage(stmt, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
-                                        17, 18, 19, 20, 21, entry.oldColumn);
-                BindColumnDefForStorage(stmt, 22, 23, 24, 25, 26, 27, 28, 29, 30,
-                                        31, 32, 33, 34, 35, 36, entry.newColumn);
+                                        17, 18, 19, 20, 21, 22, entry.oldColumn);
+                BindColumnDefForStorage(stmt, 23, 24, 25, 26, 27, 28, 29, 30, 31,
+                                        32, 33, 34, 35, 36, 37, 38, entry.newColumn);
                 stmt.Step();
                 stmt.Reset();
             }

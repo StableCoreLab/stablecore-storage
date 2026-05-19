@@ -26,6 +26,13 @@ namespace StableCore::Storage
                     L"Persist table-level metadata, primary keys and "
                     L"indexes.",
                 },
+                SCMigrationStep{
+                    3,
+                    4,
+                    L"sqlite-schema-v4",
+                    L"Add binary storage columns for field values, schema "
+                    L"defaults and journal entries.",
+                },
             };
         }
 

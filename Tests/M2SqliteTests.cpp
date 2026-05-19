@@ -1,6 +1,10 @@
 ﻿#include <filesystem>
+#include <algorithm>
+#include <cstring>
 #include <string>
 #include <utility>
+
+#include <vector>
 
 #include <gtest/gtest.h>
 #include <sqlite3.h>
@@ -55,6 +59,224 @@ namespace
         }
         sqlite3_close(db);
         return rc == SQLITE_OK;
+    }
+
+    bool CreateLegacyV3Database(const fs::path& dbPath)
+    {
+        sqlite3* db = nullptr;
+        const std::string narrowPath = dbPath.string();
+        if (sqlite3_open_v2(narrowPath.c_str(), &db,
+                            SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE,
+                            nullptr) != SQLITE_OK)
+        {
+            if (db != nullptr)
+            {
+                sqlite3_close(db);
+            }
+            return false;
+        }
+
+        const char* sql =
+            "CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, "
+            "value TEXT NOT NULL);"
+            "CREATE TABLE IF NOT EXISTS startup_diagnostics ("
+            "diag_id INTEGER PRIMARY KEY AUTOINCREMENT, severity INTEGER "
+            "NOT NULL, category TEXT NOT NULL, message TEXT NOT NULL);"
+            "CREATE TABLE IF NOT EXISTS tables (table_id INTEGER PRIMARY "
+            "KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE);"
+            "CREATE TABLE IF NOT EXISTS schema_columns ("
+            "table_id INTEGER NOT NULL, column_name TEXT NOT NULL, "
+            "display_name TEXT NOT NULL, value_kind INTEGER NOT NULL,"
+            "column_kind INTEGER NOT NULL, nullable_flag INTEGER NOT NULL, "
+            "editable_flag INTEGER NOT NULL,"
+            "user_defined_flag INTEGER NOT NULL, indexed_flag INTEGER NOT "
+            "NULL, participates_in_calc_flag INTEGER NOT NULL,"
+            "unit TEXT NOT NULL, reference_table TEXT NOT NULL, "
+            "default_kind INTEGER NOT NULL, default_int64 INTEGER,"
+            "default_double REAL, default_bool INTEGER, default_text TEXT, "
+            "PRIMARY KEY(table_id, column_name));"
+            "CREATE TABLE IF NOT EXISTS records ("
+            "table_id INTEGER NOT NULL, record_id INTEGER NOT NULL, state "
+            "INTEGER NOT NULL, last_modified_version INTEGER NOT NULL,"
+            "PRIMARY KEY(table_id, record_id));"
+            "CREATE TABLE IF NOT EXISTS field_values ("
+            "table_id INTEGER NOT NULL, record_id INTEGER NOT NULL, "
+            "column_name TEXT NOT NULL, value_kind INTEGER NOT NULL,"
+            "int64_value INTEGER, double_value REAL, bool_value INTEGER, "
+            "text_value TEXT,"
+            "PRIMARY KEY(table_id, record_id, column_name));"
+            "CREATE INDEX IF NOT EXISTS idx_records_table_state ON "
+            "records(table_id, state);"
+            "CREATE INDEX IF NOT EXISTS idx_field_values_lookup ON "
+            "field_values(table_id, column_name, value_kind, int64_value, "
+            "text_value);"
+            "CREATE INDEX IF NOT EXISTS idx_field_values_record ON "
+            "field_values(table_id, record_id, column_name);"
+            "CREATE TABLE IF NOT EXISTS journal_transactions ("
+            "tx_id INTEGER PRIMARY KEY AUTOINCREMENT, action_name TEXT NOT "
+            "NULL, committed_version INTEGER NOT NULL,"
+            " stack_kind INTEGER NOT NULL, stack_order INTEGER NOT NULL);"
+            "CREATE TABLE IF NOT EXISTS journal_entries ("
+            "tx_id INTEGER NOT NULL, sequence_index INTEGER NOT NULL, op "
+            "INTEGER NOT NULL, table_name TEXT NOT NULL,"
+            "record_id INTEGER NOT NULL, field_name TEXT NOT NULL, "
+            "old_kind INTEGER NOT NULL, old_int64 INTEGER,"
+            "old_double REAL, old_bool INTEGER, old_text TEXT, new_kind "
+            "INTEGER NOT NULL, new_int64 INTEGER,"
+            "new_double REAL, new_bool INTEGER, new_text TEXT, "
+            "old_deleted INTEGER NOT NULL, new_deleted INTEGER NOT NULL,"
+            "PRIMARY KEY(tx_id, sequence_index));"
+            "CREATE TABLE IF NOT EXISTS journal_schema_entries ("
+            "tx_id INTEGER NOT NULL, sequence_index INTEGER NOT NULL, op "
+            "INTEGER NOT NULL, table_name TEXT NOT NULL, column_name TEXT "
+            "NOT NULL, column_rowid INTEGER NOT NULL, old_display_name TEXT, "
+            "old_value_kind INTEGER, old_column_kind INTEGER, old_nullable "
+            "INTEGER, old_editable INTEGER, old_user_defined INTEGER, "
+            "old_indexed INTEGER, old_participates_in_calc INTEGER, "
+            "old_unit TEXT, old_reference_table TEXT, old_default_kind "
+            "INTEGER, old_default_int64 INTEGER, old_default_double REAL, "
+            "old_default_bool INTEGER, old_default_text TEXT, "
+            "new_display_name TEXT, new_value_kind INTEGER, "
+            "new_column_kind INTEGER, new_nullable INTEGER, "
+            "new_editable INTEGER, new_user_defined INTEGER, "
+            "new_indexed INTEGER, new_participates_in_calc INTEGER, "
+            "new_unit TEXT, new_reference_table TEXT, new_default_kind "
+            "INTEGER, new_default_int64 INTEGER, new_default_double REAL, "
+            "new_default_bool INTEGER, new_default_text TEXT, "
+            "PRIMARY KEY(tx_id, sequence_index));"
+            "CREATE TABLE IF NOT EXISTS schema_tables ("
+            "table_id INTEGER PRIMARY KEY, description TEXT NOT NULL "
+            "DEFAULT '');"
+            "CREATE TABLE IF NOT EXISTS schema_constraints ("
+            "constraint_id INTEGER PRIMARY KEY AUTOINCREMENT, table_id "
+            "INTEGER NOT NULL, kind INTEGER NOT NULL, name TEXT NOT NULL, "
+            "source_kind INTEGER NOT NULL, referenced_table TEXT NOT NULL, "
+            "check_expression TEXT NOT NULL DEFAULT '');"
+            "CREATE INDEX IF NOT EXISTS idx_schema_constraints_table ON "
+            "schema_constraints(table_id);"
+            "CREATE TABLE IF NOT EXISTS schema_constraint_columns ("
+            "constraint_id INTEGER NOT NULL, column_ordinal INTEGER NOT "
+            "NULL, column_name TEXT NOT NULL, referenced_column_name TEXT "
+            "NOT NULL DEFAULT '', PRIMARY KEY(constraint_id, "
+            "column_ordinal));"
+            "CREATE TABLE IF NOT EXISTS schema_indexes ("
+            "index_id INTEGER PRIMARY KEY AUTOINCREMENT, table_id INTEGER "
+            "NOT NULL, name TEXT NOT NULL, source_kind INTEGER NOT NULL);"
+            "CREATE INDEX IF NOT EXISTS idx_schema_indexes_table ON "
+            "schema_indexes(table_id);"
+            "CREATE TABLE IF NOT EXISTS schema_index_columns ("
+            "index_id INTEGER NOT NULL, column_ordinal INTEGER NOT NULL, "
+            "column_name TEXT NOT NULL, descending_flag INTEGER NOT NULL, "
+            "PRIMARY KEY(index_id, column_ordinal));"
+            "INSERT INTO metadata(key, value) VALUES('version', '3');"
+            "INSERT INTO metadata(key, value) VALUES('baseline_version', '3');"
+            "INSERT INTO metadata(key, value) VALUES('next_record_id', '1');"
+            "INSERT INTO metadata(key, value) VALUES('schema_version', '3');"
+            "INSERT INTO metadata(key, value) VALUES('clean_shutdown', '1');"
+            "INSERT INTO tables(table_id, name) VALUES (1, 'Element');"
+            "INSERT INTO schema_tables(table_id, description) VALUES (1, '');"
+            "INSERT INTO schema_columns(table_id, column_name, display_name, "
+            "value_kind, column_kind, nullable_flag, editable_flag, "
+            "user_defined_flag, indexed_flag, participates_in_calc_flag, "
+            "unit, reference_table, default_kind, default_int64, "
+            "default_double, default_bool, default_text) VALUES "
+            "(1, 'Id', 'Id', 1, 0, 0, 1, 1, 0, 0, '', '', 1, 0, NULL, NULL, '');"
+            "INSERT INTO schema_columns(table_id, column_name, display_name, "
+            "value_kind, column_kind, nullable_flag, editable_flag, "
+            "user_defined_flag, indexed_flag, participates_in_calc_flag, "
+            "unit, reference_table, default_kind, default_int64, "
+            "default_double, default_bool, default_text) VALUES "
+            "(1, 'Width', 'Width', 1, 0, 1, 1, 1, 1, 0, '', '', 1, 0, NULL, NULL, '');"
+            "INSERT INTO schema_constraints(constraint_id, table_id, kind, "
+            "name, source_kind, referenced_table, check_expression) VALUES "
+            "(1, 1, 0, 'PK_Element', 0, '', '');"
+            "INSERT INTO schema_constraint_columns(constraint_id, "
+            "column_ordinal, column_name, referenced_column_name) VALUES "
+            "(1, 0, 'Id', '');"
+            "INSERT INTO schema_indexes(index_id, table_id, name, source_kind) "
+            "VALUES (1, 1, 'WidthIndex', 0);"
+            "INSERT INTO schema_index_columns(index_id, column_ordinal, "
+            "column_name, descending_flag) VALUES (1, 0, 'Width', 0);"
+            "INSERT INTO records(table_id, record_id, state, "
+            "last_modified_version) VALUES (1, 1, 0, 3);"
+            "INSERT INTO field_values(table_id, record_id, column_name, "
+            "value_kind, int64_value, double_value, bool_value, text_value) "
+            "VALUES (1, 1, 'Width', 1, 256, NULL, NULL, NULL);"
+            "INSERT INTO journal_transactions(tx_id, action_name, "
+            "committed_version, stack_kind, stack_order) VALUES "
+            "(1, 'seed', 3, 0, 0);"
+            "INSERT INTO journal_entries(tx_id, sequence_index, op, table_name, "
+            "record_id, field_name, old_kind, old_int64, old_double, old_bool, "
+            "old_text, new_kind, new_int64, new_double, new_bool, new_text, "
+            "old_deleted, new_deleted) VALUES "
+            "(1, 0, 0, 'Element', 1, 'Width', 0, NULL, NULL, NULL, NULL, 1, "
+            "256, NULL, NULL, NULL, 0, 0);"
+            "INSERT INTO journal_schema_entries(tx_id, sequence_index, op, "
+            "table_name, column_name, column_rowid, old_display_name, "
+            "old_value_kind, old_column_kind, old_nullable, old_editable, "
+            "old_user_defined, old_indexed, old_participates_in_calc, old_unit, "
+            "old_reference_table, old_default_kind, old_default_int64, "
+            "old_default_double, old_default_bool, old_default_text, "
+            "new_display_name, new_value_kind, new_column_kind, new_nullable, "
+            "new_editable, new_user_defined, new_indexed, "
+            "new_participates_in_calc, new_unit, new_reference_table, "
+            "new_default_kind, new_default_int64, new_default_double, "
+            "new_default_bool, new_default_text) VALUES "
+            "(1, 1, 4, 'Element', 'Width', 2, 'Width', 1, 0, 1, 1, 1, 1, 0, "
+            "'', '', 1, 0, NULL, NULL, '', 'Width', 1, 0, 1, 1, 1, 1, 0, '', "
+            "'', 1, 0, NULL, NULL, '');";
+
+        char* error = nullptr;
+        const int rc = sqlite3_exec(db, sql, nullptr, nullptr, &error);
+        if (error != nullptr)
+        {
+            sqlite3_free(error);
+        }
+        sqlite3_close(db);
+        return rc == SQLITE_OK;
+    }
+
+    bool SqliteTableHasColumn(const fs::path& dbPath, const char* tableName,
+                              const char* columnName)
+    {
+        sqlite3* db = nullptr;
+        const std::string narrowPath = dbPath.string();
+        if (sqlite3_open_v2(narrowPath.c_str(), &db, SQLITE_OPEN_READWRITE,
+                            nullptr) != SQLITE_OK)
+        {
+            if (db != nullptr)
+            {
+                sqlite3_close(db);
+            }
+            return false;
+        }
+
+        const std::string pragmaSql =
+            std::string("PRAGMA table_info(") + tableName + ");";
+        sqlite3_stmt* stmt = nullptr;
+        if (sqlite3_prepare_v2(db, pragmaSql.c_str(), -1, &stmt, nullptr) !=
+            SQLITE_OK)
+        {
+            sqlite3_close(db);
+            return false;
+        }
+
+        bool found = false;
+        while (sqlite3_step(stmt) == SQLITE_ROW)
+        {
+            const unsigned char* name = sqlite3_column_text(stmt, 1);
+            if (name != nullptr &&
+                std::strcmp(reinterpret_cast<const char*>(name), columnName) ==
+                    0)
+            {
+                found = true;
+                break;
+            }
+        }
+
+        sqlite3_finalize(stmt);
+        sqlite3_close(db);
+        return found;
     }
 
     bool QuerySqliteInt64(const fs::path& dbPath, const char* sql,
@@ -878,11 +1100,157 @@ TEST(StorageM2Sqlite, PersistedEmptyQueryIsNotError)
     EXPECT_FALSE(static_cast<bool>(beam));
 }
 
+TEST(StorageM2Sqlite, BinaryFieldPersistsAcrossReopen)
+{
+    const fs::path dbPath =
+        MakeTempDbPath(L"StableCoreStorage_M2_BinaryField.sqlite");
+
+    sc::RecordId beamId = 0;
+    const std::vector<std::uint8_t> payload{0x00, 0x10, 0x7F, 0xFF};
+
+    {
+        sc::SCDbPtr db;
+        EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
+
+        sc::SCTablePtr table = CreateBeamTable(db);
+
+        sc::SCSchemaPtr schema;
+        EXPECT_EQ(table->GetSchema(schema), sc::SC_OK);
+
+        sc::SCColumnDef attachment;
+        attachment.name = L"Attachment";
+        attachment.displayName = L"Attachment";
+        attachment.valueKind = sc::ValueKind::Binary;
+        attachment.nullable = true;
+        EXPECT_EQ(schema->AddColumn(attachment), sc::SC_OK);
+
+        sc::SCEditPtr edit;
+        EXPECT_EQ(db->BeginEdit(L"seed binary", edit), sc::SC_OK);
+
+        sc::SCRecordPtr beam;
+        EXPECT_EQ(table->CreateRecord(beam), sc::SC_OK);
+        beamId = beam->GetId();
+        EXPECT_EQ(beam->SetBinary(L"Attachment", payload.data(),
+                                  payload.size()),
+                  sc::SC_OK);
+        EXPECT_EQ(db->Commit(edit.Get()), sc::SC_OK);
+    }
+
+    {
+        sc::SCDbPtr db;
+        EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
+
+        sc::SCTablePtr table;
+        EXPECT_EQ(db->GetTable(L"Beam", table), sc::SC_OK);
+
+        sc::SCRecordPtr record;
+        EXPECT_EQ(table->GetRecord(beamId, record), sc::SC_OK);
+
+        std::vector<std::uint8_t> loaded;
+        EXPECT_EQ(record->GetBinaryCopy(L"Attachment", &loaded), sc::SC_OK);
+        EXPECT_EQ(loaded, payload);
+    }
+}
+
+TEST(StorageM2Sqlite, StringAndBinaryGettersExposeStableBackingStorage)
+{
+    const fs::path dbPath =
+        MakeTempDbPath(L"StableCoreStorage_M2_StableGetterStorage.sqlite");
+
+    const std::vector<std::uint8_t> explicitBinary{0xAA, 0xBB, 0xCC};
+    const std::vector<std::uint8_t> defaultBinary{0x10, 0x20};
+
+    sc::SCDbPtr db;
+    EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
+
+    sc::SCTablePtr table = CreateBeamTable(db);
+    sc::SCSchemaPtr schema;
+    EXPECT_EQ(table->GetSchema(schema), sc::SC_OK);
+
+    sc::SCColumnDef name;
+    name.name = L"Name";
+    name.displayName = L"Name";
+    name.valueKind = sc::ValueKind::String;
+    name.nullable = false;
+    name.defaultValue = sc::SCValue::FromString(L"default-name");
+    EXPECT_EQ(schema->AddColumn(name), sc::SC_OK);
+
+    sc::SCColumnDef attachment;
+    attachment.name = L"Attachment";
+    attachment.displayName = L"Attachment";
+    attachment.valueKind = sc::ValueKind::Binary;
+    attachment.nullable = false;
+    attachment.defaultValue = sc::SCValue::FromBinary(defaultBinary);
+    EXPECT_EQ(schema->AddColumn(attachment), sc::SC_OK);
+
+    sc::RecordId explicitRecordId = 0;
+    sc::RecordId defaultRecordId = 0;
+    {
+        sc::SCEditPtr edit;
+        EXPECT_EQ(db->BeginEdit(L"seed", edit), sc::SC_OK);
+
+        sc::SCRecordPtr explicitRecord;
+        EXPECT_EQ(table->CreateRecord(explicitRecord), sc::SC_OK);
+        explicitRecordId = explicitRecord->GetId();
+        EXPECT_EQ(explicitRecord->SetString(L"Name", L"explicit-name"),
+                  sc::SC_OK);
+        EXPECT_EQ(explicitRecord->SetBinary(
+                      L"Attachment", explicitBinary.data(), explicitBinary.size()),
+                  sc::SC_OK);
+
+        sc::SCRecordPtr defaultRecord;
+        EXPECT_EQ(table->CreateRecord(defaultRecord), sc::SC_OK);
+        defaultRecordId = defaultRecord->GetId();
+
+        EXPECT_EQ(db->Commit(edit.Get()), sc::SC_OK);
+    }
+
+    const auto verifyRecord =
+        [&](sc::RecordId recordId, const wchar_t* expectedName,
+            const std::vector<std::uint8_t>& expectedBinary) {
+            sc::SCRecordPtr record;
+            ASSERT_EQ(table->GetRecord(recordId, record), sc::SC_OK);
+
+            const wchar_t* namePtr = nullptr;
+            ASSERT_EQ(record->GetString(L"Name", &namePtr), sc::SC_OK);
+            ASSERT_NE(namePtr, nullptr);
+
+            const std::uint8_t* binaryPtr = nullptr;
+            std::size_t binarySize = 0;
+            ASSERT_EQ(record->GetBinary(L"Attachment", &binaryPtr, &binarySize),
+                      sc::SC_OK);
+            ASSERT_EQ(binarySize, expectedBinary.size());
+            ASSERT_TRUE(binaryPtr != nullptr || expectedBinary.empty());
+
+            std::wstring copiedName;
+            EXPECT_EQ(record->GetStringCopy(L"Name", &copiedName), sc::SC_OK);
+            EXPECT_EQ(copiedName, expectedName);
+            EXPECT_EQ(std::wstring(namePtr), expectedName);
+
+            std::vector<std::uint8_t> copiedBinary;
+            EXPECT_EQ(record->GetBinaryCopy(L"Attachment", &copiedBinary),
+                      sc::SC_OK);
+            EXPECT_EQ(copiedBinary, expectedBinary);
+            if (expectedBinary.empty())
+            {
+                EXPECT_EQ(binaryPtr, nullptr);
+            } else
+            {
+                EXPECT_TRUE(std::equal(binaryPtr, binaryPtr + binarySize,
+                                       expectedBinary.begin(),
+                                       expectedBinary.end()));
+            }
+        };
+
+    verifyRecord(explicitRecordId, L"explicit-name", explicitBinary);
+    verifyRecord(defaultRecordId, L"default-name", defaultBinary);
+}
+
 TEST(StorageM2Sqlite, VersionGraphReportsUpgradeWindow)
 {
     sc::SCVersionGraph graph;
     EXPECT_EQ(sc::BuildDefaultVersionGraph(&graph), sc::SC_OK);
-    EXPECT_GE(graph.latestSupportedVersion, 3);
+    EXPECT_GE(graph.latestSupportedVersion, 4);
     EXPECT_FALSE(graph.nodes.empty());
     EXPECT_FALSE(graph.edges.empty());
 
@@ -902,100 +1270,116 @@ TEST(StorageM2Sqlite, VersionGraphReportsUpgradeWindow)
     EXPECT_TRUE(decision.writable);
 }
 
-TEST(StorageM2Sqlite, UpgradeToV3BackfillsTableLevelMetadata)
+TEST(StorageM2Sqlite, UpgradeFromV3ToV4AddsBinaryColumns)
 {
     const fs::path dbPath =
-        MakeTempDbPath(L"StableCoreStorage_M2_UpgradeToV3.sqlite");
+        MakeTempDbPath(L"StableCoreStorage_M2_UpgradeFromV3ToV4.sqlite");
 
-    {
-        sc::SCDbPtr db;
-        EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
-
-        sc::SCTablePtr table;
-        EXPECT_EQ(db->CreateTable(L"Element", table), sc::SC_OK);
-
-        sc::SCSchemaPtr schema;
-        EXPECT_EQ(table->GetSchema(schema), sc::SC_OK);
-
-        sc::SCColumnDef id;
-        id.name = L"Id";
-        id.displayName = L"Id";
-        id.valueKind = sc::ValueKind::Int64;
-        id.nullable = false;
-        id.defaultValue = sc::SCValue::FromInt64(0);
-        EXPECT_EQ(schema->AddColumn(id), sc::SC_OK);
-
-        sc::SCColumnDef width;
-        width.name = L"Width";
-        width.displayName = L"Width";
-        width.valueKind = sc::ValueKind::Int64;
-        width.indexed = true;
-        width.defaultValue = sc::SCValue::FromInt64(0);
-        EXPECT_EQ(schema->AddColumn(width), sc::SC_OK);
-    }
-
-    EXPECT_TRUE(ExecSqliteScript(
-        dbPath,
-        "DROP TABLE IF EXISTS schema_index_columns;"
-        "DROP TABLE IF EXISTS schema_indexes;"
-        "DROP TABLE IF EXISTS schema_constraint_columns;"
-        "DROP TABLE IF EXISTS schema_constraints;"
-        "DROP TABLE IF EXISTS schema_tables;"
-        "UPDATE metadata SET value='2' WHERE key='schema_version';"));
+    EXPECT_TRUE(CreateLegacyV3Database(dbPath));
 
     sc::SCVersionGraph graph;
     EXPECT_EQ(sc::BuildDefaultVersionGraph(&graph), sc::SC_OK);
-    EXPECT_GE(graph.latestSupportedVersion, 3);
+    EXPECT_GE(graph.latestSupportedVersion, 4);
 
     sc::SCDbPtr reopened;
     EXPECT_EQ(CreateFileDb(dbPath.c_str(), reopened), sc::SC_OK);
     EXPECT_EQ(reopened->GetSchemaVersion(), graph.latestSupportedVersion);
+    std::int32_t tableCount = 0;
+    EXPECT_EQ(reopened->GetTableCount(&tableCount), sc::SC_OK);
+    EXPECT_EQ(tableCount, 1);
+
+    sc::SCTablePtr elementTable;
+    EXPECT_EQ(reopened->GetTable(L"Element", elementTable), sc::SC_OK);
+    sc::SCSchemaPtr elementSchema;
+    EXPECT_EQ(elementTable->GetSchema(elementSchema), sc::SC_OK);
+
+    sc::SCTableSchemaSnapshot snapshot;
+    EXPECT_EQ(elementSchema->GetSchemaSnapshot(&snapshot), sc::SC_OK);
+    EXPECT_EQ(snapshot.columns.size(), 2);
+    EXPECT_EQ(snapshot.constraints.size(), 1);
+    EXPECT_EQ(snapshot.indexes.size(), 1);
+
+    sc::SCRecordPtr elementRecord;
+    EXPECT_EQ(elementTable->GetRecord(1, elementRecord), sc::SC_OK);
+    std::int64_t width = 0;
+    EXPECT_EQ(elementRecord->GetInt64(L"Width", &width), sc::SC_OK);
+    EXPECT_EQ(width, 256);
 
     std::int64_t value = 0;
+    EXPECT_TRUE(QuerySqliteInt64(dbPath,
+                                 "SELECT COUNT(*) FROM schema_tables st "
+                                 "JOIN tables t ON t.table_id = st.table_id "
+                                 "WHERE t.name = 'Element';",
+                                 &value));
+    EXPECT_EQ(value, 1);
+
+    EXPECT_TRUE(QuerySqliteInt64(dbPath,
+                                 "SELECT COUNT(*) FROM schema_constraints c "
+                                 "JOIN schema_constraint_columns cc ON cc.constraint_id = "
+                                 "c.constraint_id "
+                                 "JOIN tables t ON t.table_id = c.table_id "
+                                 "WHERE t.name = 'Element' AND c.kind = 0 AND cc.column_name = 'Id';",
+                                 &value));
+    EXPECT_EQ(value, 1);
+
+    EXPECT_TRUE(QuerySqliteInt64(dbPath,
+                                 "SELECT COUNT(*) FROM schema_indexes i "
+                                 "JOIN schema_index_columns ic ON ic.index_id = i.index_id "
+                                 "JOIN tables t ON t.table_id = i.table_id "
+                                 "WHERE t.name = 'Element' AND ic.column_name = 'Width';",
+                                 &value));
+    EXPECT_EQ(value, 1);
+    EXPECT_TRUE(QuerySqliteInt64(dbPath,
+                                 "SELECT COUNT(*) FROM records "
+                                 "WHERE table_id = 1 AND record_id = 1;",
+                                 &value));
+    EXPECT_EQ(value, 1);
+    EXPECT_TRUE(QuerySqliteInt64(dbPath,
+                                 "SELECT COUNT(*) FROM field_values "
+                                 "WHERE table_id = 1 AND record_id = 1 "
+                                 "AND column_name = 'Width' AND int64_value = 256;",
+                                 &value));
+    EXPECT_EQ(value, 1);
+    EXPECT_TRUE(QuerySqliteInt64(dbPath,
+                                 "SELECT COUNT(*) FROM journal_entries "
+                                 "WHERE tx_id = 1 AND sequence_index = 0 "
+                                 "AND new_int64 = 256;",
+                                 &value));
+    EXPECT_EQ(value, 1);
     EXPECT_TRUE(QuerySqliteInt64(
         dbPath,
-        "SELECT COUNT(*) FROM schema_tables st "
-        "JOIN tables t ON t.table_id = st.table_id "
-        "WHERE t.name = 'Element';",
+        "SELECT COUNT(*) FROM journal_schema_entries "
+        "WHERE tx_id = 1 AND sequence_index = 1 AND column_name = 'Width';",
         &value));
     EXPECT_EQ(value, 1);
 
-    EXPECT_TRUE(QuerySqliteInt64(
-        dbPath,
-        "SELECT COUNT(*) FROM schema_constraints c "
-        "JOIN schema_constraint_columns cc ON cc.constraint_id = "
-        "c.constraint_id "
-        "JOIN tables t ON t.table_id = c.table_id "
-        "WHERE t.name = 'Element' AND c.kind = 0 AND cc.column_name = 'Id';",
-        &value));
-    EXPECT_EQ(value, 1);
-
-    EXPECT_TRUE(QuerySqliteInt64(
-        dbPath,
-        "SELECT COUNT(*) FROM schema_indexes i "
-        "JOIN schema_index_columns ic ON ic.index_id = i.index_id "
-        "JOIN tables t ON t.table_id = i.table_id "
-        "WHERE t.name = 'Element' AND ic.column_name = 'Width';",
-        &value));
-    EXPECT_EQ(value, 1);
+    EXPECT_TRUE(SqliteTableHasColumn(dbPath, "field_values", "blob_value"));
+    EXPECT_TRUE(SqliteTableHasColumn(dbPath, "schema_columns", "default_blob"));
+    EXPECT_TRUE(SqliteTableHasColumn(dbPath, "journal_entries", "old_blob"));
+    EXPECT_TRUE(SqliteTableHasColumn(dbPath, "journal_entries", "new_blob"));
+    EXPECT_TRUE(SqliteTableHasColumn(dbPath, "journal_schema_entries",
+                                     "old_default_blob"));
+    EXPECT_TRUE(SqliteTableHasColumn(dbPath, "journal_schema_entries",
+                                     "new_default_blob"));
 
     sc::SCDbPtr reloaded;
     EXPECT_EQ(CreateReadOnlyFileDb(dbPath.c_str(), reloaded), sc::SC_OK);
     EXPECT_EQ(reloaded->GetSchemaVersion(), graph.latestSupportedVersion);
-
-    sc::SCTablePtr elementTable;
     EXPECT_EQ(reloaded->GetTable(L"Element", elementTable), sc::SC_OK);
-    sc::SCSchemaPtr snapshotSchema;
-    EXPECT_EQ(elementTable->GetSchema(snapshotSchema), sc::SC_OK);
-
-    sc::SCTableSchemaSnapshot snapshot;
-    EXPECT_EQ(snapshotSchema->GetSchemaSnapshot(&snapshot), sc::SC_OK);
+    EXPECT_EQ(elementTable->GetSchema(elementSchema), sc::SC_OK);
+    EXPECT_EQ(elementSchema->GetSchemaSnapshot(&snapshot), sc::SC_OK);
     ASSERT_EQ(snapshot.table.name, L"Element");
-    ASSERT_FALSE(snapshot.constraints.empty());
-    ASSERT_FALSE(snapshot.indexes.empty());
-    EXPECT_EQ(snapshot.constraints.front().kind, sc::SCConstraintKind::PrimaryKey);
+    ASSERT_EQ(snapshot.columns.size(), 2);
+    ASSERT_EQ(snapshot.constraints.size(), 1);
+    ASSERT_EQ(snapshot.indexes.size(), 1);
+    EXPECT_EQ(snapshot.constraints.front().kind,
+              sc::SCConstraintKind::PrimaryKey);
     EXPECT_EQ(snapshot.constraints.front().columns.front(), L"Id");
     EXPECT_EQ(snapshot.indexes.front().columns.front().columnName, L"Width");
+    EXPECT_EQ(reloaded->GetTable(L"Element", elementTable), sc::SC_OK);
+    EXPECT_EQ(elementTable->GetRecord(1, elementRecord), sc::SC_OK);
+    EXPECT_EQ(elementRecord->GetInt64(L"Width", &width), sc::SC_OK);
+    EXPECT_EQ(width, 256);
 }
 
 TEST(StorageM2Sqlite, ReadOnlySqliteOpenRejectsWrites)
@@ -1614,6 +1998,69 @@ TEST(StorageM2Sqlite,
     EXPECT_EQ(beamTable->GetRecord(beamId, reloaded), sc::SC_OK);
     EXPECT_EQ(reloaded->GetInt64(L"Width", &width), sc::SC_OK);
     EXPECT_EQ(width, 128);
+}
+
+TEST(StorageM2Sqlite, UpdateColumnCrossingBinaryBoundaryClearsExistingValues)
+{
+    const fs::path dbPath =
+        MakeTempDbPath(L"StableCoreStorage_M2_UpdateColumnBinaryBoundary.sqlite");
+
+    sc::SCDbPtr db;
+    EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
+
+    sc::SCTablePtr beamTable = CreateBeamTable(db);
+    sc::SCSchemaPtr schema;
+    EXPECT_EQ(beamTable->GetSchema(schema), sc::SC_OK);
+
+    sc::SCColumnDef attachment;
+    attachment.name = L"Attachment";
+    attachment.displayName = L"Attachment";
+    attachment.valueKind = sc::ValueKind::Binary;
+    attachment.nullable = true;
+    EXPECT_EQ(schema->AddColumn(attachment), sc::SC_OK);
+
+    sc::SCEditPtr seedEdit;
+    EXPECT_EQ(db->BeginEdit(L"seed", seedEdit), sc::SC_OK);
+
+    sc::SCRecordPtr beam;
+    EXPECT_EQ(beamTable->CreateRecord(beam), sc::SC_OK);
+    const sc::RecordId beamId = beam->GetId();
+    const std::vector<std::uint8_t> payload{0x01, 0x02, 0x03};
+    EXPECT_EQ(beam->SetInt64(L"Width", 128), sc::SC_OK);
+    EXPECT_EQ(beam->SetBinary(L"Attachment", payload.data(), payload.size()),
+              sc::SC_OK);
+    EXPECT_EQ(db->Commit(seedEdit.Get()), sc::SC_OK);
+
+    sc::SCEditPtr edit;
+    EXPECT_EQ(db->BeginEdit(L"rewrite across binary boundary", edit), sc::SC_OK);
+
+    sc::SCColumnDef widthAsBinary;
+    widthAsBinary.name = L"Width";
+    widthAsBinary.displayName = L"Width";
+    widthAsBinary.valueKind = sc::ValueKind::Binary;
+    widthAsBinary.nullable = true;
+    EXPECT_EQ(schema->UpdateColumn(widthAsBinary), sc::SC_OK);
+
+    sc::SCColumnDef attachmentAsString;
+    attachmentAsString.name = L"Attachment";
+    attachmentAsString.displayName = L"Attachment";
+    attachmentAsString.valueKind = sc::ValueKind::String;
+    attachmentAsString.nullable = true;
+    EXPECT_EQ(schema->UpdateColumn(attachmentAsString), sc::SC_OK);
+    EXPECT_EQ(db->Commit(edit.Get()), sc::SC_OK);
+
+    sc::SCRecordPtr reloaded;
+    EXPECT_EQ(beamTable->GetRecord(beamId, reloaded), sc::SC_OK);
+
+    std::vector<std::uint8_t> loadedBinary;
+    EXPECT_EQ(reloaded->GetBinaryCopy(L"Width", &loadedBinary),
+              sc::SC_E_VALUE_IS_NULL);
+    EXPECT_TRUE(loadedBinary.empty());
+
+    std::wstring loadedText;
+    EXPECT_EQ(reloaded->GetStringCopy(L"Attachment", &loadedText),
+              sc::SC_E_VALUE_IS_NULL);
+    EXPECT_TRUE(loadedText.empty());
 }
 
 TEST(StorageM2Sqlite, SchemaColumnJournalSurvivesReopenAndUndoRedo)

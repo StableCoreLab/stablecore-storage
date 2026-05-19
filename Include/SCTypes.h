@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <utility>
@@ -46,6 +47,7 @@ namespace StableCore::Storage
         String,
         RecordId,
         Enum,
+        Binary,
     };
 
     enum class ColumnKind
@@ -105,7 +107,8 @@ namespace StableCore::Storage
     {
     public:
         using Storage = std::variant<std::monostate, std::int64_t, double, bool,
-                                     std::wstring, RecordIdValue, SCEnumValue>;
+                                     std::wstring, RecordIdValue, SCEnumValue,
+                                     std::vector<std::uint8_t>>;
 
         SCValue() = default;
 
@@ -137,6 +140,10 @@ namespace StableCore::Storage
         {
             return SCValue(SCEnumValue{std::move(value)});
         }
+        static SCValue FromBinary(std::vector<std::uint8_t> value)
+        {
+            return SCValue(std::move(value));
+        }
 
         ValueKind GetKind() const noexcept
         {
@@ -156,6 +163,8 @@ namespace StableCore::Storage
                     return ValueKind::RecordId;
                 case 6:
                     return ValueKind::Enum;
+                case 7:
+                    return ValueKind::Binary;
                 default:
                     return ValueKind::Null;
             }
@@ -278,6 +287,36 @@ namespace StableCore::Storage
             return IsNull() ? SC_E_VALUE_IS_NULL : SC_E_TYPE_MISMATCH;
         }
 
+        ErrorCode AsBinary(const std::uint8_t** outValue,
+                           std::size_t* outSize) const noexcept
+        {
+            if (outValue == nullptr || outSize == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+            if (const auto* typed = TryGet<std::vector<std::uint8_t>>())
+            {
+                *outValue = typed->empty() ? nullptr : typed->data();
+                *outSize = typed->size();
+                return SC_OK;
+            }
+            return IsNull() ? SC_E_VALUE_IS_NULL : SC_E_TYPE_MISMATCH;
+        }
+
+        ErrorCode AsBinaryCopy(std::vector<std::uint8_t>* outValue) const
+        {
+            if (outValue == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+            if (const auto* typed = TryGet<std::vector<std::uint8_t>>())
+            {
+                *outValue = *typed;
+                return SC_OK;
+            }
+            return IsNull() ? SC_E_VALUE_IS_NULL : SC_E_TYPE_MISMATCH;
+        }
+
         bool operator==(const SCValue& other) const noexcept
         {
             return value_ == other.value_;
@@ -316,6 +355,10 @@ namespace StableCore::Storage
         }
 
         explicit SCValue(SCEnumValue value) : value_(std::move(value))
+        {
+        }
+        explicit SCValue(std::vector<std::uint8_t> value)
+            : value_(std::move(value))
         {
         }
 

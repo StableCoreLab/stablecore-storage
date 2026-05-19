@@ -173,7 +173,7 @@ pDb->Commit(edit.Get());
 
 ## 值类型（建议）
 
-初始支持：`Int64`、`Double`、`Bool`、`String`、`Null`、`RecordId`、`Enum`（或受控字符串）；可扩展到 `RecordIdList`、`BinaryRef`、`DateTime`、`Json` 等。
+初始支持：`Int64`、`Double`、`Bool`、`String`、`Null`、`RecordId`、`Enum`、`Binary`（或受控字符串）；可扩展到 `RecordIdList`、`BinaryRef`、`DateTime`、`Json` 等。
 
 原则：不要用字符串伪装布尔、枚举或引用；关系值应与普通字符串严格区分；字段类型一经注册不随意变更。
 
