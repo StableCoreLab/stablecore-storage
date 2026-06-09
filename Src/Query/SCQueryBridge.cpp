@@ -6,9 +6,9 @@
 namespace StableCore::Storage
 {
 
-    ErrorCode SCQueryBridge::BuildPlanFromLegacyFindRecords(
-        const std::wstring& targetName, const SCQueryCondition& condition,
-        QueryPlan* outPlan)
+    ErrorCode SCQueryBridge::BuildPlanFromLegacyFindRecords(const std::wstring& targetName,
+                                                            const SCQueryCondition& condition,
+                                                            QueryPlan* outPlan)
     {
         if (outPlan == nullptr)
         {
@@ -51,16 +51,15 @@ namespace StableCore::Storage
         return SC_OK;
     }
 
-    ErrorCode SCQueryBridge::AdaptExecutionResultToLegacyStatus(
-        const QueryExecutionResult& executionResult, ErrorCode* outLegacyRc)
+    ErrorCode SCQueryBridge::AdaptExecutionResultToLegacyStatus(const QueryExecutionResult& executionResult,
+                                                                ErrorCode* outLegacyRc)
     {
         if (outLegacyRc == nullptr)
         {
             return SC_E_POINTER;
         }
 
-        if (executionResult.mode == QueryExecutionMode::Unsupported &&
-            executionResult.rc == SC_OK)
+        if (executionResult.mode == QueryExecutionMode::Unsupported && executionResult.rc == SC_OK)
         {
             *outLegacyRc = SC_E_NOTIMPL;
             return SC_OK;

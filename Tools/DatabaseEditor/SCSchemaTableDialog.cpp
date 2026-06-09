@@ -31,8 +31,9 @@ namespace StableCore::Storage::Editor
         auto* introLabel = new QLabel(
             QStringLiteral(
                 "Generate SC_SCHEMA_TABLE code from the current table. "
-                "Primary key and indexes are explicit; legacy indexed hints "
-                "are not exported unless you confirm them."),
+                "Default values are exported when present. Primary key and "
+                "indexes are explicit; legacy indexed hints are not exported "
+                "unless you confirm them."),
             this);
         introLabel->setWordWrap(true);
         layout->addWidget(introLabel);
@@ -54,9 +55,8 @@ namespace StableCore::Storage::Editor
             QStringLiteral("Explicit primary key column name"));
         form->addRow(QStringLiteral("Primary Key"), primaryKeyEdit_);
 
-        includeLegacyIndexesCheck_ =
-            new QCheckBox(QStringLiteral("Include legacy indexed columns"),
-                          this);
+        includeLegacyIndexesCheck_ = new QCheckBox(
+            QStringLiteral("Include legacy indexed columns"), this);
         includeLegacyIndexesCheck_->setChecked(false);
         form->addRow(QStringLiteral("Legacy Indexes"),
                      includeLegacyIndexesCheck_);
@@ -105,8 +105,8 @@ namespace StableCore::Storage::Editor
         {
             tableNameLabel_->setText(QStringLiteral("-"));
             outputEdit_->setPlainText(QStringLiteral("// ") + error);
-            statusLabel_->setText(QStringLiteral("Failed to load current table: ") +
-                                  error);
+            statusLabel_->setText(
+                QStringLiteral("Failed to load current table: ") + error);
             copyButton->setEnabled(false);
             refreshButton->setEnabled(false);
             includeLegacyIndexesCheck_->setEnabled(false);
@@ -174,7 +174,8 @@ namespace StableCore::Storage::Editor
         if (tableName_.isEmpty() || schemaSnapshot_.tables.empty())
         {
             outputEdit_->setPlainText(QStringLiteral("// No table selected."));
-            statusLabel_->setText(QStringLiteral("No current table available."));
+            statusLabel_->setText(
+                QStringLiteral("No current table available."));
             return;
         }
 
@@ -183,9 +184,8 @@ namespace StableCore::Storage::Editor
         SCSchemaTableExportOptions options;
         options.tableDescription = tableDescriptionEdit_->text().trimmed();
         options.primaryKeyColumnName = primaryKeyEdit_->text().trimmed();
-        options.includeLegacyIndexes =
-            includeLegacyIndexesCheck_ != nullptr &&
-            includeLegacyIndexesCheck_->isChecked();
+        options.includeLegacyIndexes = includeLegacyIndexesCheck_ != nullptr &&
+                                       includeLegacyIndexesCheck_->isChecked();
 
         const QString code = BuildSchemaTableCode(tableSnapshot, options);
         outputEdit_->setPlainText(code);
@@ -201,10 +201,9 @@ namespace StableCore::Storage::Editor
             ++exportedIndexes;
         }
 
-        QString status =
-            QStringLiteral("Generated %1 columns and %2 indexes.")
-                .arg(tableSnapshot.columns.size())
-                .arg(exportedIndexes);
+        QString status = QStringLiteral("Generated %1 columns and %2 indexes.")
+                             .arg(tableSnapshot.columns.size())
+                             .arg(exportedIndexes);
         if (options.primaryKeyColumnName.trimmed().isEmpty())
         {
             status += QStringLiteral(" No explicit primary key selected.");
@@ -239,8 +238,8 @@ namespace StableCore::Storage::Editor
         if (!ReloadSchema(&error))
         {
             outputEdit_->setPlainText(QStringLiteral("// ") + error);
-            statusLabel_->setText(QStringLiteral("Failed to load current table: ") +
-                                  error);
+            statusLabel_->setText(
+                QStringLiteral("Failed to load current table: ") + error);
             return;
         }
 
@@ -252,7 +251,8 @@ namespace StableCore::Storage::Editor
         if (QApplication::clipboard() != nullptr)
         {
             QApplication::clipboard()->setText(outputEdit_->toPlainText());
-            statusLabel_->setText(QStringLiteral("Output copied to clipboard."));
+            statusLabel_->setText(
+                QStringLiteral("Output copied to clipboard."));
         }
     }
 

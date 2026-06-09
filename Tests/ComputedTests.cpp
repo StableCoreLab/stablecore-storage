@@ -10,14 +10,12 @@ namespace sc = StableCore::Storage;
 namespace
 {
 
-    class TestComputedContext final : public sc::ISCComputedContext,
-                                      public sc::SCRefCountedObject
+    class TestComputedContext final : public sc::ISCComputedContext, public sc::SCRefCountedObject
     {
     public:
         std::unordered_map<std::wstring, sc::SCValue> values;
 
-        sc::ErrorCode GetValue(const wchar_t* fieldName,
-                               sc::SCValue* outValue) override
+        sc::ErrorCode GetValue(const wchar_t* fieldName, sc::SCValue* outValue) override
         {
             if (fieldName == nullptr || outValue == nullptr)
             {
@@ -37,24 +35,20 @@ namespace
             return sc::SC_E_NOTIMPL;
         }
 
-        sc::ErrorCode GetRelated(const wchar_t*,
-                                 sc::SCRecordCursorPtr&) override
+        sc::ErrorCode GetRelated(const wchar_t*, sc::SCRecordCursorPtr&) override
         {
             return sc::SC_E_NOTIMPL;
         }
     };
 
-    class ConstantRuleEvaluator final : public sc::ISCComputedEvaluator,
-                                        public sc::SCRefCountedObject
+    class ConstantRuleEvaluator final : public sc::ISCComputedEvaluator, public sc::SCRefCountedObject
     {
     public:
         explicit ConstantRuleEvaluator(double SCValue) : value_(SCValue)
         {
         }
 
-        sc::ErrorCode Evaluate(const sc::SCComputedColumnDef&,
-                               sc::ISCComputedContext*,
-                               sc::SCValue* outValue) override
+        sc::ErrorCode Evaluate(const sc::SCComputedColumnDef&, sc::ISCComputedContext*, sc::SCValue* outValue) override
         {
             if (outValue == nullptr)
             {
@@ -78,16 +72,13 @@ TEST(StorageComputed, ExpressionEvaluatorSupportsArithmeticAndFunctions)
     column.kind = sc::ComputedFieldKind::Expression;
     column.expression = L"max(Length * Width * Height, 0)";
 
-    sc::SCRefPtr<TestComputedContext> context =
-        sc::SCMakeRef<TestComputedContext>();
+    sc::SCRefPtr<TestComputedContext> context = sc::SCMakeRef<TestComputedContext>();
     context->values[L"Length"] = sc::SCValue::FromDouble(6.0);
     context->values[L"Width"] = sc::SCValue::FromDouble(0.3);
     context->values[L"Height"] = sc::SCValue::FromDouble(0.5);
 
     sc::SCValue SCValue;
-    EXPECT_EQ(
-        sc::EvaluateComputedColumn(column, context.Get(), nullptr, &SCValue),
-        sc::SC_OK);
+    EXPECT_EQ(sc::EvaluateComputedColumn(column, context.Get(), nullptr, &SCValue), sc::SC_OK);
 
     double result = 0.0;
     EXPECT_EQ(SCValue.AsDouble(&result), sc::SC_OK);
@@ -99,10 +90,8 @@ TEST(StorageComputed, RuleRegistryResolvesRuleEvaluator)
     sc::SCRuleRegistryPtr registry;
     EXPECT_EQ(sc::CreateDefaultRuleRegistry(registry), sc::SC_OK);
 
-    sc::SCComputedEvaluatorPtr evaluator =
-        sc::SCMakeRef<ConstantRuleEvaluator>(42.5);
-    EXPECT_EQ(registry->Register(L"beam.volume.v1", evaluator.Get()),
-              sc::SC_OK);
+    sc::SCComputedEvaluatorPtr evaluator = sc::SCMakeRef<ConstantRuleEvaluator>(42.5);
+    EXPECT_EQ(registry->Register(L"beam.volume.v1", evaluator.Get()), sc::SC_OK);
 
     sc::SCComputedColumnDef column;
     column.name = L"Volume";
@@ -110,12 +99,9 @@ TEST(StorageComputed, RuleRegistryResolvesRuleEvaluator)
     column.kind = sc::ComputedFieldKind::Rule;
     column.ruleId = L"beam.volume.v1";
 
-    sc::SCRefPtr<TestComputedContext> context =
-        sc::SCMakeRef<TestComputedContext>();
+    sc::SCRefPtr<TestComputedContext> context = sc::SCMakeRef<TestComputedContext>();
     sc::SCValue SCValue;
-    EXPECT_EQ(sc::EvaluateComputedColumn(column, context.Get(), registry.Get(),
-                                         &SCValue),
-              sc::SC_OK);
+    EXPECT_EQ(sc::EvaluateComputedColumn(column, context.Get(), registry.Get(), &SCValue), sc::SC_OK);
 
     double result = 0.0;
     EXPECT_EQ(SCValue.AsDouble(&result), sc::SC_OK);

@@ -62,7 +62,8 @@ namespace StableCore::Storage::Editor
             QStringLiteral(
                 "Paste SC_SCHEMA_TABLE(...) text to create a table from its "
                 "schema description. Column descriptions become display names. "
-                "Primary keys and table descriptions are treated as hints."),
+                "Default values are imported when present. Primary keys and "
+                "table descriptions are treated as hints."),
             this);
         introLabel->setWordWrap(true);
         layout->addWidget(introLabel);
@@ -78,7 +79,8 @@ namespace StableCore::Storage::Editor
         layout->addWidget(messageLabel_);
 
         auto* buttonRow = new QHBoxLayout();
-        auto* createButton = new QPushButton(QStringLiteral("Create Table"), this);
+        auto* createButton =
+            new QPushButton(QStringLiteral("Create Table"), this);
         auto* closeButton = new QPushButton(QStringLiteral("Close"), this);
         buttonRow->addWidget(createButton);
         buttonRow->addStretch(1);
@@ -134,4 +136,3 @@ namespace StableCore::Storage::Editor
     }
 
 }  // namespace StableCore::Storage::Editor
-

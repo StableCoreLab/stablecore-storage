@@ -119,7 +119,7 @@ namespace StableCore::Storage::Editor
         };
 
         class PreviewTable final : public sc::ISCTable,
-                                  public sc::SCRefCountedObject
+                                   public sc::SCRefCountedObject
         {
         public:
             PreviewTable(sc::SCTablePtr inner, sc::SCSchemaPtr schema)
@@ -145,7 +145,8 @@ namespace StableCore::Storage::Editor
                 outSchema = schema_;
                 return sc::SC_OK;
             }
-            sc::ErrorCode EnumerateRecords(sc::SCRecordCursorPtr& outCursor) override
+            sc::ErrorCode EnumerateRecords(
+                sc::SCRecordCursorPtr& outCursor) override
             {
                 return inner_->EnumerateRecords(outCursor);
             }
@@ -185,8 +186,14 @@ namespace StableCore::Storage::Editor
             {
                 return inner_->Rollback(edit);
             }
-            sc::ErrorCode Undo() override { return inner_->Undo(); }
-            sc::ErrorCode Redo() override { return inner_->Redo(); }
+            sc::ErrorCode Undo() override
+            {
+                return inner_->Undo();
+            }
+            sc::ErrorCode Redo() override
+            {
+                return inner_->Redo();
+            }
             sc::ErrorCode GetTableCount(std::int32_t* outCount) override
             {
                 return inner_->GetTableCount(outCount);
@@ -240,7 +247,8 @@ namespace StableCore::Storage::Editor
                 return inner_->AppendImportChunk(session, chunk, outCheckpoint);
             }
             sc::ErrorCode LoadImportRecoveryState(
-                std::uint64_t sessionId, sc::SCImportRecoveryState* outState) override
+                std::uint64_t sessionId,
+                sc::SCImportRecoveryState* outState) override
             {
                 return inner_->LoadImportRecoveryState(sessionId, outState);
             }
@@ -254,17 +262,19 @@ namespace StableCore::Storage::Editor
             {
                 return inner_->AbortImportSession(sessionId);
             }
-            sc::ErrorCode AddObserver(sc::ISCDatabaseObserver* observer) override
+            sc::ErrorCode AddObserver(
+                sc::ISCDatabaseObserver* observer) override
             {
                 return inner_->AddObserver(observer);
             }
-            sc::ErrorCode RemoveObserver(sc::ISCDatabaseObserver* observer) override
+            sc::ErrorCode RemoveObserver(
+                sc::ISCDatabaseObserver* observer) override
             {
                 return inner_->RemoveObserver(observer);
             }
-            sc::ErrorCode CreateBackupCopy(const wchar_t* targetPath,
-                                           const sc::SCBackupOptions& options,
-                                           sc::SCBackupResult* outResult) override
+            sc::ErrorCode CreateBackupCopy(
+                const wchar_t* targetPath, const sc::SCBackupOptions& options,
+                sc::SCBackupResult* outResult) override
             {
                 return inner_->CreateBackupCopy(targetPath, options, outResult);
             }
@@ -446,7 +456,8 @@ namespace StableCore::Storage::Editor
             sc::SCValue value;
         };
 
-        bool SnapshotColumnValues(sc::ISCTable* table, const QString& columnName,
+        bool SnapshotColumnValues(sc::ISCTable* table,
+                                  const QString& columnName,
                                   QVector<ColumnValueSnapshot>* outValues,
                                   QString* outError)
         {
@@ -454,7 +465,8 @@ namespace StableCore::Storage::Editor
             {
                 if (outError != nullptr)
                 {
-                    *outError = QStringLiteral("Output snapshot container is null.");
+                    *outError =
+                        QStringLiteral("Output snapshot container is null.");
                 }
                 return false;
             }
@@ -474,8 +486,9 @@ namespace StableCore::Storage::Editor
             {
                 if (outError != nullptr)
                 {
-                    *outError = QStringLiteral("Failed to enumerate records: ") +
-                                 QString::number(static_cast<qulonglong>(rc), 16);
+                    *outError =
+                        QStringLiteral("Failed to enumerate records: ") +
+                        QString::number(static_cast<qulonglong>(rc), 16);
                 }
                 return false;
             }
@@ -485,9 +498,8 @@ namespace StableCore::Storage::Editor
             {
                 ColumnValueSnapshot snapshot;
                 snapshot.recordId = record->GetId();
-                const sc::ErrorCode valueRc =
-                    record->GetValue(columnName.toStdWString().c_str(),
-                                     &snapshot.value);
+                const sc::ErrorCode valueRc = record->GetValue(
+                    columnName.toStdWString().c_str(), &snapshot.value);
                 if (valueRc == sc::SC_E_VALUE_IS_NULL)
                 {
                     snapshot.value = sc::SCValue::Null();
@@ -495,9 +507,10 @@ namespace StableCore::Storage::Editor
                 {
                     if (outError != nullptr)
                     {
-                        *outError = QStringLiteral("Failed to read column value: ") +
-                                     QString::number(
-                                         static_cast<qulonglong>(valueRc), 16);
+                        *outError =
+                            QStringLiteral("Failed to read column value: ") +
+                            QString::number(static_cast<qulonglong>(valueRc),
+                                            16);
                     }
                     return false;
                 }
@@ -533,8 +546,9 @@ namespace StableCore::Storage::Editor
             {
                 if (outError != nullptr)
                 {
-                    *outError = QStringLiteral("Failed to begin restore edit: ") +
-                                 QString::number(static_cast<qulonglong>(beginRc), 16);
+                    *outError =
+                        QStringLiteral("Failed to begin restore edit: ") +
+                        QString::number(static_cast<qulonglong>(beginRc), 16);
                 }
                 return false;
             }
@@ -550,15 +564,15 @@ namespace StableCore::Storage::Editor
                     if (outError != nullptr)
                     {
                         *outError =
-                            QStringLiteral("Failed to reload record during restore: ") +
+                            QStringLiteral(
+                                "Failed to reload record during restore: ") +
                             QString::number(static_cast<qulonglong>(getRc), 16);
                     }
                     return false;
                 }
 
-                const sc::ErrorCode setRc =
-                    record->SetValue(columnName.toStdWString().c_str(),
-                                     snapshot.value);
+                const sc::ErrorCode setRc = record->SetValue(
+                    columnName.toStdWString().c_str(), snapshot.value);
                 if (sc::Failed(setRc))
                 {
                     db->Rollback(edit.Get());
@@ -577,8 +591,9 @@ namespace StableCore::Storage::Editor
             {
                 if (outError != nullptr)
                 {
-                    *outError = QStringLiteral("Failed to commit restore edit: ") +
-                                 QString::number(static_cast<qulonglong>(commitRc), 16);
+                    *outError =
+                        QStringLiteral("Failed to commit restore edit: ") +
+                        QString::number(static_cast<qulonglong>(commitRc), 16);
                 }
                 return false;
             }
@@ -669,11 +684,12 @@ namespace StableCore::Storage::Editor
             {
                 if (outError != nullptr)
                 {
-                    *outError = (context.isEmpty() ? primaryError
-                                                   : context + QStringLiteral(": ") +
-                                                         primaryError) +
-                                QStringLiteral(" (rollback failed: ") +
-                                formatError(rollbackRc) + QStringLiteral(")");
+                    *outError =
+                        (context.isEmpty()
+                             ? primaryError
+                             : context + QStringLiteral(": ") + primaryError) +
+                        QStringLiteral(" (rollback failed: ") +
+                        formatError(rollbackRc) + QStringLiteral(")");
                 }
                 return false;
             }
@@ -778,8 +794,7 @@ namespace StableCore::Storage::Editor
         if (!db_ && currentTable_.Get() == nullptr &&
             currentTableView_.Get() == nullptr && databasePath_.isEmpty() &&
             currentTableName_.isEmpty() && tableNames_.isEmpty() &&
-            sessionComputedColumnsByTable_.isEmpty() &&
-            !importSessionActive_)
+            sessionComputedColumnsByTable_.isEmpty() && !importSessionActive_)
         {
             if (outError != nullptr)
             {
@@ -974,8 +989,8 @@ namespace StableCore::Storage::Editor
         {
             if (outError != nullptr)
             {
-                *outError = QStringLiteral("Table already exists: ") +
-                            tableName;
+                *outError =
+                    QStringLiteral("Table already exists: ") + tableName;
             }
             return false;
         }
@@ -1005,8 +1020,8 @@ namespace StableCore::Storage::Editor
             {
                 if (outError != nullptr)
                 {
-                    *outError = QStringLiteral("Duplicate column name: ") +
-                                columnName;
+                    *outError =
+                        QStringLiteral("Duplicate column name: ") + columnName;
                 }
                 return false;
             }
@@ -1038,8 +1053,8 @@ namespace StableCore::Storage::Editor
                         {
                             *outError = QStringLiteral(
                                             "Failed to add imported column: ") +
-                                        addError + QStringLiteral(
-                                            " (rollback failed: ") +
+                                        addError +
+                                        QStringLiteral(" (rollback failed: ") +
                                         undoError + QStringLiteral(")");
                         }
                         return false;
@@ -1057,9 +1072,10 @@ namespace StableCore::Storage::Editor
                 }
                 if (outError != nullptr)
                 {
-                    *outError = QStringLiteral("Failed to add imported column \"") +
-                                ToQString(column.name) +
-                                QStringLiteral("\": ") + addError;
+                    *outError =
+                        QStringLiteral("Failed to add imported column \"") +
+                        ToQString(column.name) + QStringLiteral("\": ") +
+                        addError;
                 }
                 return false;
             }
@@ -1137,15 +1153,14 @@ namespace StableCore::Storage::Editor
         }
 
         QString fallbackSelection;
-        const int deletedIndex = previousTableNames.indexOf(
-            canonicalName, 0, Qt::CaseInsensitive);
+        const int deletedIndex =
+            previousTableNames.indexOf(canonicalName, 0, Qt::CaseInsensitive);
         if (deletedIndex >= 0)
         {
             if (deletedIndex + 1 < previousTableNames.size())
             {
                 fallbackSelection = previousTableNames.at(deletedIndex + 1);
-            }
-            else if (deletedIndex - 1 >= 0)
+            } else if (deletedIndex - 1 >= 0)
             {
                 fallbackSelection = previousTableNames.at(deletedIndex - 1);
             }
@@ -1162,8 +1177,7 @@ namespace StableCore::Storage::Editor
                 }
                 return false;
             }
-        }
-        else
+        } else
         {
             emit CurrentTableChanged();
             emit RecordsChanged();
@@ -1276,8 +1290,7 @@ namespace StableCore::Storage::Editor
                 }
                 return sc::SC_OK;
             },
-            []() {},
-            outError);
+            []() {}, outError);
     }
 
     bool SCDatabaseSession::RemoveColumn(const QString& columnName,
@@ -1345,9 +1358,9 @@ namespace StableCore::Storage::Editor
             []() {}, outError);
     }
 
-    bool SCDatabaseSession::UpdateColumn(
-        const QString& originalName, const sc::SCColumnDef& column,
-        QString* outError)
+    bool SCDatabaseSession::UpdateColumn(const QString& originalName,
+                                         const sc::SCColumnDef& column,
+                                         QString* outError)
     {
         if (!currentTable_)
         {
@@ -1417,8 +1430,7 @@ namespace StableCore::Storage::Editor
                 }
                 return sc::SC_OK;
             },
-            []() {},
-            outError);
+            []() {}, outError);
     }
 
     bool SCDatabaseSession::ConvertColumnToComputed(
@@ -1466,8 +1478,8 @@ namespace StableCore::Storage::Editor
         }
         for (const sc::SCComputedColumnDef& existing : *columns)
         {
-            if (ToQString(existing.name).compare(targetName, Qt::CaseInsensitive) ==
-                0)
+            if (ToQString(existing.name)
+                    .compare(targetName, Qt::CaseInsensitive) == 0)
             {
                 if (outError != nullptr)
                 {
@@ -1493,10 +1505,10 @@ namespace StableCore::Storage::Editor
                 for (const sc::SCFieldDependency& dependency : dependencies)
                 {
                     if (ToQString(dependency.tableName)
-                            .compare(currentTableName_, Qt::CaseInsensitive) ==
-                        0 &&
+                                .compare(currentTableName_,
+                                         Qt::CaseInsensitive) == 0 &&
                         ToQString(dependency.fieldName)
-                            .compare(sourceName, Qt::CaseInsensitive) == 0)
+                                .compare(sourceName, Qt::CaseInsensitive) == 0)
                     {
                         return true;
                     }
@@ -1508,12 +1520,11 @@ namespace StableCore::Storage::Editor
         return ApplyColumnMutation(
             L"Convert Column To Computed",
             [this, &columns, computedColumn, sourceName,
-             &computedColumnApplied](
-                sc::SCSchemaPtr& schema, sc::SCComputedTableViewPtr* outPreviewView,
-                QString* outError) -> sc::ErrorCode {
-                const sc::ErrorCode clearRc =
-                    db_->ClearColumnValues(currentTable_.Get(),
-                                           sourceName.toStdWString().c_str());
+             &computedColumnApplied](sc::SCSchemaPtr& schema,
+                                     sc::SCComputedTableViewPtr* outPreviewView,
+                                     QString* outError) -> sc::ErrorCode {
+                const sc::ErrorCode clearRc = db_->ClearColumnValues(
+                    currentTable_.Get(), sourceName.toStdWString().c_str());
                 if (sc::Failed(clearRc))
                 {
                     return clearRc;
@@ -1630,8 +1641,8 @@ namespace StableCore::Storage::Editor
         {
             if (outError != nullptr)
             {
-                *outError =
-                    QStringLiteral("A schema column with the same name already exists.");
+                *outError = QStringLiteral(
+                    "A schema column with the same name already exists.");
             }
             return false;
         }
@@ -1640,9 +1651,9 @@ namespace StableCore::Storage::Editor
         return ApplyColumnMutation(
             L"Convert Computed To Column",
             [this, &computedColumns, removedComputed, targetIndex, column,
-             &computedColumnRemoved](
-                sc::SCSchemaPtr& schema, sc::SCComputedTableViewPtr* outPreviewView,
-                QString* outError) -> sc::ErrorCode {
+             &computedColumnRemoved](sc::SCSchemaPtr& schema,
+                                     sc::SCComputedTableViewPtr* outPreviewView,
+                                     QString* outError) -> sc::ErrorCode {
                 computedColumns->removeAt(targetIndex);
                 computedColumnRemoved = true;
 
@@ -1715,7 +1726,8 @@ namespace StableCore::Storage::Editor
             for (std::int32_t index = 0; index < columnCount; ++index)
             {
                 sc::SCColumnDef column;
-                const sc::ErrorCode columnRc = schema->GetColumn(index, &column);
+                const sc::ErrorCode columnRc =
+                    schema->GetColumn(index, &column);
                 if (sc::Failed(columnRc))
                 {
                     if (outError != nullptr)
@@ -1789,9 +1801,10 @@ namespace StableCore::Storage::Editor
         return true;
     }
 
-    bool SCDatabaseSession::CreateBackupCopy(
-        const QString& targetPath, const sc::SCBackupOptions& options,
-        sc::SCBackupResult* outResult, QString* outError) const
+    bool SCDatabaseSession::CreateBackupCopy(const QString& targetPath,
+                                             const sc::SCBackupOptions& options,
+                                             sc::SCBackupResult* outResult,
+                                             QString* outError) const
     {
         if (!IsOpen())
         {
@@ -1816,7 +1829,8 @@ namespace StableCore::Storage::Editor
             if (outError != nullptr)
             {
                 *outError = QStringLiteral(
-                    "Save or discard pending changes before creating a backup.");
+                    "Save or discard pending changes before creating a "
+                    "backup.");
             }
             return false;
         }
@@ -1858,7 +1872,8 @@ namespace StableCore::Storage::Editor
 
         if (HasPendingEdit())
         {
-            const sc::ErrorCode deleteRc = currentTable_->DeleteRecord(recordId);
+            const sc::ErrorCode deleteRc =
+                currentTable_->DeleteRecord(recordId);
             if (sc::Failed(deleteRc))
             {
                 if (outError != nullptr)
@@ -2620,8 +2635,7 @@ namespace StableCore::Storage::Editor
             return false;
         }
 
-        outSnapshot->schemaVersion =
-            db_ ? db_->GetSchemaVersion() : 0;
+        outSnapshot->schemaVersion = db_ ? db_->GetSchemaVersion() : 0;
         outSnapshot->tables.clear();
 
         if (!currentTable_ || currentTableName_.isEmpty())
@@ -2678,8 +2692,8 @@ namespace StableCore::Storage::Editor
                 {
                     sc::SCConstraintDef constraint;
                     constraint.kind = sc::SCConstraintKind::PrimaryKey;
-                    constraint.name = QStringLiteral("pk_legacy")
-                                          .toStdWString();
+                    constraint.name =
+                        QStringLiteral("pk_legacy").toStdWString();
                     constraint.columns.push_back(idColumn->name);
                     constraint.sourceKind =
                         sc::SCSchemaSourceKind::MigratedConvention;
@@ -2727,7 +2741,7 @@ namespace StableCore::Storage::Editor
     }
 
     bool SCDatabaseSession::CurrentTableHasRecords(bool* outHasRecords,
-                                                  QString* outError) const
+                                                   QString* outError) const
     {
         if (outHasRecords == nullptr)
         {
@@ -3037,7 +3051,8 @@ namespace StableCore::Storage::Editor
                     ? *outError
                     : ErrorToString(rc);
             RollbackEditAndReport(
-                db_, edit.Get(), primaryError, QStringLiteral("Column mutation"),
+                db_, edit.Get(), primaryError,
+                QStringLiteral("Column mutation"),
                 [this](sc::ErrorCode error) { return ErrorToString(error); },
                 outError);
             rollbackState();

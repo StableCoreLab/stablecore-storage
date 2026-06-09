@@ -7,10 +7,9 @@ namespace StableCore::Storage
     namespace
     {
 
-        ErrorCode ApplyAssignments(
-            ISCRecord* record,
-            const std::vector<SCFieldValueAssignment>& values,
-            std::size_t* outUpdatedFieldCount)
+        ErrorCode ApplyAssignments(ISCRecord* record,
+                                   const std::vector<SCFieldValueAssignment>& values,
+                                   std::size_t* outUpdatedFieldCount)
         {
             if (record == nullptr)
             {
@@ -19,8 +18,7 @@ namespace StableCore::Storage
 
             for (const auto& assignment : values)
             {
-                const ErrorCode rc = record->SetValue(
-                    assignment.fieldName.c_str(), assignment.SCValue);
+                const ErrorCode rc = record->SetValue(assignment.fieldName.c_str(), assignment.SCValue);
                 if (Failed(rc))
                 {
                     return rc;
@@ -34,9 +32,7 @@ namespace StableCore::Storage
             return SC_OK;
         }
 
-        ErrorCode ResolveTable(ISCDatabase* database,
-                               const std::wstring& tableName,
-                               SCTablePtr& outTable)
+        ErrorCode ResolveTable(ISCDatabase* database, const std::wstring& tableName, SCTablePtr& outTable)
         {
             if (database == nullptr || tableName.empty())
             {
@@ -51,10 +47,9 @@ namespace StableCore::Storage
             return rc;
         }
 
-        ErrorCode ApplyBatchRequests(
-            ISCDatabase* database,
-            const std::vector<SCBatchTableRequest>& requests,
-            SCBatchExecutionResult* outResult)
+        ErrorCode ApplyBatchRequests(ISCDatabase* database,
+                                     const std::vector<SCBatchTableRequest>& requests,
+                                     SCBatchExecutionResult* outResult)
         {
             if (database == nullptr)
             {
@@ -83,8 +78,7 @@ namespace StableCore::Storage
                     {
                         return rc;
                     }
-                    rc = ApplyAssignments(record.Get(), create.values,
-                                          &result.updatedFieldCount);
+                    rc = ApplyAssignments(record.Get(), create.values, &result.updatedFieldCount);
                     if (Failed(rc))
                     {
                         return rc;
@@ -100,8 +94,7 @@ namespace StableCore::Storage
                     {
                         return rc;
                     }
-                    rc = ApplyAssignments(record.Get(), update.values,
-                                          &result.updatedFieldCount);
+                    rc = ApplyAssignments(record.Get(), update.values, &result.updatedFieldCount);
                     if (Failed(rc))
                     {
                         return rc;
@@ -126,12 +119,10 @@ namespace StableCore::Storage
             return SC_OK;
         }
 
-        std::vector<SCImportChunk> BuildImportChunks(
-            const std::vector<SCBatchTableRequest>& requests,
-            std::size_t chunkSize)
+        std::vector<SCImportChunk> BuildImportChunks(const std::vector<SCBatchTableRequest>& requests,
+                                                     std::size_t chunkSize)
         {
-            const std::size_t effectiveChunkSize =
-                chunkSize == 0 ? 1 : chunkSize;
+            const std::size_t effectiveChunkSize = chunkSize == 0 ? 1 : chunkSize;
             std::vector<SCImportChunk> chunks;
             SCImportChunk currentChunk;
             currentChunk.chunkId = 1;
@@ -143,8 +134,7 @@ namespace StableCore::Storage
                 {
                     chunks.push_back(currentChunk);
                     currentChunk = SCImportChunk{};
-                    currentChunk.chunkId =
-                        static_cast<SCImportChunkId>(chunks.size()) + 1;
+                    currentChunk.chunkId = static_cast<SCImportChunkId>(chunks.size()) + 1;
                 }
             }
 
@@ -174,8 +164,7 @@ namespace StableCore::Storage
         }
 
         SCEditPtr edit;
-        const std::wstring editName =
-            options.editName.empty() ? L"BatchEdit" : options.editName;
+        const std::wstring editName = options.editName.empty() ? L"BatchEdit" : options.editName;
         ErrorCode rc = database->BeginEdit(editName.c_str(), edit);
         if (Failed(rc))
         {
@@ -235,8 +224,7 @@ namespace StableCore::Storage
             return rc;
         }
 
-        const std::vector<SCImportChunk> chunks =
-            BuildImportChunks(requests, session.chunkSize);
+        const std::vector<SCImportChunk> chunks = BuildImportChunks(requests, session.chunkSize);
         SCImportCheckpoint checkpoint;
         for (const auto& chunk : chunks)
         {
@@ -305,8 +293,7 @@ namespace StableCore::Storage
 
         ErrorCode rc = SC_OK;
         SCImportRecoveryState recoveryState;
-        rc = database->LoadImportRecoveryState(session.sessionId,
-                                               &recoveryState);
+        rc = database->LoadImportRecoveryState(session.sessionId, &recoveryState);
         if (Failed(rc))
         {
             return rc;
@@ -317,8 +304,7 @@ namespace StableCore::Storage
         }
 
         SCEditPtr edit;
-        const std::wstring editName =
-            commit.commitName.empty() ? session.sessionName : commit.commitName;
+        const std::wstring editName = commit.commitName.empty() ? session.sessionName : commit.commitName;
         rc = database->BeginEdit(editName.c_str(), edit);
         if (Failed(rc))
         {
@@ -371,8 +357,7 @@ namespace StableCore::Storage
         return database->LoadImportRecoveryState(sessionId, outState);
     }
 
-    ErrorCode AbortImportSession(ISCDatabase* database,
-                                 SCImportSessionId sessionId)
+    ErrorCode AbortImportSession(ISCDatabase* database, SCImportSessionId sessionId)
     {
         if (database == nullptr)
         {

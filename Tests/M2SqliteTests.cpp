@@ -41,8 +41,7 @@ namespace
     {
         sqlite3* db = nullptr;
         const std::string narrowPath = dbPath.string();
-        if (sqlite3_open_v2(narrowPath.c_str(), &db, SQLITE_OPEN_READWRITE,
-                            nullptr) != SQLITE_OK)
+        if (sqlite3_open_v2(narrowPath.c_str(), &db, SQLITE_OPEN_READWRITE, nullptr) != SQLITE_OK)
         {
             if (db != nullptr)
             {
@@ -65,9 +64,7 @@ namespace
     {
         sqlite3* db = nullptr;
         const std::string narrowPath = dbPath.string();
-        if (sqlite3_open_v2(narrowPath.c_str(), &db,
-                            SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE,
-                            nullptr) != SQLITE_OK)
+        if (sqlite3_open_v2(narrowPath.c_str(), &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, nullptr) != SQLITE_OK)
         {
             if (db != nullptr)
             {
@@ -236,13 +233,11 @@ namespace
         return rc == SQLITE_OK;
     }
 
-    bool SqliteTableHasColumn(const fs::path& dbPath, const char* tableName,
-                              const char* columnName)
+    bool SqliteTableHasColumn(const fs::path& dbPath, const char* tableName, const char* columnName)
     {
         sqlite3* db = nullptr;
         const std::string narrowPath = dbPath.string();
-        if (sqlite3_open_v2(narrowPath.c_str(), &db, SQLITE_OPEN_READWRITE,
-                            nullptr) != SQLITE_OK)
+        if (sqlite3_open_v2(narrowPath.c_str(), &db, SQLITE_OPEN_READWRITE, nullptr) != SQLITE_OK)
         {
             if (db != nullptr)
             {
@@ -251,11 +246,9 @@ namespace
             return false;
         }
 
-        const std::string pragmaSql =
-            std::string("PRAGMA table_info(") + tableName + ");";
+        const std::string pragmaSql = std::string("PRAGMA table_info(") + tableName + ");";
         sqlite3_stmt* stmt = nullptr;
-        if (sqlite3_prepare_v2(db, pragmaSql.c_str(), -1, &stmt, nullptr) !=
-            SQLITE_OK)
+        if (sqlite3_prepare_v2(db, pragmaSql.c_str(), -1, &stmt, nullptr) != SQLITE_OK)
         {
             sqlite3_close(db);
             return false;
@@ -265,9 +258,7 @@ namespace
         while (sqlite3_step(stmt) == SQLITE_ROW)
         {
             const unsigned char* name = sqlite3_column_text(stmt, 1);
-            if (name != nullptr &&
-                std::strcmp(reinterpret_cast<const char*>(name), columnName) ==
-                    0)
+            if (name != nullptr && std::strcmp(reinterpret_cast<const char*>(name), columnName) == 0)
             {
                 found = true;
                 break;
@@ -279,8 +270,7 @@ namespace
         return found;
     }
 
-    bool QuerySqliteInt64(const fs::path& dbPath, const char* sql,
-                          std::int64_t* outValue)
+    bool QuerySqliteInt64(const fs::path& dbPath, const char* sql, std::int64_t* outValue)
     {
         if (outValue == nullptr)
         {
@@ -289,8 +279,7 @@ namespace
 
         sqlite3* db = nullptr;
         const std::string narrowPath = dbPath.string();
-        if (sqlite3_open_v2(narrowPath.c_str(), &db, SQLITE_OPEN_READWRITE,
-                            nullptr) != SQLITE_OK)
+        if (sqlite3_open_v2(narrowPath.c_str(), &db, SQLITE_OPEN_READWRITE, nullptr) != SQLITE_OK)
         {
             if (db != nullptr)
             {
@@ -326,11 +315,9 @@ namespace
         return QuerySqliteInt64(dbPath, sql, &value) && value != 0;
     }
 
-    bool SetMetadataValue(const fs::path& dbPath, const char* key,
-                          const char* value)
+    bool SetMetadataValue(const fs::path& dbPath, const char* key, const char* value)
     {
-        const std::string sql = std::string("UPDATE metadata SET value='") +
-                                value + "' WHERE key='" + key + "';";
+        const std::string sql = std::string("UPDATE metadata SET value='") + value + "' WHERE key='" + key + "';";
         return ExecSqliteScript(dbPath, sql.c_str());
     }
 
@@ -340,8 +327,7 @@ namespace
         explicit SqliteReadTransactionLock(const fs::path& dbPath)
         {
             const std::string narrowPath = dbPath.string();
-            if (sqlite3_open_v2(narrowPath.c_str(), &db_, SQLITE_OPEN_READWRITE,
-                                nullptr) != SQLITE_OK)
+            if (sqlite3_open_v2(narrowPath.c_str(), &db_, SQLITE_OPEN_READWRITE, nullptr) != SQLITE_OK)
             {
                 if (db_ != nullptr)
                 {
@@ -351,16 +337,14 @@ namespace
                 return;
             }
 
-            if (sqlite3_exec(db_, "BEGIN;", nullptr, nullptr, nullptr) !=
-                SQLITE_OK)
+            if (sqlite3_exec(db_, "BEGIN;", nullptr, nullptr, nullptr) != SQLITE_OK)
             {
                 sqlite3_close(db_);
                 db_ = nullptr;
                 return;
             }
 
-            if (sqlite3_exec(db_, "SELECT COUNT(*) FROM metadata;", nullptr,
-                             nullptr, nullptr) != SQLITE_OK)
+            if (sqlite3_exec(db_, "SELECT COUNT(*) FROM metadata;", nullptr, nullptr, nullptr) != SQLITE_OK)
             {
                 sqlite3_exec(db_, "ROLLBACK;", nullptr, nullptr, nullptr);
                 sqlite3_close(db_);
@@ -408,17 +392,14 @@ namespace
         return table;
     }
 
-    class FinalizeFailingDatabase final : public sc::ISCDatabase,
-                                          public sc::SCRefCountedObject
+    class FinalizeFailingDatabase final : public sc::ISCDatabase, public sc::SCRefCountedObject
     {
     public:
-        explicit FinalizeFailingDatabase(sc::SCDbPtr inner)
-            : inner_(std::move(inner))
+        explicit FinalizeFailingDatabase(sc::SCDbPtr inner) : inner_(std::move(inner))
         {
         }
 
-        sc::ErrorCode BeginEdit(const wchar_t* name,
-                                sc::SCEditPtr& outEdit) override
+        sc::ErrorCode BeginEdit(const wchar_t* name, sc::SCEditPtr& outEdit) override
         {
             return inner_->BeginEdit(name, outEdit);
         }
@@ -442,18 +423,15 @@ namespace
         {
             return inner_->GetTableCount(outCount);
         }
-        sc::ErrorCode GetTableName(std::int32_t index,
-                                   std::wstring* outName) override
+        sc::ErrorCode GetTableName(std::int32_t index, std::wstring* outName) override
         {
             return inner_->GetTableName(index, outName);
         }
-        sc::ErrorCode GetTable(const wchar_t* name,
-                               sc::SCTablePtr& outTable) override
+        sc::ErrorCode GetTable(const wchar_t* name, sc::SCTablePtr& outTable) override
         {
             return inner_->GetTable(name, outTable);
         }
-        sc::ErrorCode CreateTable(const wchar_t* name,
-                                  sc::SCTablePtr& outTable) override
+        sc::ErrorCode CreateTable(const wchar_t* name, sc::SCTablePtr& outTable) override
         {
             return inner_->CreateTable(name, outTable);
         }
@@ -461,38 +439,33 @@ namespace
         {
             return inner_->DeleteTable(name);
         }
-        sc::ErrorCode ClearColumnValues(sc::ISCTable* table,
-                                        const wchar_t* name) override
+        sc::ErrorCode ClearColumnValues(sc::ISCTable* table, const wchar_t* name) override
         {
             return inner_->ClearColumnValues(table, name);
         }
-        sc::ErrorCode ExecuteUpgradePlan(
-            const sc::SCUpgradePlan& plan, bool confirmed,
-            sc::SCUpgradeResult* outResult) override
+        sc::ErrorCode ExecuteUpgradePlan(const sc::SCUpgradePlan& plan,
+                                         bool confirmed,
+                                         sc::SCUpgradeResult* outResult) override
         {
             return inner_->ExecuteUpgradePlan(plan, confirmed, outResult);
         }
-        sc::ErrorCode BeginImportSession(
-            const sc::SCImportSessionOptions& options,
-            sc::SCImportStagingArea* outSession) override
+        sc::ErrorCode BeginImportSession(const sc::SCImportSessionOptions& options,
+                                         sc::SCImportStagingArea* outSession) override
         {
             return inner_->BeginImportSession(options, outSession);
         }
-        sc::ErrorCode AppendImportChunk(
-            sc::SCImportStagingArea* session, const sc::SCImportChunk& chunk,
-            sc::SCImportCheckpoint* outCheckpoint) override
+        sc::ErrorCode AppendImportChunk(sc::SCImportStagingArea* session,
+                                        const sc::SCImportChunk& chunk,
+                                        sc::SCImportCheckpoint* outCheckpoint) override
         {
             return inner_->AppendImportChunk(session, chunk, outCheckpoint);
         }
-        sc::ErrorCode LoadImportRecoveryState(
-            std::uint64_t sessionId,
-            sc::SCImportRecoveryState* outState) override
+        sc::ErrorCode LoadImportRecoveryState(std::uint64_t sessionId, sc::SCImportRecoveryState* outState) override
         {
             return inner_->LoadImportRecoveryState(sessionId, outState);
         }
-        sc::ErrorCode FinalizeImportSession(
-            const sc::SCImportFinalizeCommit&,
-            sc::SCImportRecoveryState* outState) override
+        sc::ErrorCode FinalizeImportSession(const sc::SCImportFinalizeCommit&,
+                                            sc::SCImportRecoveryState* outState) override
         {
             if (outState != nullptr)
             {
@@ -525,17 +498,14 @@ namespace
         sc::SCDbPtr inner_;
     };
 
-    class CommitFailingDatabase final : public sc::ISCDatabase,
-                                        public sc::SCRefCountedObject
+    class CommitFailingDatabase final : public sc::ISCDatabase, public sc::SCRefCountedObject
     {
     public:
-        explicit CommitFailingDatabase(sc::SCDbPtr inner)
-            : inner_(std::move(inner))
+        explicit CommitFailingDatabase(sc::SCDbPtr inner) : inner_(std::move(inner))
         {
         }
 
-        sc::ErrorCode BeginEdit(const wchar_t* name,
-                                sc::SCEditPtr& outEdit) override
+        sc::ErrorCode BeginEdit(const wchar_t* name, sc::SCEditPtr& outEdit) override
         {
             return inner_->BeginEdit(name, outEdit);
         }
@@ -559,18 +529,15 @@ namespace
         {
             return inner_->GetTableCount(outCount);
         }
-        sc::ErrorCode GetTableName(std::int32_t index,
-                                   std::wstring* outName) override
+        sc::ErrorCode GetTableName(std::int32_t index, std::wstring* outName) override
         {
             return inner_->GetTableName(index, outName);
         }
-        sc::ErrorCode GetTable(const wchar_t* name,
-                               sc::SCTablePtr& outTable) override
+        sc::ErrorCode GetTable(const wchar_t* name, sc::SCTablePtr& outTable) override
         {
             return inner_->GetTable(name, outTable);
         }
-        sc::ErrorCode CreateTable(const wchar_t* name,
-                                  sc::SCTablePtr& outTable) override
+        sc::ErrorCode CreateTable(const wchar_t* name, sc::SCTablePtr& outTable) override
         {
             return inner_->CreateTable(name, outTable);
         }
@@ -578,38 +545,33 @@ namespace
         {
             return inner_->DeleteTable(name);
         }
-        sc::ErrorCode ClearColumnValues(sc::ISCTable* table,
-                                        const wchar_t* name) override
+        sc::ErrorCode ClearColumnValues(sc::ISCTable* table, const wchar_t* name) override
         {
             return inner_->ClearColumnValues(table, name);
         }
-        sc::ErrorCode ExecuteUpgradePlan(
-            const sc::SCUpgradePlan& plan, bool confirmed,
-            sc::SCUpgradeResult* outResult) override
+        sc::ErrorCode ExecuteUpgradePlan(const sc::SCUpgradePlan& plan,
+                                         bool confirmed,
+                                         sc::SCUpgradeResult* outResult) override
         {
             return inner_->ExecuteUpgradePlan(plan, confirmed, outResult);
         }
-        sc::ErrorCode BeginImportSession(
-            const sc::SCImportSessionOptions& options,
-            sc::SCImportStagingArea* outSession) override
+        sc::ErrorCode BeginImportSession(const sc::SCImportSessionOptions& options,
+                                         sc::SCImportStagingArea* outSession) override
         {
             return inner_->BeginImportSession(options, outSession);
         }
-        sc::ErrorCode AppendImportChunk(
-            sc::SCImportStagingArea* session, const sc::SCImportChunk& chunk,
-            sc::SCImportCheckpoint* outCheckpoint) override
+        sc::ErrorCode AppendImportChunk(sc::SCImportStagingArea* session,
+                                        const sc::SCImportChunk& chunk,
+                                        sc::SCImportCheckpoint* outCheckpoint) override
         {
             return inner_->AppendImportChunk(session, chunk, outCheckpoint);
         }
-        sc::ErrorCode LoadImportRecoveryState(
-            std::uint64_t sessionId,
-            sc::SCImportRecoveryState* outState) override
+        sc::ErrorCode LoadImportRecoveryState(std::uint64_t sessionId, sc::SCImportRecoveryState* outState) override
         {
             return inner_->LoadImportRecoveryState(sessionId, outState);
         }
-        sc::ErrorCode FinalizeImportSession(
-            const sc::SCImportFinalizeCommit& commit,
-            sc::SCImportRecoveryState* outState) override
+        sc::ErrorCode FinalizeImportSession(const sc::SCImportFinalizeCommit& commit,
+                                            sc::SCImportRecoveryState* outState) override
         {
             return inner_->FinalizeImportSession(commit, outState);
         }
@@ -642,8 +604,7 @@ namespace
 
 TEST(StorageM2Sqlite, PersistedRecordSurvivesReopen)
 {
-    const fs::path dbPath =
-        MakeTempDbPath(L"StableCoreStorage_M2_Reopen.sqlite");
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_M2_Reopen.sqlite");
 
     {
         sc::SCDbPtr db;
@@ -682,8 +643,7 @@ TEST(StorageM2Sqlite, PersistedRecordSurvivesReopen)
 
 TEST(StorageM2Sqlite, UndoRedoSurvivesReopen)
 {
-    const fs::path dbPath =
-        MakeTempDbPath(L"StableCoreStorage_M2_UndoRedo.sqlite");
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_M2_UndoRedo.sqlite");
 
     {
         sc::SCDbPtr db;
@@ -730,8 +690,7 @@ TEST(StorageM2Sqlite, UndoRedoSurvivesReopen)
 
 TEST(StorageM2Sqlite, OpenModeAndEditLogStateAreQueryable)
 {
-    const fs::path dbPath =
-        MakeTempDbPath(L"StableCoreStorage_M2_EditLogState.sqlite");
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_M2_EditLogState.sqlite");
 
     sc::SCOpenDatabaseOptions options;
     options.openMode = sc::SCDatabaseOpenMode::Normal;
@@ -765,8 +724,7 @@ TEST(StorageM2Sqlite, OpenModeAndEditLogStateAreQueryable)
     EXPECT_TRUE(logState.redoItems.empty());
     ASSERT_EQ(logState.undoItems.size(), 1u);
     const sc::CommitId firstCommitId = logState.undoItems.front().commitId;
-    const sc::VersionId firstCommittedVersion =
-        logState.undoItems.front().version;
+    const sc::VersionId firstCommittedVersion = logState.undoItems.front().version;
     EXPECT_NE(firstCommitId, 0u);
     EXPECT_EQ(firstCommittedVersion, 1u);
     EXPECT_EQ(logState.undoItems.front().kind, sc::SCEditLogActionKind::Commit);
@@ -796,8 +754,7 @@ TEST(StorageM2Sqlite, OpenModeAndEditLogStateAreQueryable)
     EXPECT_EQ(logState.undoItems.size(), 1u);
     EXPECT_TRUE(logState.redoItems.empty());
     const sc::CommitId secondCommitId = logState.undoItems.front().commitId;
-    const sc::VersionId secondCommittedVersion =
-        logState.undoItems.front().version;
+    const sc::VersionId secondCommittedVersion = logState.undoItems.front().version;
     EXPECT_NE(secondCommitId, 0u);
     EXPECT_NE(secondCommitId, firstCommitId);
     EXPECT_EQ(secondCommittedVersion, 2u);
@@ -832,15 +789,12 @@ TEST(StorageM2Sqlite, OpenModeAndEditLogStateAreQueryable)
     EXPECT_TRUE(reopenedLog.redoItems.empty());
     EXPECT_EQ(reopenedLog.undoItems.front().commitId, secondCommitId);
     EXPECT_EQ(reopenedLog.undoItems.front().version, secondCommittedVersion);
-    EXPECT_EQ(reopenedLog.undoItems.front().kind,
-              sc::SCEditLogActionKind::Commit);
+    EXPECT_EQ(reopenedLog.undoItems.front().kind, sc::SCEditLogActionKind::Commit);
 }
 
-TEST(StorageM2Sqlite,
-     ResetHistoryBaselineCommitFailureKeepsEditLogStateUnchanged)
+TEST(StorageM2Sqlite, ResetHistoryBaselineCommitFailureKeepsEditLogStateUnchanged)
 {
-    const fs::path dbPath =
-        MakeTempDbPath(L"StableCoreStorage_M2_ResetHistoryBaselineBusy.sqlite");
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_M2_ResetHistoryBaselineBusy.sqlite");
 
     sc::SCDbPtr db;
     EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
@@ -867,10 +821,8 @@ TEST(StorageM2Sqlite,
     ASSERT_EQ(logStateBefore.undoItems.size(), 1u);
     ASSERT_EQ(logStateBefore.redoItems.size(), 1u);
 
-    const sc::CommitId undoCommitIdBefore =
-        logStateBefore.undoItems.front().commitId;
-    const sc::CommitId redoCommitIdBefore =
-        logStateBefore.redoItems.front().commitId;
+    const sc::CommitId undoCommitIdBefore = logStateBefore.undoItems.front().commitId;
+    const sc::CommitId redoCommitIdBefore = logStateBefore.redoItems.front().commitId;
 
     SqliteReadTransactionLock readLock(dbPath);
     ASSERT_TRUE(readLock.IsHeld());
@@ -880,10 +832,8 @@ TEST(StorageM2Sqlite,
 
     sc::SCEditingDatabaseState editingStateAfter;
     EXPECT_EQ(db->GetEditingState(&editingStateAfter), sc::SC_OK);
-    EXPECT_EQ(editingStateAfter.currentVersion,
-              editingStateBefore.currentVersion);
-    EXPECT_EQ(editingStateAfter.baselineVersion,
-              editingStateBefore.baselineVersion);
+    EXPECT_EQ(editingStateAfter.currentVersion, editingStateBefore.currentVersion);
+    EXPECT_EQ(editingStateAfter.baselineVersion, editingStateBefore.baselineVersion);
     EXPECT_EQ(editingStateAfter.undoCount, editingStateBefore.undoCount);
     EXPECT_EQ(editingStateAfter.redoCount, editingStateBefore.redoCount);
 
@@ -898,17 +848,12 @@ TEST(StorageM2Sqlite,
 
 TEST(StorageM2Sqlite, CreateBackupCopyPreservesOrTrimsJournalHistory)
 {
-    const fs::path dbPath =
-        MakeTempDbPath(L"StableCoreStorage_M2_BackupLevel2.sqlite");
-    const fs::path trimmedBackupPath =
-        MakeTempDbPath(L"StableCoreStorage_M2_BackupLevel2_Trimmed.sqlite");
-    const fs::path preservedBackupPath =
-        MakeTempDbPath(L"StableCoreStorage_M2_BackupLevel2_Preserved.sqlite");
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_M2_BackupLevel2.sqlite");
+    const fs::path trimmedBackupPath = MakeTempDbPath(L"StableCoreStorage_M2_BackupLevel2_Trimmed.sqlite");
+    const fs::path preservedBackupPath = MakeTempDbPath(L"StableCoreStorage_M2_BackupLevel2_Preserved.sqlite");
 
     sc::SCDbPtr db;
-    EXPECT_EQ(
-        sc::CreateFileDatabase(dbPath.c_str(), sc::SCOpenDatabaseOptions{}, db),
-        sc::SC_OK);
+    EXPECT_EQ(sc::CreateFileDatabase(dbPath.c_str(), sc::SCOpenDatabaseOptions{}, db), sc::SC_OK);
 
     sc::SCTablePtr beamTable = CreateBeamTable(db);
     sc::SCEditPtr edit;
@@ -924,9 +869,7 @@ TEST(StorageM2Sqlite, CreateBackupCopyPreservesOrTrimsJournalHistory)
 
     sc::SCBackupOptions trimmedOptions;
     sc::SCBackupResult trimmedResult;
-    EXPECT_EQ(db->CreateBackupCopy(trimmedBackupPath.c_str(), trimmedOptions,
-                                   &trimmedResult),
-              sc::SC_OK);
+    EXPECT_EQ(db->CreateBackupCopy(trimmedBackupPath.c_str(), trimmedOptions, &trimmedResult), sc::SC_OK);
     EXPECT_EQ(trimmedResult.removedJournalTransactionCount, 1u);
     EXPECT_GT(trimmedResult.removedJournalEntryCount, 0u);
     EXPECT_GT(trimmedResult.outputFileSizeBytes, 0u);
@@ -948,24 +891,20 @@ TEST(StorageM2Sqlite, CreateBackupCopyPreservesOrTrimsJournalHistory)
     preservedOptions.preserveJournalHistory = true;
     preservedOptions.overwriteExisting = true;
     sc::SCBackupResult preservedResult;
-    EXPECT_EQ(db->CreateBackupCopy(preservedBackupPath.c_str(),
-                                   preservedOptions, &preservedResult),
-              sc::SC_OK);
+    EXPECT_EQ(db->CreateBackupCopy(preservedBackupPath.c_str(), preservedOptions, &preservedResult), sc::SC_OK);
     EXPECT_EQ(preservedResult.removedJournalTransactionCount, 0u);
     EXPECT_EQ(preservedResult.removedJournalEntryCount, 0u);
     EXPECT_GT(preservedResult.outputFileSizeBytes, 0u);
 
     sc::SCDbPtr preservedDb;
-    ASSERT_EQ(CreateFileDb(preservedBackupPath.c_str(), preservedDb),
-              sc::SC_OK);
+    ASSERT_EQ(CreateFileDb(preservedBackupPath.c_str(), preservedDb), sc::SC_OK);
 
     sc::SCEditLogState preservedLog;
     EXPECT_EQ(preservedDb->GetEditLogState(&preservedLog), sc::SC_OK);
     EXPECT_EQ(preservedLog.baselineVersion, sourceState.baselineVersion);
     ASSERT_EQ(preservedLog.undoItems.size(), 1u);
     EXPECT_TRUE(preservedLog.redoItems.empty());
-    EXPECT_EQ(preservedLog.undoItems.front().kind,
-              sc::SCEditLogActionKind::Commit);
+    EXPECT_EQ(preservedLog.undoItems.front().kind, sc::SCEditLogActionKind::Commit);
 
     sc::SCEditingDatabaseState preservedState;
     EXPECT_EQ(preservedDb->GetEditingState(&preservedState), sc::SC_OK);
@@ -973,15 +912,13 @@ TEST(StorageM2Sqlite, CreateBackupCopyPreservesOrTrimsJournalHistory)
     EXPECT_EQ(preservedState.baselineVersion, sourceState.baselineVersion);
 
     sc::SCBackupResult overwriteCheckResult;
-    EXPECT_EQ(db->CreateBackupCopy(trimmedBackupPath.c_str(), trimmedOptions,
-                                   &overwriteCheckResult),
+    EXPECT_EQ(db->CreateBackupCopy(trimmedBackupPath.c_str(), trimmedOptions, &overwriteCheckResult),
               sc::SC_E_FILE_EXISTS);
 }
 
 TEST(StorageM2Sqlite, NoHistoryOpenModeHidesEditLog)
 {
-    const fs::path dbPath =
-        MakeTempDbPath(L"StableCoreStorage_M2_NoHistory.sqlite");
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_M2_NoHistory.sqlite");
 
     sc::SCOpenDatabaseOptions options;
     options.openMode = sc::SCDatabaseOpenMode::NoHistory;
@@ -1006,8 +943,7 @@ TEST(StorageM2Sqlite, NoHistoryOpenModeHidesEditLog)
 
 TEST(StorageM2Sqlite, PersistedQueryAndDelete)
 {
-    const fs::path dbPath =
-        MakeTempDbPath(L"StableCoreStorage_M2_Query.sqlite");
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_M2_Query.sqlite");
 
     {
         sc::SCDbPtr db;
@@ -1055,8 +991,7 @@ TEST(StorageM2Sqlite, PersistedQueryAndDelete)
 
 TEST(StorageM2Sqlite, PersistedSchemaRejectsInvalidReferenceTableUsage)
 {
-    const fs::path dbPath =
-        MakeTempDbPath(L"StableCoreStorage_M2_SchemaValidation.sqlite");
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_M2_SchemaValidation.sqlite");
 
     sc::SCDbPtr db;
     EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
@@ -1082,8 +1017,7 @@ TEST(StorageM2Sqlite, PersistedSchemaRejectsInvalidReferenceTableUsage)
 
 TEST(StorageM2Sqlite, PersistedEmptyQueryIsNotError)
 {
-    const fs::path dbPath =
-        MakeTempDbPath(L"StableCoreStorage_M2_EmptyQuery.sqlite");
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_M2_EmptyQuery.sqlite");
 
     sc::SCDbPtr db;
     EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
@@ -1091,9 +1025,7 @@ TEST(StorageM2Sqlite, PersistedEmptyQueryIsNotError)
     sc::SCTablePtr beamTable = CreateBeamTable(db);
 
     sc::SCRecordCursorPtr cursor;
-    EXPECT_EQ(beamTable->FindRecords({L"Width", sc::SCValue::FromInt64(12345)},
-                                     cursor),
-              sc::SC_OK);
+    EXPECT_EQ(beamTable->FindRecords({L"Width", sc::SCValue::FromInt64(12345)}, cursor), sc::SC_OK);
 
     sc::SCRecordPtr beam;
     EXPECT_EQ(cursor->Next(beam), sc::SC_OK);
@@ -1102,8 +1034,7 @@ TEST(StorageM2Sqlite, PersistedEmptyQueryIsNotError)
 
 TEST(StorageM2Sqlite, BinaryFieldPersistsAcrossReopen)
 {
-    const fs::path dbPath =
-        MakeTempDbPath(L"StableCoreStorage_M2_BinaryField.sqlite");
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_M2_BinaryField.sqlite");
 
     sc::RecordId beamId = 0;
     const std::vector<std::uint8_t> payload{0x00, 0x10, 0x7F, 0xFF};
@@ -1130,9 +1061,7 @@ TEST(StorageM2Sqlite, BinaryFieldPersistsAcrossReopen)
         sc::SCRecordPtr beam;
         EXPECT_EQ(table->CreateRecord(beam), sc::SC_OK);
         beamId = beam->GetId();
-        EXPECT_EQ(beam->SetBinary(L"Attachment", payload.data(),
-                                  payload.size()),
-                  sc::SC_OK);
+        EXPECT_EQ(beam->SetBinary(L"Attachment", payload.data(), payload.size()), sc::SC_OK);
         EXPECT_EQ(db->Commit(edit.Get()), sc::SC_OK);
     }
 
@@ -1154,8 +1083,7 @@ TEST(StorageM2Sqlite, BinaryFieldPersistsAcrossReopen)
 
 TEST(StorageM2Sqlite, StringAndBinaryGettersExposeStableBackingStorage)
 {
-    const fs::path dbPath =
-        MakeTempDbPath(L"StableCoreStorage_M2_StableGetterStorage.sqlite");
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_M2_StableGetterStorage.sqlite");
 
     const std::vector<std::uint8_t> explicitBinary{0xAA, 0xBB, 0xCC};
     const std::vector<std::uint8_t> defaultBinary{0x10, 0x20};
@@ -1192,11 +1120,8 @@ TEST(StorageM2Sqlite, StringAndBinaryGettersExposeStableBackingStorage)
         sc::SCRecordPtr explicitRecord;
         EXPECT_EQ(table->CreateRecord(explicitRecord), sc::SC_OK);
         explicitRecordId = explicitRecord->GetId();
-        EXPECT_EQ(explicitRecord->SetString(L"Name", L"explicit-name"),
-                  sc::SC_OK);
-        EXPECT_EQ(explicitRecord->SetBinary(
-                      L"Attachment", explicitBinary.data(), explicitBinary.size()),
-                  sc::SC_OK);
+        EXPECT_EQ(explicitRecord->SetString(L"Name", L"explicit-name"), sc::SC_OK);
+        EXPECT_EQ(explicitRecord->SetBinary(L"Attachment", explicitBinary.data(), explicitBinary.size()), sc::SC_OK);
 
         sc::SCRecordPtr defaultRecord;
         EXPECT_EQ(table->CreateRecord(defaultRecord), sc::SC_OK);
@@ -1205,42 +1130,38 @@ TEST(StorageM2Sqlite, StringAndBinaryGettersExposeStableBackingStorage)
         EXPECT_EQ(db->Commit(edit.Get()), sc::SC_OK);
     }
 
-    const auto verifyRecord =
-        [&](sc::RecordId recordId, const wchar_t* expectedName,
-            const std::vector<std::uint8_t>& expectedBinary) {
-            sc::SCRecordPtr record;
-            ASSERT_EQ(table->GetRecord(recordId, record), sc::SC_OK);
+    const auto verifyRecord = [&](sc::RecordId recordId,
+                                  const wchar_t* expectedName,
+                                  const std::vector<std::uint8_t>& expectedBinary) {
+        sc::SCRecordPtr record;
+        ASSERT_EQ(table->GetRecord(recordId, record), sc::SC_OK);
 
-            const wchar_t* namePtr = nullptr;
-            ASSERT_EQ(record->GetString(L"Name", &namePtr), sc::SC_OK);
-            ASSERT_NE(namePtr, nullptr);
+        const wchar_t* namePtr = nullptr;
+        ASSERT_EQ(record->GetString(L"Name", &namePtr), sc::SC_OK);
+        ASSERT_NE(namePtr, nullptr);
 
-            const std::uint8_t* binaryPtr = nullptr;
-            std::size_t binarySize = 0;
-            ASSERT_EQ(record->GetBinary(L"Attachment", &binaryPtr, &binarySize),
-                      sc::SC_OK);
-            ASSERT_EQ(binarySize, expectedBinary.size());
-            ASSERT_TRUE(binaryPtr != nullptr || expectedBinary.empty());
+        const std::uint8_t* binaryPtr = nullptr;
+        std::size_t binarySize = 0;
+        ASSERT_EQ(record->GetBinary(L"Attachment", &binaryPtr, &binarySize), sc::SC_OK);
+        ASSERT_EQ(binarySize, expectedBinary.size());
+        ASSERT_TRUE(binaryPtr != nullptr || expectedBinary.empty());
 
-            std::wstring copiedName;
-            EXPECT_EQ(record->GetStringCopy(L"Name", &copiedName), sc::SC_OK);
-            EXPECT_EQ(copiedName, expectedName);
-            EXPECT_EQ(std::wstring(namePtr), expectedName);
+        std::wstring copiedName;
+        EXPECT_EQ(record->GetStringCopy(L"Name", &copiedName), sc::SC_OK);
+        EXPECT_EQ(copiedName, expectedName);
+        EXPECT_EQ(std::wstring(namePtr), expectedName);
 
-            std::vector<std::uint8_t> copiedBinary;
-            EXPECT_EQ(record->GetBinaryCopy(L"Attachment", &copiedBinary),
-                      sc::SC_OK);
-            EXPECT_EQ(copiedBinary, expectedBinary);
-            if (expectedBinary.empty())
-            {
-                EXPECT_EQ(binaryPtr, nullptr);
-            } else
-            {
-                EXPECT_TRUE(std::equal(binaryPtr, binaryPtr + binarySize,
-                                       expectedBinary.begin(),
-                                       expectedBinary.end()));
-            }
-        };
+        std::vector<std::uint8_t> copiedBinary;
+        EXPECT_EQ(record->GetBinaryCopy(L"Attachment", &copiedBinary), sc::SC_OK);
+        EXPECT_EQ(copiedBinary, expectedBinary);
+        if (expectedBinary.empty())
+        {
+            EXPECT_EQ(binaryPtr, nullptr);
+        } else
+        {
+            EXPECT_TRUE(std::equal(binaryPtr, binaryPtr + binarySize, expectedBinary.begin(), expectedBinary.end()));
+        }
+    };
 
     verifyRecord(explicitRecordId, L"explicit-name", explicitBinary);
     verifyRecord(defaultRecordId, L"default-name", defaultBinary);
@@ -1261,9 +1182,7 @@ TEST(StorageM2Sqlite, VersionGraphReportsUpgradeWindow)
     EXPECT_TRUE(decision.readOnlyOnly);
     EXPECT_FALSE(decision.writable);
 
-    EXPECT_EQ(sc::EvaluateOpenDecision(graph, graph.latestSupportedVersion,
-                                       true, &decision),
-              sc::SC_OK);
+    EXPECT_EQ(sc::EvaluateOpenDecision(graph, graph.latestSupportedVersion, true, &decision), sc::SC_OK);
     EXPECT_EQ(decision.mode, sc::SCOpenMode::ReadWrite);
     EXPECT_FALSE(decision.needsUpgrade);
     EXPECT_FALSE(decision.readOnlyOnly);
@@ -1272,8 +1191,7 @@ TEST(StorageM2Sqlite, VersionGraphReportsUpgradeWindow)
 
 TEST(StorageM2Sqlite, UpgradeFromV3ToV4AddsBinaryColumns)
 {
-    const fs::path dbPath =
-        MakeTempDbPath(L"StableCoreStorage_M2_UpgradeFromV3ToV4.sqlite");
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_M2_UpgradeFromV3ToV4.sqlite");
 
     EXPECT_TRUE(CreateLegacyV3Database(dbPath));
 
@@ -1346,21 +1264,18 @@ TEST(StorageM2Sqlite, UpgradeFromV3ToV4AddsBinaryColumns)
                                  "AND new_int64 = 256;",
                                  &value));
     EXPECT_EQ(value, 1);
-    EXPECT_TRUE(QuerySqliteInt64(
-        dbPath,
-        "SELECT COUNT(*) FROM journal_schema_entries "
-        "WHERE tx_id = 1 AND sequence_index = 1 AND column_name = 'Width';",
-        &value));
+    EXPECT_TRUE(QuerySqliteInt64(dbPath,
+                                 "SELECT COUNT(*) FROM journal_schema_entries "
+                                 "WHERE tx_id = 1 AND sequence_index = 1 AND column_name = 'Width';",
+                                 &value));
     EXPECT_EQ(value, 1);
 
     EXPECT_TRUE(SqliteTableHasColumn(dbPath, "field_values", "blob_value"));
     EXPECT_TRUE(SqliteTableHasColumn(dbPath, "schema_columns", "default_blob"));
     EXPECT_TRUE(SqliteTableHasColumn(dbPath, "journal_entries", "old_blob"));
     EXPECT_TRUE(SqliteTableHasColumn(dbPath, "journal_entries", "new_blob"));
-    EXPECT_TRUE(SqliteTableHasColumn(dbPath, "journal_schema_entries",
-                                     "old_default_blob"));
-    EXPECT_TRUE(SqliteTableHasColumn(dbPath, "journal_schema_entries",
-                                     "new_default_blob"));
+    EXPECT_TRUE(SqliteTableHasColumn(dbPath, "journal_schema_entries", "old_default_blob"));
+    EXPECT_TRUE(SqliteTableHasColumn(dbPath, "journal_schema_entries", "new_default_blob"));
 
     sc::SCDbPtr reloaded;
     EXPECT_EQ(CreateReadOnlyFileDb(dbPath.c_str(), reloaded), sc::SC_OK);
@@ -1372,8 +1287,7 @@ TEST(StorageM2Sqlite, UpgradeFromV3ToV4AddsBinaryColumns)
     ASSERT_EQ(snapshot.columns.size(), 2);
     ASSERT_EQ(snapshot.constraints.size(), 1);
     ASSERT_EQ(snapshot.indexes.size(), 1);
-    EXPECT_EQ(snapshot.constraints.front().kind,
-              sc::SCConstraintKind::PrimaryKey);
+    EXPECT_EQ(snapshot.constraints.front().kind, sc::SCConstraintKind::PrimaryKey);
     EXPECT_EQ(snapshot.constraints.front().columns.front(), L"Id");
     EXPECT_EQ(snapshot.indexes.front().columns.front().columnName, L"Width");
     EXPECT_EQ(reloaded->GetTable(L"Element", elementTable), sc::SC_OK);
@@ -1384,8 +1298,7 @@ TEST(StorageM2Sqlite, UpgradeFromV3ToV4AddsBinaryColumns)
 
 TEST(StorageM2Sqlite, ReadOnlySqliteOpenRejectsWrites)
 {
-    const fs::path dbPath =
-        MakeTempDbPath(L"StableCoreStorage_M2_ReadOnly.sqlite");
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_M2_ReadOnly.sqlite");
 
     {
         sc::SCDbPtr db;
@@ -1412,14 +1325,12 @@ TEST(StorageM2Sqlite, ReadOnlySqliteOpenRejectsWrites)
     EXPECT_EQ(readOnlyDb->GetSchemaVersion(), graph.latestSupportedVersion);
 
     sc::SCEditPtr edit;
-    EXPECT_EQ(readOnlyDb->BeginEdit(L"read-only", edit),
-              sc::SC_E_READ_ONLY_DATABASE);
+    EXPECT_EQ(readOnlyDb->BeginEdit(L"read-only", edit), sc::SC_E_READ_ONLY_DATABASE);
 }
 
 TEST(StorageM2Sqlite, OpenDatabaseAutoUpgradesToLatestFormat)
 {
-    const fs::path dbPath =
-        MakeTempDbPath(L"StableCoreStorage_M2_ExplicitUpgrade.sqlite");
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_M2_ExplicitUpgrade.sqlite");
 
     {
         sc::SCDbPtr db;
@@ -1445,10 +1356,8 @@ TEST(StorageM2Sqlite, OpenDatabaseAutoUpgradesToLatestFormat)
     EXPECT_EQ(reopened->GetSchemaVersion(), graph.latestSupportedVersion);
 
     sc::SCUpgradePlan plan;
-    EXPECT_EQ(
-        sc::BuildUpgradePlan(graph.latestSupportedVersion,
-                             graph.latestSupportedVersion, graph, &plan),
-        sc::SC_OK);
+    EXPECT_EQ(sc::BuildUpgradePlan(graph.latestSupportedVersion, graph.latestSupportedVersion, graph, &plan),
+              sc::SC_OK);
     EXPECT_FALSE(plan.upgradeRequired);
 
     sc::SCUpgradeResult result;
@@ -1459,8 +1368,7 @@ TEST(StorageM2Sqlite, OpenDatabaseAutoUpgradesToLatestFormat)
 
 TEST(StorageM2Sqlite, UpgradeFailureRollsBackOnObjectNameConflict)
 {
-    const fs::path dbPath =
-        MakeTempDbPath(L"StableCoreStorage_M2_UpgradeRollback.sqlite");
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_M2_UpgradeRollback.sqlite");
 
     {
         sc::SCDbPtr db;
@@ -1476,35 +1384,29 @@ TEST(StorageM2Sqlite, UpgradeFailureRollsBackOnObjectNameConflict)
         EXPECT_EQ(db->Commit(edit.Get()), sc::SC_OK);
     }
 
-    EXPECT_TRUE(ExecSqliteScript(
-        dbPath,
-        "DROP TABLE IF EXISTS startup_diagnostics;"
-        "DROP VIEW IF EXISTS startup_diagnostics;"
-        "CREATE VIEW startup_diagnostics AS SELECT 1 AS diag_id, 0 AS "
-        "severity, 'upgrade' AS category, 'blocked' AS message;"
-        "UPDATE metadata SET value='1' WHERE key='schema_version';"
-        "UPDATE metadata SET value='1' WHERE key='clean_shutdown';"));
+    EXPECT_TRUE(ExecSqliteScript(dbPath,
+                                 "DROP TABLE IF EXISTS startup_diagnostics;"
+                                 "DROP VIEW IF EXISTS startup_diagnostics;"
+                                 "CREATE VIEW startup_diagnostics AS SELECT 1 AS diag_id, 0 AS "
+                                 "severity, 'upgrade' AS category, 'blocked' AS message;"
+                                 "UPDATE metadata SET value='1' WHERE key='schema_version';"
+                                 "UPDATE metadata SET value='1' WHERE key='clean_shutdown';"));
 
     sc::SCDbPtr reopened;
     EXPECT_NE(CreateFileDb(dbPath.c_str(), reopened), sc::SC_OK);
 
     std::int64_t versionValue = 0;
-    EXPECT_TRUE(QuerySqliteInt64(
-        dbPath, "SELECT value FROM metadata WHERE key='schema_version';",
-        &versionValue));
+    EXPECT_TRUE(QuerySqliteInt64(dbPath, "SELECT value FROM metadata WHERE key='schema_version';", &versionValue));
     EXPECT_EQ(versionValue, 1);
 
     std::int64_t beamCount = 0;
-    EXPECT_TRUE(QuerySqliteInt64(
-        dbPath, "SELECT COUNT(*) FROM tables WHERE name='Beam';",
-        &beamCount));
+    EXPECT_TRUE(QuerySqliteInt64(dbPath, "SELECT COUNT(*) FROM tables WHERE name='Beam';", &beamCount));
     EXPECT_EQ(beamCount, 1);
 }
 
 TEST(StorageM2Sqlite, UncleanShutdownBlocksUpgradeExecution)
 {
-    const fs::path dbPath =
-        MakeTempDbPath(L"StableCoreStorage_M2_UncleanUpgrade.sqlite");
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_M2_UncleanUpgrade.sqlite");
 
     {
         sc::SCDbPtr db;
@@ -1527,22 +1429,18 @@ TEST(StorageM2Sqlite, UncleanShutdownBlocksUpgradeExecution)
     EXPECT_NE(CreateFileDb(dbPath.c_str(), reopened), sc::SC_OK);
 
     std::int64_t versionValue = 0;
-    EXPECT_TRUE(QuerySqliteInt64(
-        dbPath, "SELECT value FROM metadata WHERE key='schema_version';",
-        &versionValue));
+    EXPECT_TRUE(QuerySqliteInt64(dbPath, "SELECT value FROM metadata WHERE key='schema_version';", &versionValue));
     EXPECT_EQ(versionValue, 1);
 
     std::int64_t cleanShutdownValue = 0;
-    EXPECT_TRUE(QuerySqliteInt64(
-        dbPath, "SELECT value FROM metadata WHERE key='clean_shutdown';",
-        &cleanShutdownValue));
+    EXPECT_TRUE(
+        QuerySqliteInt64(dbPath, "SELECT value FROM metadata WHERE key='clean_shutdown';", &cleanShutdownValue));
     EXPECT_EQ(cleanShutdownValue, 0);
 }
 
 TEST(StorageM2Sqlite, ImportSessionCheckpointIsNotLiveState)
 {
-    const fs::path dbPath =
-        MakeTempDbPath(L"StableCoreStorage_M2_ImportCheckpoint.sqlite");
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_M2_ImportCheckpoint.sqlite");
 
     sc::SCDbPtr db;
     EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
@@ -1554,28 +1452,23 @@ TEST(StorageM2Sqlite, ImportSessionCheckpointIsNotLiveState)
     sessionOptions.chunkSize = 1;
 
     sc::SCImportStagingArea session;
-    EXPECT_EQ(sc::BeginImportSession(db.Get(), sessionOptions, &session),
-              sc::SC_OK);
+    EXPECT_EQ(sc::BeginImportSession(db.Get(), sessionOptions, &session), sc::SC_OK);
 
     sc::SCImportChunk chunk;
     chunk.chunkId = 1;
     sc::SCBatchTableRequest request;
     request.tableName = L"Beam";
-    request.creates.push_back(sc::SCBatchCreateRecordRequest{
-        {{L"Width", sc::SCValue::FromInt64(140)}}});
+    request.creates.push_back(sc::SCBatchCreateRecordRequest{{{L"Width", sc::SCValue::FromInt64(140)}}});
     chunk.requests.push_back(request);
 
     sc::SCImportCheckpoint checkpoint;
-    EXPECT_EQ(sc::AppendImportChunk(db.Get(), &session, chunk, &checkpoint),
-              sc::SC_OK);
+    EXPECT_EQ(sc::AppendImportChunk(db.Get(), &session, chunk, &checkpoint), sc::SC_OK);
     EXPECT_EQ(checkpoint.sessionId, session.sessionId);
     EXPECT_EQ(checkpoint.chunkCount, 1u);
     EXPECT_TRUE(checkpoint.persisted);
 
     sc::SCImportRecoveryState recoveryState;
-    EXPECT_EQ(
-        sc::GetImportRecoveryState(db.Get(), session.sessionId, &recoveryState),
-        sc::SC_OK);
+    EXPECT_EQ(sc::GetImportRecoveryState(db.Get(), session.sessionId, &recoveryState), sc::SC_OK);
     EXPECT_TRUE(recoveryState.canResume);
     EXPECT_TRUE(recoveryState.canFinalize);
     EXPECT_EQ(recoveryState.stagingArea.chunks.size(), 1u);
@@ -1591,8 +1484,7 @@ TEST(StorageM2Sqlite, ImportSessionCheckpointIsNotLiveState)
     commit.confirmed = true;
     commit.commitName = L"finalize import";
     sc::SCBatchExecutionResult result;
-    EXPECT_EQ(sc::FinalizeImportSession(db.Get(), session, commit, &result),
-              sc::SC_OK);
+    EXPECT_EQ(sc::FinalizeImportSession(db.Get(), session, commit, &result), sc::SC_OK);
     EXPECT_EQ(result.importSessionId, session.sessionId);
     EXPECT_EQ(result.chunkCount, 1u);
 
@@ -1604,8 +1496,7 @@ TEST(StorageM2Sqlite, ImportSessionCheckpointIsNotLiveState)
 
 TEST(StorageM2Sqlite, RestartedDatabaseCanFinalizeImportRecoveryState)
 {
-    const fs::path dbPath =
-        MakeTempDbPath(L"StableCoreStorage_M2_RestartImportRecovery.sqlite");
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_M2_RestartImportRecovery.sqlite");
     sc::SCImportSessionId sessionId = 0;
 
     {
@@ -1618,26 +1509,21 @@ TEST(StorageM2Sqlite, RestartedDatabaseCanFinalizeImportRecoveryState)
         sessionOptions.chunkSize = 1;
 
         sc::SCImportStagingArea session;
-        EXPECT_EQ(sc::BeginImportSession(db.Get(), sessionOptions, &session),
-                  sc::SC_OK);
+        EXPECT_EQ(sc::BeginImportSession(db.Get(), sessionOptions, &session), sc::SC_OK);
         sessionId = session.sessionId;
 
         sc::SCImportChunk chunk;
         chunk.chunkId = 1;
         sc::SCBatchTableRequest request;
         request.tableName = L"Beam";
-        request.creates.push_back(sc::SCBatchCreateRecordRequest{
-            {{L"Width", sc::SCValue::FromInt64(210)}}});
+        request.creates.push_back(sc::SCBatchCreateRecordRequest{{{L"Width", sc::SCValue::FromInt64(210)}}});
         chunk.requests.push_back(request);
 
         sc::SCImportCheckpoint checkpoint;
-        EXPECT_EQ(sc::AppendImportChunk(db.Get(), &session, chunk, &checkpoint),
-                  sc::SC_OK);
+        EXPECT_EQ(sc::AppendImportChunk(db.Get(), &session, chunk, &checkpoint), sc::SC_OK);
 
         sc::SCImportRecoveryState recoveryState;
-        EXPECT_EQ(
-            sc::GetImportRecoveryState(db.Get(), sessionId, &recoveryState),
-            sc::SC_OK);
+        EXPECT_EQ(sc::GetImportRecoveryState(db.Get(), sessionId, &recoveryState), sc::SC_OK);
         EXPECT_TRUE(recoveryState.canResume);
         EXPECT_TRUE(recoveryState.canFinalize);
 
@@ -1652,8 +1538,7 @@ TEST(StorageM2Sqlite, RestartedDatabaseCanFinalizeImportRecoveryState)
     EXPECT_EQ(CreateFileDb(dbPath.c_str(), reopened), sc::SC_OK);
 
     sc::SCImportRecoveryState recoveryState;
-    EXPECT_EQ(reopened->LoadImportRecoveryState(sessionId, &recoveryState),
-              sc::SC_OK);
+    EXPECT_EQ(reopened->LoadImportRecoveryState(sessionId, &recoveryState), sc::SC_OK);
     EXPECT_EQ(recoveryState.sessionId, sessionId);
     EXPECT_TRUE(recoveryState.canResume);
     EXPECT_TRUE(recoveryState.canFinalize);
@@ -1664,9 +1549,7 @@ TEST(StorageM2Sqlite, RestartedDatabaseCanFinalizeImportRecoveryState)
     commit.confirmed = true;
     commit.commitName = L"restart recovery import";
     sc::SCBatchExecutionResult result;
-    EXPECT_EQ(sc::FinalizeImportSession(
-                  reopened.Get(), recoveryState.stagingArea, commit, &result),
-              sc::SC_OK);
+    EXPECT_EQ(sc::FinalizeImportSession(reopened.Get(), recoveryState.stagingArea, commit, &result), sc::SC_OK);
     EXPECT_EQ(result.importSessionId, sessionId);
     EXPECT_EQ(result.createdCount, 1u);
 
@@ -1678,14 +1561,12 @@ TEST(StorageM2Sqlite, RestartedDatabaseCanFinalizeImportRecoveryState)
     EXPECT_EQ(cursor->Next(beam), sc::SC_OK);
     EXPECT_TRUE(static_cast<bool>(beam));
 
-    EXPECT_EQ(reopened->LoadImportRecoveryState(sessionId, &recoveryState),
-              sc::SC_E_RECORD_NOT_FOUND);
+    EXPECT_EQ(reopened->LoadImportRecoveryState(sessionId, &recoveryState), sc::SC_E_RECORD_NOT_FOUND);
 }
 
 TEST(StorageM2Sqlite, AbortImportSessionClearsRecoveryState)
 {
-    const fs::path dbPath =
-        MakeTempDbPath(L"StableCoreStorage_M2_AbortImport.sqlite");
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_M2_AbortImport.sqlite");
 
     sc::SCDbPtr db;
     EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
@@ -1696,46 +1577,37 @@ TEST(StorageM2Sqlite, AbortImportSessionClearsRecoveryState)
     sessionOptions.chunkSize = 1;
 
     sc::SCImportStagingArea session;
-    EXPECT_EQ(sc::BeginImportSession(db.Get(), sessionOptions, &session),
-              sc::SC_OK);
+    EXPECT_EQ(sc::BeginImportSession(db.Get(), sessionOptions, &session), sc::SC_OK);
 
     sc::SCImportChunk chunk;
     chunk.chunkId = 1;
     sc::SCBatchTableRequest request;
     request.tableName = L"Beam";
-    request.creates.push_back(sc::SCBatchCreateRecordRequest{
-        {{L"Width", sc::SCValue::FromInt64(180)}}});
+    request.creates.push_back(sc::SCBatchCreateRecordRequest{{{L"Width", sc::SCValue::FromInt64(180)}}});
     chunk.requests.push_back(request);
 
     sc::SCImportCheckpoint checkpoint;
-    EXPECT_EQ(sc::AppendImportChunk(db.Get(), &session, chunk, &checkpoint),
-              sc::SC_OK);
+    EXPECT_EQ(sc::AppendImportChunk(db.Get(), &session, chunk, &checkpoint), sc::SC_OK);
 
     sc::SCImportRecoveryState recoveryState;
-    EXPECT_EQ(
-        sc::GetImportRecoveryState(db.Get(), session.sessionId, &recoveryState),
-        sc::SC_OK);
+    EXPECT_EQ(sc::GetImportRecoveryState(db.Get(), session.sessionId, &recoveryState), sc::SC_OK);
     EXPECT_TRUE(recoveryState.canResume);
     EXPECT_TRUE(recoveryState.canFinalize);
 
     EXPECT_EQ(sc::AbortImportSession(db.Get(), session.sessionId), sc::SC_OK);
-    EXPECT_EQ(
-        sc::GetImportRecoveryState(db.Get(), session.sessionId, &recoveryState),
-        sc::SC_E_RECORD_NOT_FOUND);
+    EXPECT_EQ(sc::GetImportRecoveryState(db.Get(), session.sessionId, &recoveryState), sc::SC_E_RECORD_NOT_FOUND);
 
     sc::SCImportFinalizeCommit commit;
     commit.sessionId = session.sessionId;
     commit.confirmed = true;
     commit.commitName = L"abort import";
     sc::SCBatchExecutionResult result;
-    EXPECT_EQ(sc::FinalizeImportSession(db.Get(), session, commit, &result),
-              sc::SC_E_RECORD_NOT_FOUND);
+    EXPECT_EQ(sc::FinalizeImportSession(db.Get(), session, commit, &result), sc::SC_E_RECORD_NOT_FOUND);
 }
 
 TEST(StorageM2Sqlite, ExecuteImportUsesChunkedSessionModel)
 {
-    const fs::path dbPath =
-        MakeTempDbPath(L"StableCoreStorage_M2_ChunkedImport.sqlite");
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_M2_ChunkedImport.sqlite");
 
     sc::SCDbPtr db;
     EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
@@ -1746,8 +1618,7 @@ TEST(StorageM2Sqlite, ExecuteImportUsesChunkedSessionModel)
     {
         sc::SCBatchTableRequest request;
         request.tableName = L"Beam";
-        request.creates.push_back(sc::SCBatchCreateRecordRequest{
-            {{L"Width", sc::SCValue::FromInt64(100 + i)}}});
+        request.creates.push_back(sc::SCBatchCreateRecordRequest{{{L"Width", sc::SCValue::FromInt64(100 + i)}}});
         requests.push_back(request);
     }
 
@@ -1756,8 +1627,7 @@ TEST(StorageM2Sqlite, ExecuteImportUsesChunkedSessionModel)
     options.chunkSize = 2;
 
     sc::SCBatchExecutionResult result;
-    EXPECT_EQ(sc::ExecuteImport(db.Get(), requests, options, &result),
-              sc::SC_OK);
+    EXPECT_EQ(sc::ExecuteImport(db.Get(), requests, options, &result), sc::SC_OK);
     EXPECT_EQ(result.chunkCount, 2u);
     EXPECT_EQ(result.checkpointCount, 2u);
     EXPECT_EQ(result.createdCount, 4u);
@@ -1775,8 +1645,7 @@ TEST(StorageM2Sqlite, ExecuteImportUsesChunkedSessionModel)
 
 TEST(StorageM2Sqlite, BatchFailureDoesNotLeaveActiveEdit)
 {
-    const fs::path dbPath =
-        MakeTempDbPath(L"StableCoreStorage_M2_BatchFailureCleanup.sqlite");
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_M2_BatchFailureCleanup.sqlite");
 
     sc::SCDbPtr db;
     EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
@@ -1789,13 +1658,11 @@ TEST(StorageM2Sqlite, BatchFailureDoesNotLeaveActiveEdit)
     std::vector<sc::SCBatchTableRequest> requests;
     sc::SCBatchTableRequest request;
     request.tableName = L"Beam";
-    request.updates.push_back(sc::SCBatchUpdateRecordRequest{
-        9999, {{L"Width", sc::SCValue::FromInt64(123)}}});
+    request.updates.push_back(sc::SCBatchUpdateRecordRequest{9999, {{L"Width", sc::SCValue::FromInt64(123)}}});
     requests.push_back(request);
 
     sc::SCBatchExecutionResult result;
-    EXPECT_EQ(sc::ExecuteBatchEdit(db.Get(), requests, options, &result),
-              sc::SC_E_RECORD_NOT_FOUND);
+    EXPECT_EQ(sc::ExecuteBatchEdit(db.Get(), requests, options, &result), sc::SC_E_RECORD_NOT_FOUND);
 
     sc::SCEditPtr edit;
     EXPECT_EQ(db->BeginEdit(L"after failed batch", edit), sc::SC_OK);
@@ -1810,21 +1677,18 @@ TEST(StorageM2Sqlite, BatchFailureDoesNotLeaveActiveEdit)
 
 TEST(StorageM2Sqlite, ExecuteImportKeepsRecoveryStateWhenCommitFails)
 {
-    const fs::path dbPath =
-        MakeTempDbPath(L"StableCoreStorage_M2_ImportCommitFailure.sqlite");
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_M2_ImportCommitFailure.sqlite");
 
     sc::SCDbPtr realDb;
     EXPECT_EQ(CreateFileDb(dbPath.c_str(), realDb), sc::SC_OK);
     sc::SCTablePtr beamTable = CreateBeamTable(realDb);
 
-    sc::SCRefPtr<CommitFailingDatabase> proxy =
-        sc::SCMakeRef<CommitFailingDatabase>(realDb);
+    sc::SCRefPtr<CommitFailingDatabase> proxy = sc::SCMakeRef<CommitFailingDatabase>(realDb);
 
     std::vector<sc::SCBatchTableRequest> requests;
     sc::SCBatchTableRequest request;
     request.tableName = L"Beam";
-    request.creates.push_back(sc::SCBatchCreateRecordRequest{
-        {{L"Width", sc::SCValue::FromInt64(256)}}});
+    request.creates.push_back(sc::SCBatchCreateRecordRequest{{{L"Width", sc::SCValue::FromInt64(256)}}});
     requests.push_back(request);
 
     sc::SCBatchExecutionOptions options;
@@ -1832,8 +1696,7 @@ TEST(StorageM2Sqlite, ExecuteImportKeepsRecoveryStateWhenCommitFails)
     options.chunkSize = 1;
 
     sc::SCBatchExecutionResult result;
-    EXPECT_EQ(sc::ExecuteImport(proxy.Get(), requests, options, &result),
-              sc::SC_E_FAIL);
+    EXPECT_EQ(sc::ExecuteImport(proxy.Get(), requests, options, &result), sc::SC_E_FAIL);
 
     sc::SCRecordCursorPtr cursor;
     EXPECT_EQ(beamTable->EnumerateRecords(cursor), sc::SC_OK);
@@ -1852,8 +1715,7 @@ TEST(StorageM2Sqlite, ExecuteImportKeepsRecoveryStateWhenCommitFails)
 
 TEST(StorageM2Sqlite, ExecuteImportClearsRecoveryStateOnSuccess)
 {
-    const fs::path dbPath =
-        MakeTempDbPath(L"StableCoreStorage_M2_ImportFinalizeSuccess.sqlite");
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_M2_ImportFinalizeSuccess.sqlite");
 
     sc::SCDbPtr db;
     EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
@@ -1862,8 +1724,7 @@ TEST(StorageM2Sqlite, ExecuteImportClearsRecoveryStateOnSuccess)
     std::vector<sc::SCBatchTableRequest> requests;
     sc::SCBatchTableRequest request;
     request.tableName = L"Beam";
-    request.creates.push_back(sc::SCBatchCreateRecordRequest{
-        {{L"Width", sc::SCValue::FromInt64(320)}}});
+    request.creates.push_back(sc::SCBatchCreateRecordRequest{{{L"Width", sc::SCValue::FromInt64(320)}}});
     requests.push_back(request);
 
     sc::SCBatchExecutionOptions options;
@@ -1871,8 +1732,7 @@ TEST(StorageM2Sqlite, ExecuteImportClearsRecoveryStateOnSuccess)
     options.chunkSize = 1;
 
     sc::SCBatchExecutionResult result;
-    EXPECT_EQ(sc::ExecuteImport(db.Get(), requests, options, &result),
-              sc::SC_OK);
+    EXPECT_EQ(sc::ExecuteImport(db.Get(), requests, options, &result), sc::SC_OK);
     EXPECT_GT(result.importSessionId, 0u);
     EXPECT_EQ(result.createdCount, 1u);
 
@@ -1883,15 +1743,12 @@ TEST(StorageM2Sqlite, ExecuteImportClearsRecoveryStateOnSuccess)
     EXPECT_TRUE(static_cast<bool>(beam));
 
     sc::SCImportRecoveryState recoveryState;
-    EXPECT_EQ(
-        db->LoadImportRecoveryState(result.importSessionId, &recoveryState),
-        sc::SC_E_RECORD_NOT_FOUND);
+    EXPECT_EQ(db->LoadImportRecoveryState(result.importSessionId, &recoveryState), sc::SC_E_RECORD_NOT_FOUND);
 }
 
 TEST(StorageM2Sqlite, RemoveColumnCleansSqliteFootprint)
 {
-    const fs::path dbPath =
-        MakeTempDbPath(L"StableCoreStorage_M2_RemoveColumnFootprint.sqlite");
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_M2_RemoveColumnFootprint.sqlite");
 
     sc::SCDbPtr db;
     EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
@@ -1909,40 +1766,33 @@ TEST(StorageM2Sqlite, RemoveColumnCleansSqliteFootprint)
     sc::SCSchemaPtr schema;
     EXPECT_EQ(beamTable->GetSchema(schema), sc::SC_OK);
     std::int64_t tableId = -1;
-    EXPECT_TRUE(QuerySqliteInt64(
-        dbPath, "SELECT table_id FROM tables WHERE name = 'Beam' LIMIT 1;",
-        &tableId));
+    EXPECT_TRUE(QuerySqliteInt64(dbPath, "SELECT table_id FROM tables WHERE name = 'Beam' LIMIT 1;", &tableId));
     EXPECT_EQ(schema->RemoveColumn(L"Width"), sc::SC_OK);
 
     std::int64_t schemaColumnCount = -1;
-    EXPECT_TRUE(
-        QuerySqliteInt64(dbPath,
-                         "SELECT COUNT(*) FROM schema_columns sc JOIN tables t "
-                         "ON t.table_id = sc.table_id "
-                         "WHERE t.name = 'Beam' AND sc.column_name = 'Width';",
-                         &schemaColumnCount));
+    EXPECT_TRUE(QuerySqliteInt64(dbPath,
+                                 "SELECT COUNT(*) FROM schema_columns sc JOIN tables t "
+                                 "ON t.table_id = sc.table_id "
+                                 "WHERE t.name = 'Beam' AND sc.column_name = 'Width';",
+                                 &schemaColumnCount));
     EXPECT_EQ(schemaColumnCount, 0);
 
     std::int64_t fieldValueCount = -1;
-    EXPECT_TRUE(
-        QuerySqliteInt64(dbPath,
-                         "SELECT COUNT(*) FROM field_values fv JOIN tables t "
-                         "ON t.table_id = fv.table_id "
-                         "WHERE t.name = 'Beam' AND fv.column_name = 'Width';",
-                         &fieldValueCount));
+    EXPECT_TRUE(QuerySqliteInt64(dbPath,
+                                 "SELECT COUNT(*) FROM field_values fv JOIN tables t "
+                                 "ON t.table_id = fv.table_id "
+                                 "WHERE t.name = 'Beam' AND fv.column_name = 'Width';",
+                                 &fieldValueCount));
     EXPECT_EQ(fieldValueCount, 0);
 
-    const std::string indexSql =
-        "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_fv_" +
-        std::to_string(tableId) + "_Width' LIMIT 1;";
+    const std::string indexSql = "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_fv_" +
+                                 std::to_string(tableId) + "_Width' LIMIT 1;";
     EXPECT_FALSE(QuerySqliteExists(dbPath, indexSql.c_str()));
 }
 
-TEST(StorageM2Sqlite,
-     UpdateColumnFailureDuringValueRewriteRestoresSchemaAndRecordValues)
+TEST(StorageM2Sqlite, UpdateColumnFailureDuringValueRewriteRestoresSchemaAndRecordValues)
 {
-    const fs::path dbPath =
-        MakeTempDbPath(L"StableCoreStorage_M2_UpdateColumnRewriteFail.sqlite");
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_M2_UpdateColumnRewriteFail.sqlite");
 
     sc::SCDbPtr db;
     EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
@@ -1957,14 +1807,13 @@ TEST(StorageM2Sqlite,
     EXPECT_EQ(beam->SetInt64(L"Width", 128), sc::SC_OK);
     EXPECT_EQ(db->Commit(seedEdit.Get()), sc::SC_OK);
 
-    EXPECT_TRUE(ExecSqliteScript(
-        dbPath,
-        "CREATE TRIGGER fail_width_value_rewrite "
-        "BEFORE DELETE ON field_values "
-        "WHEN OLD.column_name = 'Width' "
-        "BEGIN "
-        "  SELECT RAISE(ABORT, 'forced field value rewrite failure'); "
-        "END;"));
+    EXPECT_TRUE(ExecSqliteScript(dbPath,
+                                 "CREATE TRIGGER fail_width_value_rewrite "
+                                 "BEFORE DELETE ON field_values "
+                                 "WHEN OLD.column_name = 'Width' "
+                                 "BEGIN "
+                                 "  SELECT RAISE(ABORT, 'forced field value rewrite failure'); "
+                                 "END;"));
 
     sc::SCSchemaPtr schema;
     EXPECT_EQ(beamTable->GetSchema(schema), sc::SC_OK);
@@ -2002,8 +1851,7 @@ TEST(StorageM2Sqlite,
 
 TEST(StorageM2Sqlite, UpdateColumnCrossingBinaryBoundaryClearsExistingValues)
 {
-    const fs::path dbPath =
-        MakeTempDbPath(L"StableCoreStorage_M2_UpdateColumnBinaryBoundary.sqlite");
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_M2_UpdateColumnBinaryBoundary.sqlite");
 
     sc::SCDbPtr db;
     EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
@@ -2027,8 +1875,7 @@ TEST(StorageM2Sqlite, UpdateColumnCrossingBinaryBoundaryClearsExistingValues)
     const sc::RecordId beamId = beam->GetId();
     const std::vector<std::uint8_t> payload{0x01, 0x02, 0x03};
     EXPECT_EQ(beam->SetInt64(L"Width", 128), sc::SC_OK);
-    EXPECT_EQ(beam->SetBinary(L"Attachment", payload.data(), payload.size()),
-              sc::SC_OK);
+    EXPECT_EQ(beam->SetBinary(L"Attachment", payload.data(), payload.size()), sc::SC_OK);
     EXPECT_EQ(db->Commit(seedEdit.Get()), sc::SC_OK);
 
     sc::SCEditPtr edit;
@@ -2053,41 +1900,38 @@ TEST(StorageM2Sqlite, UpdateColumnCrossingBinaryBoundaryClearsExistingValues)
     EXPECT_EQ(beamTable->GetRecord(beamId, reloaded), sc::SC_OK);
 
     std::vector<std::uint8_t> loadedBinary;
-    EXPECT_EQ(reloaded->GetBinaryCopy(L"Width", &loadedBinary),
-              sc::SC_E_VALUE_IS_NULL);
+    EXPECT_EQ(reloaded->GetBinaryCopy(L"Width", &loadedBinary), sc::SC_E_VALUE_IS_NULL);
     EXPECT_TRUE(loadedBinary.empty());
 
     std::wstring loadedText;
-    EXPECT_EQ(reloaded->GetStringCopy(L"Attachment", &loadedText),
-              sc::SC_E_VALUE_IS_NULL);
+    EXPECT_EQ(reloaded->GetStringCopy(L"Attachment", &loadedText), sc::SC_E_VALUE_IS_NULL);
     EXPECT_TRUE(loadedText.empty());
 }
 
 TEST(StorageM2Sqlite, SchemaColumnJournalSurvivesReopenAndUndoRedo)
 {
-    const fs::path dbPath =
-        MakeTempDbPath(L"StableCoreStorage_M2_SchemaJournal.sqlite");
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_M2_SchemaJournal.sqlite");
 
     {
         sc::SCDbPtr db;
         EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
 
         sc::SCTablePtr table = CreateBeamTable(db);
-    sc::SCSchemaPtr schema;
-    EXPECT_EQ(table->GetSchema(schema), sc::SC_OK);
+        sc::SCSchemaPtr schema;
+        EXPECT_EQ(table->GetSchema(schema), sc::SC_OK);
 
-    sc::SCColumnDef name;
-    name.name = L"Name";
-    name.displayName = L"Name";
-    name.valueKind = sc::ValueKind::String;
-    name.defaultValue = sc::SCValue::FromString(L"");
-    EXPECT_EQ(schema->AddColumn(name), sc::SC_OK);
+        sc::SCColumnDef name;
+        name.name = L"Name";
+        name.displayName = L"Name";
+        name.valueKind = sc::ValueKind::String;
+        name.defaultValue = sc::SCValue::FromString(L"");
+        EXPECT_EQ(schema->AddColumn(name), sc::SC_OK);
 
-    sc::SCColumnDef height;
-    height.name = L"Height";
-    height.displayName = L"Height";
-    height.valueKind = sc::ValueKind::Int64;
-    height.defaultValue = sc::SCValue::FromInt64(0);
+        sc::SCColumnDef height;
+        height.name = L"Height";
+        height.displayName = L"Height";
+        height.valueKind = sc::ValueKind::Int64;
+        height.defaultValue = sc::SCValue::FromInt64(0);
 
         sc::SCEditPtr edit;
         EXPECT_EQ(db->BeginEdit(L"add height", edit), sc::SC_OK);
@@ -2109,8 +1953,7 @@ TEST(StorageM2Sqlite, SchemaColumnJournalSurvivesReopenAndUndoRedo)
         EXPECT_EQ(loaded.displayName, L"Height");
 
         EXPECT_EQ(db->Undo(), sc::SC_OK);
-        EXPECT_EQ(schema->FindColumn(L"Height", &loaded),
-                  sc::SC_E_COLUMN_NOT_FOUND);
+        EXPECT_EQ(schema->FindColumn(L"Height", &loaded), sc::SC_E_COLUMN_NOT_FOUND);
 
         EXPECT_EQ(db->Redo(), sc::SC_OK);
         EXPECT_EQ(schema->FindColumn(L"Height", &loaded), sc::SC_OK);
@@ -2120,8 +1963,7 @@ TEST(StorageM2Sqlite, SchemaColumnJournalSurvivesReopenAndUndoRedo)
 
 TEST(StorageM2Sqlite, SchemaColumnUndoRestoreKeepsOriginalColumnOrder)
 {
-    const fs::path dbPath =
-        MakeTempDbPath(L"StableCoreStorage_M2_SchemaOrder.sqlite");
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_M2_SchemaOrder.sqlite");
 
     sc::SCDbPtr db;
     EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);

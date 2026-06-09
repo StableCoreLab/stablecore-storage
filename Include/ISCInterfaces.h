@@ -136,14 +136,23 @@ namespace StableCore::Storage
         // Returns the number of registered columns in the table schema.
         virtual ErrorCode GetColumnCount(std::int32_t* outCount) = 0;
         // Reads a column definition by index.
-        virtual ErrorCode GetColumn(std::int32_t index,
-                                    SCColumnDef* outDef) = 0;
+        virtual ErrorCode GetColumn(std::int32_t index, SCColumnDef* outDef) = 0;
         // Looks up a column by name.
-        virtual ErrorCode FindColumn(const wchar_t* name,
-                                     SCColumnDef* outDef) = 0;
+        virtual ErrorCode FindColumn(const wchar_t* name, SCColumnDef* outDef) = 0;
         // Returns a schema snapshot for code generation and metadata export.
-        virtual ErrorCode GetSchemaSnapshot(
-            SCTableSchemaSnapshot* outSnapshot) = 0;
+        virtual ErrorCode GetSchemaSnapshot(SCTableSchemaSnapshot* outSnapshot) = 0;
+        // Returns the number of registered constraints in the table schema.
+        virtual ErrorCode GetConstraintCount(std::int32_t* outCount) = 0;
+        // Reads a constraint definition by index.
+        virtual ErrorCode GetConstraint(std::int32_t index, SCConstraintDef* outDef) = 0;
+        // Looks up a constraint by name.
+        virtual ErrorCode FindConstraint(const wchar_t* name, SCConstraintDef* outDef) = 0;
+        // Returns the number of registered indexes in the table schema.
+        virtual ErrorCode GetIndexCount(std::int32_t* outCount) = 0;
+        // Reads an index definition by index.
+        virtual ErrorCode GetIndex(std::int32_t index, SCIndexDef* outDef) = 0;
+        // Looks up an index by name.
+        virtual ErrorCode FindIndex(const wchar_t* name, SCIndexDef* outDef) = 0;
         // Registers a new schema column. Unknown columns cannot be written
         // before registration.
         virtual ErrorCode AddColumn(const SCColumnDef& def) = 0;
@@ -152,6 +161,14 @@ namespace StableCore::Storage
         // Removes a schema column by name. Used by editors to compensate failed
         // schema/view updates.
         virtual ErrorCode RemoveColumn(const wchar_t* name) = 0;
+        // Registers a new schema constraint.
+        virtual ErrorCode AddConstraint(const SCConstraintDef& def) = 0;
+        // Removes a schema constraint by name.
+        virtual ErrorCode RemoveConstraint(const wchar_t* name) = 0;
+        // Registers a new schema index.
+        virtual ErrorCode AddIndex(const SCIndexDef& def) = 0;
+        // Removes a schema index by name.
+        virtual ErrorCode RemoveIndex(const wchar_t* name) = 0;
     };
 
     class ISCRecord : public virtual ISCRefObject
@@ -170,11 +187,9 @@ namespace StableCore::Storage
         virtual ErrorCode GetValue(const wchar_t* name, SCValue* outValue) = 0;
         // All writes must happen inside an active edit session owned by the
         // database.
-        virtual ErrorCode SetValue(const wchar_t* name,
-                                   const SCValue& value) = 0;
+        virtual ErrorCode SetValue(const wchar_t* name, const SCValue& value) = 0;
 
-        virtual ErrorCode GetInt64(const wchar_t* name,
-                                   std::int64_t* outValue) = 0;
+        virtual ErrorCode GetInt64(const wchar_t* name, std::int64_t* outValue) = 0;
         virtual ErrorCode SetInt64(const wchar_t* name, std::int64_t value) = 0;
 
         virtual ErrorCode GetDouble(const wchar_t* name, double* outValue) = 0;
@@ -185,22 +200,14 @@ namespace StableCore::Storage
 
         // The returned pointer is owned by the record SCValue storage and stays
         // valid until the record SCValue changes.
-        virtual ErrorCode GetString(const wchar_t* name,
-                                    const wchar_t** outValue) = 0;
+        virtual ErrorCode GetString(const wchar_t* name, const wchar_t** outValue) = 0;
         // Copies the current string SCValue into caller-owned storage.
-        virtual ErrorCode GetStringCopy(const wchar_t* name,
-                                        std::wstring* outValue) = 0;
-        virtual ErrorCode SetString(const wchar_t* name,
-                                    const wchar_t* value) = 0;
+        virtual ErrorCode GetStringCopy(const wchar_t* name, std::wstring* outValue) = 0;
+        virtual ErrorCode SetString(const wchar_t* name, const wchar_t* value) = 0;
 
-        virtual ErrorCode GetBinary(const wchar_t* name,
-                                    const std::uint8_t** outValue,
-                                    std::size_t* outSize) = 0;
-        virtual ErrorCode GetBinaryCopy(
-            const wchar_t* name, std::vector<std::uint8_t>* outValue) = 0;
-        virtual ErrorCode SetBinary(const wchar_t* name,
-                                    const std::uint8_t* value,
-                                    std::size_t size) = 0;
+        virtual ErrorCode GetBinary(const wchar_t* name, const std::uint8_t** outValue, std::size_t* outSize) = 0;
+        virtual ErrorCode GetBinaryCopy(const wchar_t* name, std::vector<std::uint8_t>* outValue) = 0;
+        virtual ErrorCode SetBinary(const wchar_t* name, const std::uint8_t* value, std::size_t size) = 0;
 
         virtual ErrorCode GetRef(const wchar_t* name, RecordId* outValue) = 0;
         virtual ErrorCode SetRef(const wchar_t* name, RecordId value) = 0;
@@ -227,8 +234,7 @@ namespace StableCore::Storage
         // Enumerates alive records only.
         virtual ErrorCode EnumerateRecords(SCRecordCursorPtr& outCursor) = 0;
         // Performs a single-column equality match over alive records only.
-        virtual ErrorCode FindRecords(const SCQueryCondition& condition,
-                                      SCRecordCursorPtr& outCursor) = 0;
+        virtual ErrorCode FindRecords(const SCQueryCondition& condition, SCRecordCursorPtr& outCursor) = 0;
     };
 
     class ISCEditSession : public virtual ISCRefObject
@@ -250,8 +256,7 @@ namespace StableCore::Storage
     {
     public:
         // Starts the single active edit session for this database.
-        virtual ErrorCode BeginEdit(const wchar_t* name,
-                                    SCEditPtr& outEdit) = 0;
+        virtual ErrorCode BeginEdit(const wchar_t* name, SCEditPtr& outEdit) = 0;
         virtual ErrorCode Commit(ISCEditSession* edit) = 0;
         virtual ErrorCode Rollback(ISCEditSession* edit) = 0;
 
@@ -259,36 +264,27 @@ namespace StableCore::Storage
         virtual ErrorCode Redo() = 0;
 
         virtual ErrorCode GetTableCount(std::int32_t* outCount) = 0;
-        virtual ErrorCode GetTableName(std::int32_t index,
-                                       std::wstring* outName) = 0;
-        virtual ErrorCode GetTable(const wchar_t* name,
-                                   SCTablePtr& outTable) = 0;
-        virtual ErrorCode CreateTable(const wchar_t* name,
-                                      SCTablePtr& outTable) = 0;
+        virtual ErrorCode GetTableName(std::int32_t index, std::wstring* outName) = 0;
+        virtual ErrorCode GetTable(const wchar_t* name, SCTablePtr& outTable) = 0;
+        virtual ErrorCode CreateTable(const wchar_t* name, SCTablePtr& outTable) = 0;
         virtual ErrorCode DeleteTable(const wchar_t* name) = 0;
         // Clears persisted values for a column across records in a table.
-        virtual ErrorCode ClearColumnValues(ISCTable* table,
-                                            const wchar_t* name) = 0;
+        virtual ErrorCode ClearColumnValues(ISCTable* table, const wchar_t* name) = 0;
 
         // Executes an explicit upgrade plan after the caller has confirmed the
         // change.
-        virtual ErrorCode ExecuteUpgradePlan(const SCUpgradePlan& plan,
-                                             bool confirmed,
-                                             SCUpgradeResult* outResult) = 0;
+        virtual ErrorCode ExecuteUpgradePlan(const SCUpgradePlan& plan, bool confirmed, SCUpgradeResult* outResult) = 0;
 
         // Import sessions stage chunked data before a final commit makes it
         // visible to the live model.
-        virtual ErrorCode BeginImportSession(
-            const SCImportSessionOptions& options,
-            SCImportStagingArea* outSession) = 0;
-        virtual ErrorCode AppendImportChunk(
-            SCImportStagingArea* session, const SCImportChunk& chunk,
-            SCImportCheckpoint* outCheckpoint) = 0;
-        virtual ErrorCode LoadImportRecoveryState(
-            std::uint64_t sessionId, SCImportRecoveryState* outState) = 0;
-        virtual ErrorCode FinalizeImportSession(
-            const SCImportFinalizeCommit& commit,
-            SCImportRecoveryState* outState) = 0;
+        virtual ErrorCode BeginImportSession(const SCImportSessionOptions& options,
+                                             SCImportStagingArea* outSession) = 0;
+        virtual ErrorCode AppendImportChunk(SCImportStagingArea* session,
+                                            const SCImportChunk& chunk,
+                                            SCImportCheckpoint* outCheckpoint) = 0;
+        virtual ErrorCode LoadImportRecoveryState(std::uint64_t sessionId, SCImportRecoveryState* outState) = 0;
+        virtual ErrorCode FinalizeImportSession(const SCImportFinalizeCommit& commit,
+                                                SCImportRecoveryState* outState) = 0;
         virtual ErrorCode AbortImportSession(std::uint64_t sessionId) = 0;
 
         virtual ErrorCode AddObserver(ISCDatabaseObserver* observer) = 0;
@@ -305,8 +301,7 @@ namespace StableCore::Storage
             return SC_E_NOTIMPL;
         }
 
-        virtual ErrorCode ResetHistoryBaseline(
-            SCBackupResult* outResult = nullptr)
+        virtual ErrorCode ResetHistoryBaseline(SCBackupResult* outResult = nullptr)
         {
             (void)outResult;
             return SC_E_NOTIMPL;
@@ -318,8 +313,7 @@ namespace StableCore::Storage
             return SC_E_NOTIMPL;
         }
 
-        virtual ErrorCode GetEditingState(
-            SCEditingDatabaseState* outState) const
+        virtual ErrorCode GetEditingState(SCEditingDatabaseState* outState) const
         {
             (void)outState;
             return SC_E_NOTIMPL;

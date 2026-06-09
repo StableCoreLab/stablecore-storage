@@ -91,14 +91,10 @@ namespace
         return table;
     }
 
-    std::vector<std::wstring> CollectBeamNames(sc::SCTablePtr& beamTable,
-                                               sc::RecordId floorId)
+    std::vector<std::wstring> CollectBeamNames(sc::SCTablePtr& beamTable, sc::RecordId floorId)
     {
         sc::SCRecordCursorPtr cursor;
-        EXPECT_EQ(
-            beamTable->FindRecords(
-                {L"FloorRef", sc::SCValue::FromRecordId(floorId)}, cursor),
-            sc::SC_OK);
+        EXPECT_EQ(beamTable->FindRecords({L"FloorRef", sc::SCValue::FromRecordId(floorId)}, cursor), sc::SC_OK);
 
         std::vector<std::wstring> names;
         sc::SCRecordPtr beam;
@@ -124,8 +120,7 @@ namespace
         EXPECT_EQ(db->AddObserver(&observer), sc::SC_OK);
 
         sc::SCEditPtr seedEdit;
-        ASSERT_EQ(db->BeginEdit(L"seed relation baseline", seedEdit),
-                  sc::SC_OK);
+        ASSERT_EQ(db->BeginEdit(L"seed relation baseline", seedEdit), sc::SC_OK);
 
         sc::SCRecordPtr floor2;
         ASSERT_EQ(floorTable->CreateRecord(floor2), sc::SC_OK);
@@ -152,21 +147,17 @@ namespace
 
         ASSERT_EQ(db->Commit(seedEdit.Get()), sc::SC_OK);
 
-        const std::vector<std::wstring> floor2Beams =
-            CollectBeamNames(beamTable, floor2->GetId());
+        const std::vector<std::wstring> floor2Beams = CollectBeamNames(beamTable, floor2->GetId());
         EXPECT_EQ(floor2Beams.size(), 2u);
-        EXPECT_NE(std::find(floor2Beams.begin(), floor2Beams.end(), L"B-A"),
-                  floor2Beams.end());
-        EXPECT_NE(std::find(floor2Beams.begin(), floor2Beams.end(), L"B-B"),
-                  floor2Beams.end());
+        EXPECT_NE(std::find(floor2Beams.begin(), floor2Beams.end(), L"B-A"), floor2Beams.end());
+        EXPECT_NE(std::find(floor2Beams.begin(), floor2Beams.end(), L"B-B"), floor2Beams.end());
 
         bool sawRelationUpdated = false;
         for (const auto& SCChangeSet : observer.seen)
         {
             for (const auto& change : SCChangeSet.changes)
             {
-                if (change.kind == sc::ChangeKind::RelationUpdated &&
-                    change.tableName == L"Beam" &&
+                if (change.kind == sc::ChangeKind::RelationUpdated && change.tableName == L"Beam" &&
                     change.fieldName == L"FloorRef")
                 {
                     sawRelationUpdated = true;
@@ -176,32 +167,25 @@ namespace
         EXPECT_TRUE(sawRelationUpdated);
 
         sc::SCEditPtr deleteReferencedFloor;
-        ASSERT_EQ(
-            db->BeginEdit(L"delete referenced floor", deleteReferencedFloor),
-            sc::SC_OK);
-        EXPECT_EQ(floorTable->DeleteRecord(floor2->GetId()),
-                  sc::SC_E_CONSTRAINT_VIOLATION);
+        ASSERT_EQ(db->BeginEdit(L"delete referenced floor", deleteReferencedFloor), sc::SC_OK);
+        EXPECT_EQ(floorTable->DeleteRecord(floor2->GetId()), sc::SC_E_CONSTRAINT_VIOLATION);
         EXPECT_EQ(db->Rollback(deleteReferencedFloor.Get()), sc::SC_OK);
 
         sc::SCEditPtr moveBeam;
-        ASSERT_EQ(db->BeginEdit(L"move beam to another floor", moveBeam),
-                  sc::SC_OK);
+        ASSERT_EQ(db->BeginEdit(L"move beam to another floor", moveBeam), sc::SC_OK);
         ASSERT_EQ(beamA->SetRef(L"FloorRef", floor3->GetId()), sc::SC_OK);
         ASSERT_EQ(beamB->SetRef(L"FloorRef", floor3->GetId()), sc::SC_OK);
         ASSERT_EQ(db->Commit(moveBeam.Get()), sc::SC_OK);
 
         sc::SCEditPtr deleteNowFreeFloor;
-        ASSERT_EQ(
-            db->BeginEdit(L"delete unreferenced floor", deleteNowFreeFloor),
-            sc::SC_OK);
+        ASSERT_EQ(db->BeginEdit(L"delete unreferenced floor", deleteNowFreeFloor), sc::SC_OK);
         EXPECT_EQ(floorTable->DeleteRecord(floor2->GetId()), sc::SC_OK);
         EXPECT_EQ(db->Commit(deleteNowFreeFloor.Get()), sc::SC_OK);
 
         EXPECT_EQ(db->RemoveObserver(&observer), sc::SC_OK);
     }
 
-    RelationProviderFixture CreateRelationProviderFixture(
-        const CreateDbFn& createDb)
+    RelationProviderFixture CreateRelationProviderFixture(const CreateDbFn& createDb)
     {
         RelationProviderFixture fixture;
         fixture.db = createDb();
@@ -211,9 +195,7 @@ namespace
         sc::SCTablePtr beamTable = CreateBeamTable(fixture.db);
 
         sc::SCEditPtr seedEdit;
-        EXPECT_EQ(
-            fixture.db->BeginEdit(L"seed relation provider fixture", seedEdit),
-            sc::SC_OK);
+        EXPECT_EQ(fixture.db->BeginEdit(L"seed relation provider fixture", seedEdit), sc::SC_OK);
 
         sc::SCRecordPtr floor2;
         EXPECT_EQ(floorTable->CreateRecord(floor2), sc::SC_OK);
@@ -248,8 +230,7 @@ namespace
 
 TEST(StorageM3, SqliteRelationBaseline)
 {
-    const fs::path dbPath =
-        MakeTempDbPath(L"StableCoreStorage_M3_RelationBaseline.sqlite");
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_M3_RelationBaseline.sqlite");
 
     RunM3RelationBaseline([&dbPath]() {
         sc::SCDbPtr db;
@@ -278,15 +259,13 @@ TEST(StorageM3, SqliteRelationBaseline)
 
     ASSERT_EQ(aliveFloorIds.size(), 1u);
 
-    const std::vector<std::wstring> remainingBeams =
-        CollectBeamNames(beamTable, aliveFloorIds.front());
+    const std::vector<std::wstring> remainingBeams = CollectBeamNames(beamTable, aliveFloorIds.front());
     EXPECT_EQ(remainingBeams.size(), 3u);
 }
 
 TEST(StorageM3, SqliteReferenceIndexReadOnlyAccess)
 {
-    const fs::path dbPath =
-        MakeTempDbPath(L"StableCoreStorage_M3_ReferenceIndex.sqlite");
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_M3_ReferenceIndex.sqlite");
 
     const auto fixture = CreateRelationProviderFixture([&dbPath]() {
         sc::SCDbPtr db;
@@ -294,8 +273,7 @@ TEST(StorageM3, SqliteReferenceIndexReadOnlyAccess)
         return db;
     });
 
-    const auto* provider =
-        dynamic_cast<const sc::IReferenceIndexProvider*>(fixture.db.Get());
+    const auto* provider = dynamic_cast<const sc::IReferenceIndexProvider*>(fixture.db.Get());
     ASSERT_NE(provider, nullptr);
 
     sc::ReferenceIndexCheckResult check;
@@ -303,15 +281,11 @@ TEST(StorageM3, SqliteReferenceIndexReadOnlyAccess)
     EXPECT_EQ(check.state, sc::ReferenceIndexHealthState::Healthy);
 
     std::vector<sc::ReverseReferenceRecord> reverseRefs;
-    EXPECT_EQ(provider->GetReferencesByTarget(L"Floor", fixture.floor2Id,
-                                              &reverseRefs),
-              sc::SC_OK);
+    EXPECT_EQ(provider->GetReferencesByTarget(L"Floor", fixture.floor2Id, &reverseRefs), sc::SC_OK);
     EXPECT_EQ(reverseRefs.size(), 2u);
 
     std::vector<sc::ReferenceRecord> forwardRefs;
-    EXPECT_EQ(
-        provider->GetReferencesBySource(L"Beam", fixture.beamAId, &forwardRefs),
-        sc::SC_OK);
+    EXPECT_EQ(provider->GetReferencesBySource(L"Beam", fixture.beamAId, &forwardRefs), sc::SC_OK);
     ASSERT_EQ(forwardRefs.size(), 1u);
     EXPECT_EQ(forwardRefs.front().sourceTable, L"Beam");
     EXPECT_EQ(forwardRefs.front().targetTable, L"Floor");
@@ -319,8 +293,7 @@ TEST(StorageM3, SqliteReferenceIndexReadOnlyAccess)
 
 TEST(StorageM3, SqliteReferenceIndexCanBeRebuilt)
 {
-    const fs::path dbPath =
-        MakeTempDbPath(L"StableCoreStorage_M3_ReferenceIndexRebuild.sqlite");
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_M3_ReferenceIndexRebuild.sqlite");
 
     const auto fixture = CreateRelationProviderFixture([&dbPath]() {
         sc::SCDbPtr db;
@@ -328,12 +301,10 @@ TEST(StorageM3, SqliteReferenceIndexCanBeRebuilt)
         return db;
     });
 
-    const auto* provider =
-        dynamic_cast<const sc::IReferenceIndexProvider*>(fixture.db.Get());
+    const auto* provider = dynamic_cast<const sc::IReferenceIndexProvider*>(fixture.db.Get());
     ASSERT_NE(provider, nullptr);
 
-    auto* maintainer =
-        dynamic_cast<sc::IReferenceIndexMaintainer*>(fixture.db.Get());
+    auto* maintainer = dynamic_cast<sc::IReferenceIndexMaintainer*>(fixture.db.Get());
     ASSERT_NE(maintainer, nullptr);
 
     sc::ReferenceIndexCheckResult check;
@@ -344,9 +315,7 @@ TEST(StorageM3, SqliteReferenceIndexCanBeRebuilt)
     ASSERT_EQ(fixture.db->GetTable(L"Floor", floorTable), sc::SC_OK);
 
     sc::SCRecordCursorPtr floorCursor;
-    ASSERT_EQ(floorTable->FindRecords(
-                  {L"Title", sc::SCValue::FromString(L"3F")}, floorCursor),
-              sc::SC_OK);
+    ASSERT_EQ(floorTable->FindRecords({L"Title", sc::SCValue::FromString(L"3F")}, floorCursor), sc::SC_OK);
     sc::SCRecordPtr floor3;
     ASSERT_EQ(floorCursor->Next(floor3), sc::SC_OK);
     ASSERT_TRUE(static_cast<bool>(floor3));
@@ -366,17 +335,13 @@ TEST(StorageM3, SqliteReferenceIndexCanBeRebuilt)
     EXPECT_EQ(maintainer->RebuildReferenceIndexes(), sc::SC_OK);
     EXPECT_EQ(provider->CheckReferenceIndex(&check), sc::SC_OK);
     EXPECT_EQ(check.state, sc::ReferenceIndexHealthState::Healthy);
-    EXPECT_EQ(check.indexVersion,
-              static_cast<std::int32_t>(fixture.db->GetCurrentVersion()));
-    EXPECT_EQ(check.expectedVersion,
-              static_cast<std::int32_t>(fixture.db->GetCurrentVersion()));
+    EXPECT_EQ(check.indexVersion, static_cast<std::int32_t>(fixture.db->GetCurrentVersion()));
+    EXPECT_EQ(check.expectedVersion, static_cast<std::int32_t>(fixture.db->GetCurrentVersion()));
 
     EXPECT_EQ(fixture.db->Rollback(edit.Get()), sc::SC_OK);
 
     std::vector<sc::ReferenceRecord> forwardRefs;
-    EXPECT_EQ(
-        provider->GetReferencesBySource(L"Beam", fixture.beamAId, &forwardRefs),
-        sc::SC_OK);
+    EXPECT_EQ(provider->GetReferencesBySource(L"Beam", fixture.beamAId, &forwardRefs), sc::SC_OK);
     ASSERT_EQ(forwardRefs.size(), 1u);
     EXPECT_EQ(forwardRefs.front().sourceTable, L"Beam");
     EXPECT_EQ(forwardRefs.front().targetTable, L"Floor");

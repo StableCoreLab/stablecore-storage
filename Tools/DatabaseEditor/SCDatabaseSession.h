@@ -51,9 +51,8 @@ namespace StableCore::Storage::Editor
             QString* outError) const;
         bool Refresh(QString* outError);
         bool CreateTable(const QString& tableName, QString* outError);
-        bool CreateTableFromSchema(
-            const SCSchemaTableImportResult& schema,
-            QString* outError);
+        bool CreateTableFromSchema(const SCSchemaTableImportResult& schema,
+                                   QString* outError);
         bool DeleteTable(const QString& tableName, QString* outError);
         bool SelectTable(const QString& tableName, QString* outError);
         bool AddColumn(const StableCore::Storage::SCColumnDef& column,
@@ -68,8 +67,7 @@ namespace StableCore::Storage::Editor
             QString* outError);
         bool ConvertComputedToColumn(
             const QString& computedName,
-            const StableCore::Storage::SCColumnDef& column,
-            QString* outError);
+            const StableCore::Storage::SCColumnDef& column, QString* outError);
         // Creates a record draft. Tables with required no-default columns
         // stay in a pending edit until the caller saves or discards it.
         bool AddRecord(QString* outError);
@@ -131,7 +129,7 @@ namespace StableCore::Storage::Editor
             StableCore::Storage::SCSchemaSnapshot* outSnapshot,
             QString* outError) const;
         bool CurrentTableHasRecords(bool* outHasRecords,
-                                   QString* outError) const;
+                                    QString* outError) const;
         bool HasPendingEdit() const noexcept;
         bool BuildRecordSnapshot(StableCore::Storage::RecordId recordId,
                                  QVector<QPair<QString, QString>>* outFields,

@@ -5,6 +5,7 @@
 #include "ISCComputed.h"
 #include "ISCDiagnostics.h"
 #include "ISCQuery.h"
+#include "SCSchemaEdit.h"
 #include "SCQuery.h"
 #include "SCErrors.h"
 #include "SCFactory.h"

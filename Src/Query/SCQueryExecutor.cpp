@@ -10,9 +10,8 @@ namespace StableCore::Storage
     namespace
     {
 
-        using DispatchFn = std::function<ErrorCode(const QueryPlan&,
-                                                   const QueryExecutionContext&,
-                                                   QueryExecutionResult*)>;
+        using DispatchFn =
+            std::function<ErrorCode(const QueryPlan&, const QueryExecutionContext&, QueryExecutionResult*)>;
 
         class QueryExecutionRegistry
         {
@@ -61,8 +60,7 @@ namespace StableCore::Storage
             result->executionNote.clear();
         }
 
-        void FinalizeExecutionResult(const QueryPlan& plan, ErrorCode rc,
-                                     QueryExecutionResult* result)
+        void FinalizeExecutionResult(const QueryPlan& plan, ErrorCode rc, QueryExecutionResult* result)
         {
             if (result == nullptr)
             {
@@ -100,10 +98,9 @@ namespace StableCore::Storage
                     }
                     if (result->fallbackSource == QueryFallbackSource::None)
                     {
-                        result->fallbackSource =
-                            (plan.state == QueryPlanState::ScanFallback)
-                                ? QueryFallbackSource::Planner
-                                : QueryFallbackSource::Executor;
+                        result->fallbackSource = (plan.state == QueryPlanState::ScanFallback)
+                                                     ? QueryFallbackSource::Planner
+                                                     : QueryFallbackSource::Executor;
                     }
                 } else if (result->mode == QueryExecutionMode::DirectIndex ||
                            result->mode == QueryExecutionMode::PartialIndex)
@@ -117,18 +114,15 @@ namespace StableCore::Storage
             result->mode = QueryExecutionMode::Unsupported;
             if (result->unsupportedSource == QueryUnsupportedSource::None)
             {
-                result->unsupportedSource =
-                    (plan.state == QueryPlanState::Unsupported)
-                        ? QueryUnsupportedSource::Planner
-                        : QueryUnsupportedSource::Executor;
+                result->unsupportedSource = (plan.state == QueryPlanState::Unsupported)
+                                                ? QueryUnsupportedSource::Planner
+                                                : QueryUnsupportedSource::Executor;
             }
             if (result->executionNote.empty())
             {
-                result->executionNote =
-                    (result->unsupportedSource ==
-                     QueryUnsupportedSource::Planner)
-                        ? L"planner-unsupported:execution-failed"
-                        : L"executor-unsupported:execution-failed";
+                result->executionNote = (result->unsupportedSource == QueryUnsupportedSource::Planner)
+                                            ? L"planner-unsupported:execution-failed"
+                                            : L"executor-unsupported:execution-failed";
             }
         }
 
@@ -147,8 +141,7 @@ namespace StableCore::Storage
             if (context.backendKind == QueryBackendKind::Unknown)
             {
                 result.unsupportedSource = QueryUnsupportedSource::Executor;
-                result.executionNote =
-                    L"executor-unsupported:backend-kind-unknown";
+                result.executionNote = L"executor-unsupported:backend-kind-unknown";
                 result.rc = SC_E_INVALIDARG;
                 *outResult = std::move(result);
                 return SC_E_INVALIDARG;
@@ -175,35 +168,30 @@ namespace StableCore::Storage
             if (plan.state == QueryPlanState::Unsupported)
             {
                 result.unsupportedSource = QueryUnsupportedSource::Planner;
-                result.executionNote = L"planner-unsupported:" +
-                                       (plan.fallbackReason.empty()
-                                            ? std::wstring(L"unsupported-plan")
-                                            : plan.fallbackReason);
+                result.executionNote =
+                    L"planner-unsupported:" +
+                    (plan.fallbackReason.empty() ? std::wstring(L"unsupported-plan") : plan.fallbackReason);
                 result.fallbackReason = plan.fallbackReason;
                 result.rc = SC_E_INVALIDARG;
                 *outResult = std::move(result);
                 return SC_E_INVALIDARG;
             }
 
-            if (plan.state == QueryPlanState::ScanFallback &&
-                !plan.constraints.allowFallbackScan)
+            if (plan.state == QueryPlanState::ScanFallback && !plan.constraints.allowFallbackScan)
             {
                 result.unsupportedSource = QueryUnsupportedSource::Executor;
-                result.executionNote =
-                    L"executor-unsupported:fallback-disallowed";
+                result.executionNote = L"executor-unsupported:fallback-disallowed";
                 result.fallbackReason = plan.fallbackReason;
                 result.rc = SC_E_INVALIDARG;
                 *outResult = std::move(result);
                 return SC_E_INVALIDARG;
             }
 
-            const auto dispatch =
-                QueryExecutionRegistry::Instance().Find(context.backendKind);
+            const auto dispatch = QueryExecutionRegistry::Instance().Find(context.backendKind);
             if (!dispatch)
             {
                 result.unsupportedSource = QueryUnsupportedSource::Executor;
-                result.executionNote =
-                    L"executor-unsupported:no-dispatch-registered";
+                result.executionNote = L"executor-unsupported:no-dispatch-registered";
                 result.fallbackReason = plan.fallbackReason;
                 result.rc = SC_E_NOTIMPL;
                 *outResult = std::move(result);
@@ -211,8 +199,7 @@ namespace StableCore::Storage
             }
 
             const ErrorCode rc = dispatch(plan, context, &result);
-            if (Failed(rc) &&
-                result.unsupportedSource == QueryUnsupportedSource::None)
+            if (Failed(rc) && result.unsupportedSource == QueryUnsupportedSource::None)
             {
                 result.unsupportedSource = QueryUnsupportedSource::Executor;
             }
@@ -229,8 +216,7 @@ namespace StableCore::Storage
 
     }  // namespace
 
-    void RegisterQueryExecutionContextDispatch(
-        QueryBackendKind backendKind, QueryExecutionContextDispatch dispatch)
+    void RegisterQueryExecutionContextDispatch(QueryBackendKind backendKind, QueryExecutionContextDispatch dispatch)
     {
         if (dispatch == nullptr)
         {
@@ -238,9 +224,8 @@ namespace StableCore::Storage
         }
 
         QueryExecutionRegistry::Instance().Register(
-            backendKind, [dispatch](const QueryPlan& plan,
-                                    const QueryExecutionContext& context,
-                                    QueryExecutionResult* outResult) {
+            backendKind,
+            [dispatch](const QueryPlan& plan, const QueryExecutionContext& context, QueryExecutionResult* outResult) {
                 return dispatch(plan, context, outResult);
             });
     }

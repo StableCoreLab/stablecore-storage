@@ -19,8 +19,7 @@ namespace StableCore::Storage
 
         PlanStrength MaxStrength(PlanStrength lhs, PlanStrength rhs)
         {
-            if (lhs == PlanStrength::Unsupported ||
-                rhs == PlanStrength::Unsupported)
+            if (lhs == PlanStrength::Unsupported || rhs == PlanStrength::Unsupported)
             {
                 return PlanStrength::Unsupported;
             }
@@ -62,8 +61,7 @@ namespace StableCore::Storage
             }
         }
 
-        PlanStrength ClassifyCondition(const QueryCondition& condition,
-                                       std::wstring* outReason)
+        PlanStrength ClassifyCondition(const QueryCondition& condition, std::wstring* outReason)
         {
             if (condition.fieldName.empty())
             {
@@ -116,14 +114,12 @@ namespace StableCore::Storage
                 return PlanStrength::Unsupported;
             }
 
-            if (group.logic == QueryLogicOperator::Or &&
-                group.conditions.size() > 1)
+            if (group.logic == QueryLogicOperator::Or && group.conditions.size() > 1)
             {
                 for (const auto& condition : group.conditions)
                 {
                     std::wstring reason;
-                    const PlanStrength strength =
-                        ClassifyCondition(condition, &reason);
+                    const PlanStrength strength = ClassifyCondition(condition, &reason);
                     if (strength == PlanStrength::Unsupported)
                     {
                         if (outReason)
@@ -133,8 +129,7 @@ namespace StableCore::Storage
                 }
                 if (fallbackCount)
                 {
-                    *fallbackCount +=
-                        static_cast<std::uint32_t>(group.conditions.size());
+                    *fallbackCount += static_cast<std::uint32_t>(group.conditions.size());
                 }
                 if (outReason)
                     *outReason = L"group-or-uses-fallback";
@@ -145,8 +140,7 @@ namespace StableCore::Storage
             for (const auto& condition : group.conditions)
             {
                 std::wstring reason;
-                const PlanStrength current =
-                    ClassifyCondition(condition, &reason);
+                const PlanStrength current = ClassifyCondition(condition, &reason);
                 if (current == PlanStrength::Unsupported)
                 {
                     if (outReason)
@@ -167,12 +161,10 @@ namespace StableCore::Storage
             return strength;
         }
 
-        std::wstring MakePlanId(const QueryTarget& target,
-                                std::size_t groupCount, std::size_t orderCount)
+        std::wstring MakePlanId(const QueryTarget& target, std::size_t groupCount, std::size_t orderCount)
         {
             std::wstringstream stream;
-            stream << L"plan:" << target.name << L":"
-                   << static_cast<unsigned long long>(groupCount) << L":"
+            stream << L"plan:" << target.name << L":" << static_cast<unsigned long long>(groupCount) << L":"
                    << static_cast<unsigned long long>(orderCount);
             return stream.str();
         }
@@ -180,13 +172,14 @@ namespace StableCore::Storage
         class DefaultQueryPlanner final : public IQueryPlanner
         {
         public:
-            ErrorCode BuildPlan(
-                const QueryTarget& target,
-                const std::vector<QueryConditionGroup>& conditionGroups,
-                QueryLogicOperator conditionGroupLogic,
-                const std::vector<SortSpec>& orderBy, const QueryPage& page,
-                const QueryHints& hints, const QueryConstraints& constraints,
-                QueryPlan* outPlan) const override
+            ErrorCode BuildPlan(const QueryTarget& target,
+                                const std::vector<QueryConditionGroup>& conditionGroups,
+                                QueryLogicOperator conditionGroupLogic,
+                                const std::vector<SortSpec>& orderBy,
+                                const QueryPage& page,
+                                const QueryHints& hints,
+                                const QueryConstraints& constraints,
+                                QueryPlan* outPlan) const override
             {
                 if (outPlan == nullptr)
                 {
@@ -201,8 +194,7 @@ namespace StableCore::Storage
                 plan.page = page;
                 plan.hints = hints;
                 plan.constraints = constraints;
-                plan.planId =
-                    MakePlanId(target, conditionGroups.size(), orderBy.size());
+                plan.planId = MakePlanId(target, conditionGroups.size(), orderBy.size());
 
                 if (target.name.empty())
                 {
@@ -229,25 +221,22 @@ namespace StableCore::Storage
 
                 if (conditionGroups.empty())
                 {
-                    if (!constraints.allowFallbackScan ||
-                        constraints.requireIndex)
+                    if (!constraints.allowFallbackScan || constraints.requireIndex)
                     {
                         plan.state = QueryPlanState::Unsupported;
-                        plan.fallbackReason =
-                            L"no-conditions-and-fallback-disallowed";
+                        plan.fallbackReason = L"no-conditions-and-fallback-disallowed";
                         *outPlan = std::move(plan);
                         return SC_OK;
                     }
                     strength = PlanStrength::Fallback;
                     plan.fallbackReason = L"no-conditions";
-                } else if (conditionGroupLogic == QueryLogicOperator::Or &&
-                           conditionGroups.size() > 1)
+                } else if (conditionGroupLogic == QueryLogicOperator::Or && conditionGroups.size() > 1)
                 {
                     for (const auto& group : conditionGroups)
                     {
                         std::wstring reason;
-                        const PlanStrength groupStrength = ClassifyGroup(
-                            group, &pushdownCount, &fallbackCount, &reason);
+                        const PlanStrength groupStrength =
+                            ClassifyGroup(group, &pushdownCount, &fallbackCount, &reason);
                         if (groupStrength == PlanStrength::Unsupported)
                         {
                             plan.state = QueryPlanState::Unsupported;
@@ -257,12 +246,10 @@ namespace StableCore::Storage
                         }
                     }
 
-                    if (!constraints.allowFallbackScan ||
-                        constraints.requireIndex)
+                    if (!constraints.allowFallbackScan || constraints.requireIndex)
                     {
                         plan.state = QueryPlanState::Unsupported;
-                        plan.fallbackReason =
-                            L"multi-group-or-requires-fallback";
+                        plan.fallbackReason = L"multi-group-or-requires-fallback";
                         *outPlan = std::move(plan);
                         return SC_OK;
                     }
@@ -274,8 +261,8 @@ namespace StableCore::Storage
                     for (const auto& group : conditionGroups)
                     {
                         std::wstring reason;
-                        const PlanStrength groupStrength = ClassifyGroup(
-                            group, &pushdownCount, &fallbackCount, &reason);
+                        const PlanStrength groupStrength =
+                            ClassifyGroup(group, &pushdownCount, &fallbackCount, &reason);
                         if (groupStrength == PlanStrength::Unsupported)
                         {
                             plan.state = QueryPlanState::Unsupported;
@@ -287,8 +274,7 @@ namespace StableCore::Storage
                     }
                 }
 
-                if (strength == PlanStrength::Partial &&
-                    !constraints.allowPartial)
+                if (strength == PlanStrength::Partial && !constraints.allowPartial)
                 {
                     plan.state = QueryPlanState::Unsupported;
                     plan.fallbackReason = L"partial-disallowed";
@@ -296,8 +282,7 @@ namespace StableCore::Storage
                     return SC_OK;
                 }
 
-                if (strength == PlanStrength::Fallback &&
-                    !constraints.allowFallbackScan)
+                if (strength == PlanStrength::Fallback && !constraints.allowFallbackScan)
                 {
                     plan.state = QueryPlanState::Unsupported;
                     plan.fallbackReason = L"fallback-disallowed";
@@ -305,8 +290,7 @@ namespace StableCore::Storage
                     return SC_OK;
                 }
 
-                if (constraints.requireIndex &&
-                    strength != PlanStrength::Direct)
+                if (constraints.requireIndex && strength != PlanStrength::Direct)
                 {
                     plan.state = QueryPlanState::Unsupported;
                     plan.fallbackReason = L"index-required";

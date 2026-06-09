@@ -23,8 +23,11 @@
 - 简要的计算运行时：表达式、ruleId、缓存模型
 - 统一的表视图（合并事实列与计算列）
 - 批量编辑/导入辅助工具
+- 高层 schema edit helper：`CreateTableFromSchema(...)` / `ApplyTableSchemaPatch(...)`
 - 迁移、启动恢复、索引物化与诊断辅助
 - 示例：`Examples/ProductIntegrationExample.cpp`
+- Schema edit 示例：`Examples/SchemaEditExample.cpp`
+- `ISCSchema` 也提供低层 `constraint / index` 增删和枚举原语
 - 测试：`Tests/` 下包含基础测试
 - 可选的 Qt 数据库编辑器：`Tools/DatabaseEditor`
 

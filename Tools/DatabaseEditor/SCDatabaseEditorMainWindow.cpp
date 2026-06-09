@@ -122,8 +122,7 @@ namespace StableCore::Storage::Editor
                     bool v = false;
                     if (value.AsBool(&v) == sc::SC_OK)
                     {
-                        return v ? QStringLiteral("Yes")
-                                 : QStringLiteral("No");
+                        return v ? QStringLiteral("Yes") : QStringLiteral("No");
                     }
                     break;
                 }
@@ -244,8 +243,8 @@ namespace StableCore::Storage::Editor
         {
             sc::SCComputedColumnDef computed;
             computed.name = column.name;
-            computed.displayName = column.displayName.empty() ? column.name
-                                                             : column.displayName;
+            computed.displayName =
+                column.displayName.empty() ? column.name : column.displayName;
             computed.valueKind = column.valueKind;
             computed.kind = sc::ComputedFieldKind::Expression;
             computed.cacheable = true;
@@ -258,9 +257,8 @@ namespace StableCore::Storage::Editor
         {
             sc::SCColumnDef schemaColumn;
             schemaColumn.name = column.name;
-            schemaColumn.displayName = column.displayName.empty()
-                                           ? column.name
-                                           : column.displayName;
+            schemaColumn.displayName =
+                column.displayName.empty() ? column.name : column.displayName;
             schemaColumn.valueKind = column.valueKind;
             schemaColumn.columnKind = sc::ColumnKind::Fact;
             schemaColumn.nullable = true;
@@ -303,7 +301,8 @@ namespace StableCore::Storage::Editor
             {
                 if (outError != nullptr)
                 {
-                    *outError = QStringLiteral("Output CSV rows container is null.");
+                    *outError =
+                        QStringLiteral("Output CSV rows container is null.");
                 }
                 return false;
             }
@@ -346,14 +345,12 @@ namespace StableCore::Storage::Editor
                         {
                             currentField.push_back(QLatin1Char('"'));
                             ++index;
-                        }
-                        else
+                        } else
                         {
                             inQuotes = false;
                             afterQuotedField = true;
                         }
-                    }
-                    else
+                    } else
                     {
                         currentField.push_back(ch);
                     }
@@ -368,7 +365,8 @@ namespace StableCore::Storage::Editor
                         if (outError != nullptr)
                         {
                             *outError = QStringLiteral(
-                                "Unexpected character after a quoted CSV field.");
+                                "Unexpected character after a quoted CSV "
+                                "field.");
                         }
                         return false;
                     }
@@ -377,7 +375,8 @@ namespace StableCore::Storage::Editor
                         if (outError != nullptr)
                         {
                             *outError = QStringLiteral(
-                                "Unexpected quote inside an unquoted CSV field.");
+                                "Unexpected quote inside an unquoted CSV "
+                                "field.");
                         }
                         return false;
                     }
@@ -443,7 +442,8 @@ namespace StableCore::Storage::Editor
             {
                 if (outError != nullptr)
                 {
-                    *outError = QStringLiteral("CSV input ended inside a quoted field.");
+                    *outError = QStringLiteral(
+                        "CSV input ended inside a quoted field.");
                 }
                 return false;
             }
@@ -467,7 +467,8 @@ namespace StableCore::Storage::Editor
             {
                 if (outError != nullptr)
                 {
-                    *outError = QStringLiteral("Invalid integer value: ") + text;
+                    *outError =
+                        QStringLiteral("Invalid integer value: ") + text;
                 }
                 return false;
             }
@@ -488,7 +489,8 @@ namespace StableCore::Storage::Editor
             {
                 if (outError != nullptr)
                 {
-                    *outError = QStringLiteral("Invalid decimal value: ") + text;
+                    *outError =
+                        QStringLiteral("Invalid decimal value: ") + text;
                 }
                 return false;
             }
@@ -500,7 +502,8 @@ namespace StableCore::Storage::Editor
             return true;
         }
 
-        bool ParseCsvBool(const QString& text, bool* outValue, QString* outError)
+        bool ParseCsvBool(const QString& text, bool* outValue,
+                          QString* outError)
         {
             const QString normalized = text.trimmed().toLower();
             if (normalized == QStringLiteral("1") ||
@@ -609,7 +612,8 @@ namespace StableCore::Storage::Editor
                         if (outError != nullptr)
                         {
                             *outError = QStringLiteral(
-                                "RecordId cannot be negative: ") + text;
+                                            "RecordId cannot be negative: ") +
+                                        text;
                         }
                         return false;
                     }
@@ -686,23 +690,24 @@ namespace StableCore::Storage::Editor
             RefreshOverviewPanels();
             UpdateGridSummary();
         });
-        connect(session_, &SCDatabaseSession::CurrentTableChanged, this,
-                [this]() {
-                    RefreshObjectExplorer();
-                    UpdateSchemaInspector();
-                    UpdateRecordInspector();
-                    UpdateComputedColumnsPanel();
-                    UpdateRelationInspector();
-                    UpdateDatabaseStatusBar();
-                    UpdateGridSummary();
-                    RefreshOverviewPanels();
-                    dataTable_->resizeColumnsToContents();
-                    const QString currentTableName = session_->CurrentTableName();
-                    SetStatusMessage(currentTableName.isEmpty()
-                                         ? QStringLiteral("Table selection cleared.")
-                                         : QStringLiteral("Table selected: ") +
-                                               currentTableName);
-                });
+        connect(
+            session_, &SCDatabaseSession::CurrentTableChanged, this, [this]() {
+                RefreshObjectExplorer();
+                UpdateSchemaInspector();
+                UpdateRecordInspector();
+                UpdateComputedColumnsPanel();
+                UpdateRelationInspector();
+                UpdateDatabaseStatusBar();
+                UpdateGridSummary();
+                RefreshOverviewPanels();
+                dataTable_->resizeColumnsToContents();
+                const QString currentTableName = session_->CurrentTableName();
+                SetStatusMessage(
+                    currentTableName.isEmpty()
+                        ? QStringLiteral("Table selection cleared.")
+                        : QStringLiteral("Table selected: ") +
+                              currentTableName);
+            });
         connect(recordModel_, &QAbstractItemModel::modelReset, this,
                 &SCDatabaseEditorMainWindow::UpdateGridSummary);
         connect(dataTable_->selectionModel(),
@@ -710,14 +715,13 @@ namespace StableCore::Storage::Editor
                 &SCDatabaseEditorMainWindow::OnGridSelectionChanged);
         connect(dataTable_->horizontalHeader(), &QHeaderView::sectionClicked,
                 this, &SCDatabaseEditorMainWindow::OnGridHeaderClicked);
-        connect(session_, &SCDatabaseSession::RecordsChanged, this,
-                [this]() {
-                    UpdateGridSummary();
-                    UpdateRecordInspector();
-                    UpdateRelationInspector();
-                    RefreshOverviewPanels();
-                    UpdateDatabaseStatusBar();
-                });
+        connect(session_, &SCDatabaseSession::RecordsChanged, this, [this]() {
+            UpdateGridSummary();
+            UpdateRecordInspector();
+            UpdateRelationInspector();
+            RefreshOverviewPanels();
+            UpdateDatabaseStatusBar();
+        });
     }
 
     void SCDatabaseEditorMainWindow::BuildUi()
@@ -735,11 +739,16 @@ namespace StableCore::Storage::Editor
         databaseStatusLayout->setContentsMargins(8, 6, 8, 6);
         databaseStatusLayout->setSpacing(12);
 
-        databasePathLabel_ = new QLabel(QStringLiteral("Database: -"), databaseStatusBar_);
-        openModeLabel_ = new QLabel(QStringLiteral("Mode: Closed"), databaseStatusBar_);
-        currentTableLabel_ = new QLabel(QStringLiteral("Table: -"), databaseStatusBar_);
-        tableStatsLabel_ = new QLabel(QStringLiteral("Records: 0"), databaseStatusBar_);
-        filterStateLabel_ = new QLabel(QStringLiteral("Filter: Off"), databaseStatusBar_);
+        databasePathLabel_ =
+            new QLabel(QStringLiteral("Database: -"), databaseStatusBar_);
+        openModeLabel_ =
+            new QLabel(QStringLiteral("Mode: Closed"), databaseStatusBar_);
+        currentTableLabel_ =
+            new QLabel(QStringLiteral("Table: -"), databaseStatusBar_);
+        tableStatsLabel_ =
+            new QLabel(QStringLiteral("Records: 0"), databaseStatusBar_);
+        filterStateLabel_ =
+            new QLabel(QStringLiteral("Filter: Off"), databaseStatusBar_);
         transactionStateLabel_ =
             new QLabel(QStringLiteral("Transaction: Idle"), databaseStatusBar_);
 
@@ -767,41 +776,53 @@ namespace StableCore::Storage::Editor
         tableToolBar_ = new QToolBar(QStringLiteral("Table Tools"), tablePage_);
         tableToolBar_->setMovable(false);
         tableToolBar_->addAction(QStringLiteral("Add Record"), this,
-                                &SCDatabaseEditorMainWindow::AddRecord);
-        tableToolBar_->addAction(QStringLiteral("Delete Record"), this,
-                                &SCDatabaseEditorMainWindow::DeleteSelectedRecord);
+                                 &SCDatabaseEditorMainWindow::AddRecord);
+        tableToolBar_->addAction(
+            QStringLiteral("Delete Record"), this,
+            &SCDatabaseEditorMainWindow::DeleteSelectedRecord);
         tableToolBar_->addSeparator();
-        tableToolBar_->addAction(QStringLiteral("Refresh"), this,
-                                &SCDatabaseEditorMainWindow::RefreshCurrentView);
+        tableToolBar_->addAction(
+            QStringLiteral("Refresh"), this,
+            &SCDatabaseEditorMainWindow::RefreshCurrentView);
         tableToolBar_->addSeparator();
-        tableToolBar_->addAction(QStringLiteral("Export CSV..."), this,
-                                 &SCDatabaseEditorMainWindow::ExportCurrentTableCsv);
-        tableToolBar_->addAction(QStringLiteral("Import CSV..."), this,
-                                 &SCDatabaseEditorMainWindow::ImportCsvIntoCurrentTable);
+        tableToolBar_->addAction(
+            QStringLiteral("Export CSV..."), this,
+            &SCDatabaseEditorMainWindow::ExportCurrentTableCsv);
+        tableToolBar_->addAction(
+            QStringLiteral("Import CSV..."), this,
+            &SCDatabaseEditorMainWindow::ImportCsvIntoCurrentTable);
         tableToolBar_->addSeparator();
         tableToolBar_->addAction(QStringLiteral("Add Column"), this,
-                                &SCDatabaseEditorMainWindow::AddColumn);
-        tableToolBar_->addAction(QStringLiteral("Edit Column"), this,
-                                &SCDatabaseEditorMainWindow::EditSelectedColumn);
-        tableToolBar_->addAction(QStringLiteral("Pick Relation"), this,
-                                &SCDatabaseEditorMainWindow::EditSelectedRelation);
+                                 &SCDatabaseEditorMainWindow::AddColumn);
+        tableToolBar_->addAction(
+            QStringLiteral("Edit Column"), this,
+            &SCDatabaseEditorMainWindow::EditSelectedColumn);
+        tableToolBar_->addAction(
+            QStringLiteral("Pick Relation"), this,
+            &SCDatabaseEditorMainWindow::EditSelectedRelation);
         tableToolBar_->addSeparator();
-        tableToolBar_->addAction(QStringLiteral("Save Pending"), this,
-                                 &SCDatabaseEditorMainWindow::SavePendingChanges);
-        tableToolBar_->addAction(QStringLiteral("Discard Pending"), this,
-                                 &SCDatabaseEditorMainWindow::DiscardPendingChanges);
+        tableToolBar_->addAction(
+            QStringLiteral("Save Pending"), this,
+            &SCDatabaseEditorMainWindow::SavePendingChanges);
+        tableToolBar_->addAction(
+            QStringLiteral("Discard Pending"), this,
+            &SCDatabaseEditorMainWindow::DiscardPendingChanges);
         tableToolBar_->addSeparator();
-        tableToolBar_->addAction(QStringLiteral("Add Computed"), this,
-                                &SCDatabaseEditorMainWindow::AddSessionComputedColumn);
-        tableToolBar_->addAction(QStringLiteral("Edit Computed"), this,
-                                &SCDatabaseEditorMainWindow::EditSelectedComputedColumn);
+        tableToolBar_->addAction(
+            QStringLiteral("Add Computed"), this,
+            &SCDatabaseEditorMainWindow::AddSessionComputedColumn);
+        tableToolBar_->addAction(
+            QStringLiteral("Edit Computed"), this,
+            &SCDatabaseEditorMainWindow::EditSelectedComputedColumn);
         tableLayout->addWidget(tableToolBar_);
 
         auto* filterLayout = new QHBoxLayout();
         filterEdit_ = new QLineEdit(tablePage_);
         filterEdit_->setPlaceholderText(QStringLiteral("Filter current table"));
-        auto* clearFilterButton = new QPushButton(QStringLiteral("Clear"), tablePage_);
-        filterLayout->addWidget(new QLabel(QStringLiteral("Filter:"), tablePage_));
+        auto* clearFilterButton =
+            new QPushButton(QStringLiteral("Clear"), tablePage_);
+        filterLayout->addWidget(
+            new QLabel(QStringLiteral("Filter:"), tablePage_));
         filterLayout->addWidget(filterEdit_, 1);
         filterLayout->addWidget(clearFilterButton);
         tableLayout->addLayout(filterLayout);
@@ -830,9 +851,10 @@ namespace StableCore::Storage::Editor
 
         objectExplorerDock_ =
             new QDockWidget(QStringLiteral("Object Explorer"), this);
-        objectExplorerDock_->setObjectName(QStringLiteral("objectExplorerDock"));
+        objectExplorerDock_->setObjectName(
+            QStringLiteral("objectExplorerDock"));
         objectExplorerDock_->setAllowedAreas(Qt::LeftDockWidgetArea |
-                                            Qt::RightDockWidgetArea);
+                                             Qt::RightDockWidgetArea);
         objectTree_ = new QTreeWidget(objectExplorerDock_);
         objectTree_->setHeaderLabels(
             {QStringLiteral("Object"), QStringLiteral("Type")});
@@ -843,9 +865,9 @@ namespace StableCore::Storage::Editor
         addDockWidget(Qt::LeftDockWidgetArea, objectExplorerDock_);
         connect(objectTree_, &QTreeWidget::itemSelectionChanged, this,
                 &SCDatabaseEditorMainWindow::OnTableSelectionChanged);
-        connect(objectTree_, &QWidget::customContextMenuRequested,
-                this,
-                &SCDatabaseEditorMainWindow::OnObjectExplorerContextMenuRequested);
+        connect(
+            objectTree_, &QWidget::customContextMenuRequested, this,
+            &SCDatabaseEditorMainWindow::OnObjectExplorerContextMenuRequested);
 
         inspectorDock_ = new QDockWidget(QStringLiteral("Inspector"), this);
         inspectorDock_->setObjectName(QStringLiteral("inspectorDock"));
@@ -855,10 +877,9 @@ namespace StableCore::Storage::Editor
         schemaTree_ = new QTreeWidget(inspectorTabs_);
         schemaTree_->setHeaderLabels(
             {QStringLiteral("Field Name"), QStringLiteral("Display Name"),
-             QStringLiteral("Type"),
-             QStringLiteral("Nullable"), QStringLiteral("Default"),
-             QStringLiteral("Reference Table"), QStringLiteral("User Defined"),
-             QStringLiteral("Computed")});
+             QStringLiteral("Type"), QStringLiteral("Nullable"),
+             QStringLiteral("Default"), QStringLiteral("Reference Table"),
+             QStringLiteral("User Defined"), QStringLiteral("Computed")});
         schemaTree_->setContextMenuPolicy(Qt::CustomContextMenu);
         inspectorTabs_->addTab(schemaTree_, QStringLiteral("Schema"));
 
@@ -880,8 +901,7 @@ namespace StableCore::Storage::Editor
              QStringLiteral("Target Field"), QStringLiteral("Status")});
         inspectorTabs_->addTab(relationTree_, QStringLiteral("Relation"));
 
-        connect(schemaTree_, &QWidget::customContextMenuRequested,
-                this,
+        connect(schemaTree_, &QWidget::customContextMenuRequested, this,
                 &SCDatabaseEditorMainWindow::OnSchemaContextMenuRequested);
 
         inspectorDock_->setWidget(inspectorTabs_);
@@ -922,17 +942,19 @@ namespace StableCore::Storage::Editor
         healthSummaryText_ = new QPlainTextEdit(bottomTabs_);
         healthSummaryText_->setReadOnly(true);
         healthSummaryText_->setPlainText(QStringLiteral("No database opened."));
-        bottomTabs_->addTab(healthSummaryText_, QStringLiteral("Health Summary"));
+        bottomTabs_->addTab(healthSummaryText_,
+                            QStringLiteral("Health Summary"));
 
         sqlPreviewText_ = new QPlainTextEdit(bottomTabs_);
         sqlPreviewText_->setReadOnly(true);
-        sqlPreviewText_->setPlainText(
-            QStringLiteral("SQL preview is not available until a table is open."));
+        sqlPreviewText_->setPlainText(QStringLiteral(
+            "SQL preview is not available until a table is open."));
         bottomTabs_->addTab(sqlPreviewText_, QStringLiteral("SQL Preview"));
 
         debugPackageText_ = new QPlainTextEdit(bottomTabs_);
         debugPackageText_->setReadOnly(true);
-        debugPackageText_->setPlainText(QStringLiteral("No debug package exported."));
+        debugPackageText_->setPlainText(
+            QStringLiteral("No debug package exported."));
         bottomTabs_->addTab(debugPackageText_, QStringLiteral("Debug Package"));
 
         bottomDock_->setWidget(bottomTabs_);
@@ -972,13 +994,14 @@ namespace StableCore::Storage::Editor
         auto* tableMenu = menuBar()->addMenu(QStringLiteral("&Table"));
         tableMenu->addAction(QStringLiteral("Create Table..."), this,
                              &SCDatabaseEditorMainWindow::CreateTable);
-        tableMenu->addAction(QStringLiteral("Create Table From Schema..."),
-                             this,
-                             &SCDatabaseEditorMainWindow::CreateTableFromSchemaDescription);
+        tableMenu->addAction(
+            QStringLiteral("Create Table From Schema..."), this,
+            &SCDatabaseEditorMainWindow::CreateTableFromSchemaDescription);
         tableMenu->addAction(QStringLiteral("Delete Selected Table"), this,
                              &SCDatabaseEditorMainWindow::DeleteSelectedTable);
-        tableMenu->addAction(QStringLiteral("表结构..."), this,
-                             &SCDatabaseEditorMainWindow::OpenSchemaTableConverter);
+        tableMenu->addAction(
+            QStringLiteral("表结构..."), this,
+            &SCDatabaseEditorMainWindow::OpenSchemaTableConverter);
         tableMenu->addAction(QStringLiteral("Add Column..."), this,
                              &SCDatabaseEditorMainWindow::AddColumn);
         tableMenu->addAction(QStringLiteral("Edit Selected Column..."), this,
@@ -990,16 +1013,18 @@ namespace StableCore::Storage::Editor
         tableMenu->addAction(QStringLiteral("Pick Selected Relation..."), this,
                              &SCDatabaseEditorMainWindow::EditSelectedRelation);
         tableMenu->addSeparator();
-        tableMenu->addAction(QStringLiteral("Export CSV..."), this,
-                             &SCDatabaseEditorMainWindow::ExportCurrentTableCsv);
-        tableMenu->addAction(QStringLiteral("Import CSV..."), this,
-                             &SCDatabaseEditorMainWindow::ImportCsvIntoCurrentTable);
+        tableMenu->addAction(
+            QStringLiteral("Export CSV..."), this,
+            &SCDatabaseEditorMainWindow::ExportCurrentTableCsv);
+        tableMenu->addAction(
+            QStringLiteral("Import CSV..."), this,
+            &SCDatabaseEditorMainWindow::ImportCsvIntoCurrentTable);
 
         auto* computedMenu =
             menuBar()->addMenu(QStringLiteral("&Computed Column"));
-        computedMenu->addAction(QStringLiteral("Add Session Computed Column..."),
-                                this,
-                                &SCDatabaseEditorMainWindow::AddSessionComputedColumn);
+        computedMenu->addAction(
+            QStringLiteral("Add Session Computed Column..."), this,
+            &SCDatabaseEditorMainWindow::AddSessionComputedColumn);
         computedMenu->addAction(
             QStringLiteral("Edit Selected Computed Column..."), this,
             &SCDatabaseEditorMainWindow::EditSelectedComputedColumn);
@@ -1041,9 +1066,9 @@ namespace StableCore::Storage::Editor
                            &SCDatabaseEditorMainWindow::OpenDatabase);
         toolbar->addAction(QStringLiteral("New DB"), this,
                            &SCDatabaseEditorMainWindow::CreateDatabase);
-        closeDatabaseAction_ = toolbar->addAction(
-            QStringLiteral("Close"), this,
-            &SCDatabaseEditorMainWindow::CloseDatabase);
+        closeDatabaseAction_ =
+            toolbar->addAction(QStringLiteral("Close"), this,
+                               &SCDatabaseEditorMainWindow::CloseDatabase);
         toolbar->addAction(QStringLiteral("Backup Copy"), this,
                            &SCDatabaseEditorMainWindow::CreateBackupCopy);
         toolbar->addAction(QStringLiteral("Refresh"), this,
@@ -1179,10 +1204,10 @@ namespace StableCore::Storage::Editor
             return;
         }
 
-        const QString defaultPath = session_->DatabasePath().isEmpty()
-                                        ? QString()
-                                        : session_->DatabasePath() +
-                                              QStringLiteral("_backup.sqlite");
+        const QString defaultPath =
+            session_->DatabasePath().isEmpty()
+                ? QString()
+                : session_->DatabasePath() + QStringLiteral("_backup.sqlite");
         const QString filePath = QFileDialog::getSaveFileName(
             this, QStringLiteral("Create Backup Copy"), defaultPath,
             QStringLiteral("SQLite Database (*.sqlite);;All Files (*)"));
@@ -1262,9 +1287,9 @@ namespace StableCore::Storage::Editor
             if (nodeType == ExplorerNodeType::Table)
             {
                 QString error;
-                const QString nodeName =
-                    objectTree_->currentItem()->data(0, kExplorerNodeNameRole)
-                        .toString();
+                const QString nodeName = objectTree_->currentItem()
+                                             ->data(0, kExplorerNodeNameRole)
+                                             .toString();
                 if (!session_->SelectTable(nodeName, &error))
                 {
                     ShowError(QStringLiteral("Add Column Failed"), error);
@@ -1341,12 +1366,11 @@ namespace StableCore::Storage::Editor
         }
 
         QTreeWidgetItem* current = objectTree_->currentItem();
-        const ExplorerNodeType nodeType = current != nullptr
-                                              ? static_cast<ExplorerNodeType>(
-                                                    current->data(
-                                                        0, kExplorerNodeTypeRole)
-                                                        .toInt())
-                                              : ExplorerNodeType::Database;
+        const ExplorerNodeType nodeType =
+            current != nullptr
+                ? static_cast<ExplorerNodeType>(
+                      current->data(0, kExplorerNodeTypeRole).toInt())
+                : ExplorerNodeType::Database;
         QMenu menu(objectTree_);
 
         if (nodeType == ExplorerNodeType::Table)
@@ -1363,14 +1387,14 @@ namespace StableCore::Storage::Editor
         {
             menu.addAction(QStringLiteral("Create Table..."), this,
                            &SCDatabaseEditorMainWindow::CreateTable);
-            menu.addAction(QStringLiteral("Create Table From Schema..."),
-                           this,
-                           &SCDatabaseEditorMainWindow::CreateTableFromSchemaDescription);
+            menu.addAction(
+                QStringLiteral("Create Table From Schema..."), this,
+                &SCDatabaseEditorMainWindow::CreateTableFromSchemaDescription);
         } else if (nodeType == ExplorerNodeType::ComputedRoot)
         {
-            menu.addAction(QStringLiteral("Add Session Computed Column..."),
-                           this,
-                           &SCDatabaseEditorMainWindow::AddSessionComputedColumn);
+            menu.addAction(
+                QStringLiteral("Add Session Computed Column..."), this,
+                &SCDatabaseEditorMainWindow::AddSessionComputedColumn);
         } else
         {
             menu.addAction(QStringLiteral("Refresh"), this,
@@ -1393,13 +1417,14 @@ namespace StableCore::Storage::Editor
         if (objectTree_ != nullptr && objectTree_->currentItem() != nullptr)
         {
             const ExplorerNodeType nodeType = static_cast<ExplorerNodeType>(
-                objectTree_->currentItem()->data(0, kExplorerNodeTypeRole)
+                objectTree_->currentItem()
+                    ->data(0, kExplorerNodeTypeRole)
                     .toInt());
             if (nodeType == ExplorerNodeType::Table)
             {
-                tableName =
-                    objectTree_->currentItem()->data(0, kExplorerNodeNameRole)
-                        .toString();
+                tableName = objectTree_->currentItem()
+                                ->data(0, kExplorerNodeNameRole)
+                                .toString();
             }
         }
 
@@ -1472,8 +1497,7 @@ namespace StableCore::Storage::Editor
             {
                 fallbackSelection =
                     ToQString(columnsBeforeDelete[index + 1].name);
-            }
-            else if (index - 1 >= 0)
+            } else if (index - 1 >= 0)
             {
                 fallbackSelection =
                     ToQString(columnsBeforeDelete[index - 1].name);
@@ -1724,8 +1748,7 @@ namespace StableCore::Storage::Editor
         QString editingError;
         if (!session_->GetEditingState(&editingState, &editingError))
         {
-            ShowError(QStringLiteral("Convert To Column Failed"),
-                      editingError);
+            ShowError(QStringLiteral("Convert To Column Failed"), editingError);
             return;
         }
         if (session_->HasPendingEdit())
@@ -1858,8 +1881,7 @@ namespace StableCore::Storage::Editor
             SetStatusMessage(QStringLiteral(
                 "Record draft created. Fill required fields, then save "
                 "pending changes."));
-        }
-        else
+        } else
         {
             SetStatusMessage(QStringLiteral("Record added."));
         }
@@ -1888,8 +1910,7 @@ namespace StableCore::Storage::Editor
         QString error;
         if (!session_->DiscardPendingChanges(&error))
         {
-            ShowError(QStringLiteral("Discard Pending Changes Failed"),
-                      error);
+            ShowError(QStringLiteral("Discard Pending Changes Failed"), error);
             return;
         }
 
@@ -2014,13 +2035,13 @@ namespace StableCore::Storage::Editor
         QMenu menu(schemaTree_);
         const bool canEditSchema =
             session_->IsOpen() && !session_->CurrentTableName().isEmpty();
-        QAction* addAction = menu.addAction(QStringLiteral("Add Column..."),
-                                            this,
-                                            &SCDatabaseEditorMainWindow::AddColumn);
+        QAction* addAction =
+            menu.addAction(QStringLiteral("Add Column..."), this,
+                           &SCDatabaseEditorMainWindow::AddColumn);
         addAction->setEnabled(canEditSchema);
-        QAction* editAction = menu.addAction(
-            QStringLiteral("Edit Column..."), this,
-            &SCDatabaseEditorMainWindow::EditSelectedColumn);
+        QAction* editAction =
+            menu.addAction(QStringLiteral("Edit Column..."), this,
+                           &SCDatabaseEditorMainWindow::EditSelectedColumn);
         editAction->setEnabled(canEditSchema &&
                                !CurrentSchemaColumnName().isEmpty());
         QAction* deleteAction =
@@ -2054,8 +2075,9 @@ namespace StableCore::Storage::Editor
         QMenu menu(dataTable_);
         const bool canEditRows =
             session_->IsOpen() && !session_->CurrentTableName().isEmpty();
-        QAction* addAction = menu.addAction(QStringLiteral("Add Row"), this,
-                                            &SCDatabaseEditorMainWindow::AddRecord);
+        QAction* addAction =
+            menu.addAction(QStringLiteral("Add Row"), this,
+                           &SCDatabaseEditorMainWindow::AddRecord);
         addAction->setEnabled(canEditRows);
         QAction* deleteAction =
             menu.addAction(QStringLiteral("Delete Row"), this,
@@ -2224,8 +2246,9 @@ namespace StableCore::Storage::Editor
         }
         if (editingState.openMode == sc::SCDatabaseOpenMode::ReadOnly)
         {
-            ShowError(QStringLiteral("Import CSV Failed"),
-                      QStringLiteral("CSV import requires a writable database."));
+            ShowError(
+                QStringLiteral("Import CSV Failed"),
+                QStringLiteral("CSV import requires a writable database."));
             return;
         }
 
@@ -2285,7 +2308,8 @@ namespace StableCore::Storage::Editor
         headerFields.reserve(columnCount);
         for (int column = 0; column < columnCount; ++column)
         {
-            const sc::SCTableViewColumnDef definition = recordModel_->ColumnAt(column);
+            const sc::SCTableViewColumnDef definition =
+                recordModel_->ColumnAt(column);
             headerFields.push_back(
                 EscapeCsvField(QString::fromStdWString(definition.name)));
         }
@@ -2297,8 +2321,7 @@ namespace StableCore::Storage::Editor
             {
                 if (outError != nullptr)
                 {
-                    *outError =
-                        QStringLiteral("Failed to write CSV content.");
+                    *outError = QStringLiteral("Failed to write CSV content.");
                 }
                 return false;
             }
@@ -2352,8 +2375,7 @@ namespace StableCore::Storage::Editor
         {
             if (outError != nullptr)
             {
-                *outError =
-                    QStringLiteral("Failed to finalize the CSV file.");
+                *outError = QStringLiteral("Failed to finalize the CSV file.");
             }
             return false;
         }
@@ -2402,7 +2424,8 @@ namespace StableCore::Storage::Editor
         {
             if (outError != nullptr)
             {
-                *outError = QStringLiteral("CSV file does not contain a header row.");
+                *outError =
+                    QStringLiteral("CSV file does not contain a header row.");
             }
             return false;
         }
@@ -2429,8 +2452,8 @@ namespace StableCore::Storage::Editor
             {
                 if (outError != nullptr)
                 {
-                    *outError =
-                        QStringLiteral("CSV header contains an empty column name.");
+                    *outError = QStringLiteral(
+                        "CSV header contains an empty column name.");
                 }
                 return false;
             }
@@ -2440,13 +2463,15 @@ namespace StableCore::Storage::Editor
             {
                 if (outError != nullptr)
                 {
-                    *outError = QStringLiteral("CSV header references unknown column: ") +
-                                 header;
+                    *outError = QStringLiteral(
+                                    "CSV header references unknown column: ") +
+                                header;
                 }
                 return false;
             }
 
-            const sc::SCTableViewColumnDef& definition = viewColumns[columnIndex];
+            const sc::SCTableViewColumnDef& definition =
+                viewColumns[columnIndex];
             if (definition.layer == sc::TableColumnLayer::Fact &&
                 definition.editable)
             {
@@ -2455,8 +2480,9 @@ namespace StableCore::Storage::Editor
                     if (outError != nullptr)
                     {
                         *outError = QStringLiteral(
-                            "CSV header contains a duplicate editable column: ") +
-                                     header;
+                                        "CSV header contains a duplicate "
+                                        "editable column: ") +
+                                    header;
                     }
                     return false;
                 }
@@ -2465,8 +2491,7 @@ namespace StableCore::Storage::Editor
                     static_cast<int>(columnMapping.size());
                 ++importableColumnCount;
                 columnMapping.push_back(columnIndex);
-            }
-            else
+            } else
             {
                 columnMapping.push_back(-1);
             }
@@ -2476,17 +2501,19 @@ namespace StableCore::Storage::Editor
         {
             if (outError != nullptr)
             {
-                *outError =
-                    QStringLiteral("CSV file does not contain any editable columns.");
+                *outError = QStringLiteral(
+                    "CSV file does not contain any editable columns.");
             }
             return false;
         }
 
         QVector<int> requiredColumns;
         requiredColumns.reserve(viewColumns.size());
-        for (int columnIndex = 0; columnIndex < viewColumns.size(); ++columnIndex)
+        for (int columnIndex = 0; columnIndex < viewColumns.size();
+             ++columnIndex)
         {
-            const sc::SCTableViewColumnDef& definition = viewColumns[columnIndex];
+            const sc::SCTableViewColumnDef& definition =
+                viewColumns[columnIndex];
             if (definition.layer != sc::TableColumnLayer::Fact ||
                 !definition.editable)
             {
@@ -2506,9 +2533,10 @@ namespace StableCore::Storage::Editor
                 {
                     if (outError != nullptr)
                     {
-                        *outError = QStringLiteral(
-                            "CSV header is missing required column: ") +
-                                     QString::fromStdWString(definition.name);
+                        *outError =
+                            QStringLiteral(
+                                "CSV header is missing required column: ") +
+                            QString::fromStdWString(definition.name);
                     }
                     return false;
                 }
@@ -2526,8 +2554,10 @@ namespace StableCore::Storage::Editor
             {
                 if (outError != nullptr)
                 {
-                    *outError = QStringLiteral("CSV row %1 has more fields than the header.")
-                                    .arg(rowIndex + 2);
+                    *outError =
+                        QStringLiteral(
+                            "CSV row %1 has more fields than the header.")
+                            .arg(rowIndex + 2);
                 }
                 return false;
             }
@@ -2541,14 +2571,15 @@ namespace StableCore::Storage::Editor
                     viewColumns[requiredColumnIndex];
                 sc::SCColumnDef schemaColumn;
                 if (!session_->GetColumnDef(
-                        QString::fromStdWString(definition.name),
-                        &schemaColumn, outError))
+                        QString::fromStdWString(definition.name), &schemaColumn,
+                        outError))
                 {
                     return false;
                 }
-                const int headerIndex = headerIndexByColumn[requiredColumnIndex];
-                const QString cellText =
-                    headerIndex < row.size() ? row[headerIndex].trimmed()
+                const int headerIndex =
+                    headerIndexByColumn[requiredColumnIndex];
+                const QString cellText = headerIndex < row.size()
+                                             ? row[headerIndex].trimmed()
                                              : QString();
 
                 if (!IsBlankAllowedForRequiredColumn(schemaColumn.valueKind) &&
@@ -2556,18 +2587,19 @@ namespace StableCore::Storage::Editor
                 {
                     if (outError != nullptr)
                     {
-                        *outError = QStringLiteral(
-                            "CSV row %1 is missing required field \"%2\".")
-                                        .arg(rowIndex + 2)
-                                        .arg(QString::fromStdWString(
-                                            definition.name));
+                        *outError =
+                            QStringLiteral(
+                                "CSV row %1 is missing required field \"%2\".")
+                                .arg(rowIndex + 2)
+                                .arg(QString::fromStdWString(definition.name));
                     }
                     return false;
                 }
             }
 
             sc::SCBatchCreateRecordRequest createRecord;
-            for (int headerIndex = 0; headerIndex < headerRow.size(); ++headerIndex)
+            for (int headerIndex = 0; headerIndex < headerRow.size();
+                 ++headerIndex)
             {
                 const int columnIndex = columnMapping[headerIndex];
                 if (columnIndex < 0)
@@ -2585,10 +2617,11 @@ namespace StableCore::Storage::Editor
                 {
                     if (outError != nullptr && !outError->isEmpty())
                     {
-                        *outError = QStringLiteral("CSV row %1, column \"%2\": %3")
-                                        .arg(rowIndex + 2)
-                                        .arg(QString::fromStdWString(definition.name))
-                                        .arg(*outError);
+                        *outError =
+                            QStringLiteral("CSV row %1, column \"%2\": %3")
+                                .arg(rowIndex + 2)
+                                .arg(QString::fromStdWString(definition.name))
+                                .arg(*outError);
                     }
                     return false;
                 }
@@ -2613,14 +2646,14 @@ namespace StableCore::Storage::Editor
         options.rollbackOnError = true;
 
         sc::SCBatchExecutionResult result;
-        const sc::ErrorCode rc =
-            sc::ExecuteBatchEdit(session_->Database(), requests, options, &result);
+        const sc::ErrorCode rc = sc::ExecuteBatchEdit(
+            session_->Database(), requests, options, &result);
         if (sc::Failed(rc))
         {
             if (outError != nullptr)
             {
                 *outError = QStringLiteral("CSV import failed: ") +
-                             StorageErrorText(rc);
+                            StorageErrorText(rc);
             }
             return false;
         }
@@ -2632,7 +2665,7 @@ namespace StableCore::Storage::Editor
             {
                 *outError = QStringLiteral(
                                 "CSV import committed, but refresh failed: ") +
-                             refreshError;
+                            refreshError;
             }
             return false;
         }
@@ -2764,19 +2797,19 @@ namespace StableCore::Storage::Editor
 
         const ExplorerNodeType nodeType = static_cast<ExplorerNodeType>(
             item->data(0, kExplorerNodeTypeRole).toInt());
-        const QString nodeName = item->data(0, kExplorerNodeNameRole).toString();
+        const QString nodeName =
+            item->data(0, kExplorerNodeNameRole).toString();
 
         switch (nodeType)
         {
             case ExplorerNodeType::Table:
                 if (nodeName.compare(session_->CurrentTableName(),
-                                    Qt::CaseInsensitive) != 0)
+                                     Qt::CaseInsensitive) != 0)
                 {
                     QString error;
                     if (!session_->SelectTable(nodeName, &error))
                     {
-                        ShowError(QStringLiteral("Select Table Failed"),
-                                  error);
+                        ShowError(QStringLiteral("Select Table Failed"), error);
                         return;
                     }
                 }
@@ -2841,7 +2874,8 @@ namespace StableCore::Storage::Editor
 
     void SCDatabaseEditorMainWindow::OnGridHeaderClicked(int logicalIndex)
     {
-        const sc::SCTableViewColumnDef column = recordModel_->ColumnAt(logicalIndex);
+        const sc::SCTableViewColumnDef column =
+            recordModel_->ColumnAt(logicalIndex);
         if (column.name.empty())
         {
             return;
@@ -2913,10 +2947,9 @@ namespace StableCore::Storage::Editor
             return;
         }
 
-        const QString selectedField =
-            recordTree_->currentItem() != nullptr
-                ? recordTree_->currentItem()->text(0)
-                : QString();
+        const QString selectedField = recordTree_->currentItem() != nullptr
+                                          ? recordTree_->currentItem()->text(0)
+                                          : QString();
         recordTree_->clear();
 
         const QModelIndex index = CurrentSourceIndex();
@@ -2945,7 +2978,8 @@ namespace StableCore::Storage::Editor
         recordTree_->resizeColumnToContents(1);
         if (!selectedField.isEmpty())
         {
-            for (int index = 0; index < recordTree_->topLevelItemCount(); ++index)
+            for (int index = 0; index < recordTree_->topLevelItemCount();
+                 ++index)
             {
                 QTreeWidgetItem* item = recordTree_->topLevelItem(index);
                 if (item != nullptr &&
@@ -2975,8 +3009,8 @@ namespace StableCore::Storage::Editor
                     definition = ToQString(column.expression);
                     break;
                 case sc::ComputedFieldKind::Rule:
-                    definition = QStringLiteral("Rule: ") +
-                                 ToQString(column.ruleId);
+                    definition =
+                        QStringLiteral("Rule: ") + ToQString(column.ruleId);
                     break;
                 case sc::ComputedFieldKind::Aggregate:
                     definition = QStringLiteral("Aggregate: ") +
@@ -2993,9 +3027,9 @@ namespace StableCore::Storage::Editor
             }
 
             auto* row = new QTreeWidgetItem(computedColumnsTree_);
-            row->setText(0, ToQString(column.displayName.empty()
-                                          ? column.name
-                                          : column.displayName));
+            row->setText(
+                0, ToQString(column.displayName.empty() ? column.name
+                                                        : column.displayName));
             row->setText(1, ValueKindToText(column.valueKind));
             row->setText(2, definition);
             row->setText(3, BoolToText(column.cacheable));
@@ -3038,14 +3072,14 @@ namespace StableCore::Storage::Editor
             }
 
             auto* row = new QTreeWidgetItem(relationTree_);
-            row->setText(0, ToQString(column.displayName.empty()
-                                          ? column.name
-                                          : column.displayName));
+            row->setText(
+                0, ToQString(column.displayName.empty() ? column.name
+                                                        : column.displayName));
             row->setText(1, ToQString(column.referenceTable));
             row->setText(2, QStringLiteral("-"));
             row->setText(3, column.referenceTable.empty()
-                                 ? QStringLiteral("Unbound")
-                                 : QStringLiteral("OK"));
+                                ? QStringLiteral("Unbound")
+                                : QStringLiteral("OK"));
             row->setData(0, Qt::UserRole, ToQString(column.name));
         }
         relationTree_->resizeColumnToContents(0);
@@ -3054,7 +3088,8 @@ namespace StableCore::Storage::Editor
         relationTree_->resizeColumnToContents(3);
         if (!selectedName.isEmpty())
         {
-            for (int index = 0; index < relationTree_->topLevelItemCount(); ++index)
+            for (int index = 0; index < relationTree_->topLevelItemCount();
+                 ++index)
             {
                 QTreeWidgetItem* item = relationTree_->topLevelItem(index);
                 if (item != nullptr &&
@@ -3080,7 +3115,8 @@ namespace StableCore::Storage::Editor
             }
             if (tableStatsLabel_ != nullptr)
             {
-                tableStatsLabel_->setText(QStringLiteral("Records: 0 | Fields: 0"));
+                tableStatsLabel_->setText(
+                    QStringLiteral("Records: 0 | Fields: 0"));
             }
             UpdateDatabaseStatusBar();
             return;
@@ -3092,8 +3128,8 @@ namespace StableCore::Storage::Editor
 
         if (tableTitleLabel_ != nullptr)
         {
-            tableTitleLabel_->setText(QStringLiteral("Current table: %1")
-                                          .arg(tableName));
+            tableTitleLabel_->setText(
+                QStringLiteral("Current table: %1").arg(tableName));
         }
         if (tableStatsLabel_ != nullptr)
         {
@@ -3104,7 +3140,8 @@ namespace StableCore::Storage::Editor
                     .arg(recordModel_->columnCount())
                     .arg(selectedRecordId != 0
                              ? QStringLiteral(" | Selected: %1")
-                                   .arg(static_cast<qulonglong>(selectedRecordId))
+                                   .arg(static_cast<qulonglong>(
+                                       selectedRecordId))
                              : QString()));
         }
         UpdateDatabaseStatusBar();
@@ -3125,12 +3162,12 @@ namespace StableCore::Storage::Editor
 
         auto* databaseRoot = new QTreeWidgetItem(objectTree_);
         databaseRoot->setText(0, QStringLiteral("Database"));
-        databaseRoot->setText(1,
-                             session_->IsOpen() ? QStringLiteral("Open")
-                                                : QStringLiteral("Closed"));
+        databaseRoot->setText(1, session_->IsOpen() ? QStringLiteral("Open")
+                                                    : QStringLiteral("Closed"));
         databaseRoot->setData(0, kExplorerNodeTypeRole,
                               static_cast<int>(ExplorerNodeType::Database));
-        databaseRoot->setData(0, kExplorerNodeNameRole, QStringLiteral("Database"));
+        databaseRoot->setData(0, kExplorerNodeNameRole,
+                              QStringLiteral("Database"));
 
         auto* tablesRoot = new QTreeWidgetItem(databaseRoot);
         tablesRoot->setText(0, QStringLiteral("Tables"));
@@ -3162,18 +3199,17 @@ namespace StableCore::Storage::Editor
         auto* computedRoot = new QTreeWidgetItem(databaseRoot);
         computedRoot->setText(0, QStringLiteral("Computed Columns"));
         computedRoot->setText(1, QString::number(computedColumns.size()));
-        computedRoot->setData(
-            0, kExplorerNodeTypeRole,
-            static_cast<int>(ExplorerNodeType::ComputedRoot));
+        computedRoot->setData(0, kExplorerNodeTypeRole,
+                              static_cast<int>(ExplorerNodeType::ComputedRoot));
         computedRoot->setData(0, kExplorerNodeNameRole,
                               QStringLiteral("Computed Columns"));
 
         for (const sc::SCComputedColumnDef& column : computedColumns)
         {
             auto* computedItem = new QTreeWidgetItem(computedRoot);
-            computedItem->setText(0, ToQString(column.displayName.empty()
-                                                   ? column.name
-                                                   : column.displayName));
+            computedItem->setText(
+                0, ToQString(column.displayName.empty() ? column.name
+                                                        : column.displayName));
             computedItem->setText(1, QStringLiteral("Computed"));
             computedItem->setData(
                 0, kExplorerNodeTypeRole,
@@ -3189,16 +3225,15 @@ namespace StableCore::Storage::Editor
                             static_cast<int>(ExplorerNodeType::Database));
         systemRoot->setData(0, kExplorerNodeNameRole, QStringLiteral("System"));
 
-        const auto addSystemNode =
-            [&](const QString& text, ExplorerNodeType type) {
-                auto* item = new QTreeWidgetItem(systemRoot);
-                item->setText(0, text);
-                item->setText(1, ExplorerNodeTypeToText(type));
-                item->setData(0, kExplorerNodeTypeRole,
-                              static_cast<int>(type));
-                item->setData(0, kExplorerNodeNameRole, text);
-                return item;
-            };
+        const auto addSystemNode = [&](const QString& text,
+                                       ExplorerNodeType type) {
+            auto* item = new QTreeWidgetItem(systemRoot);
+            item->setText(0, text);
+            item->setText(1, ExplorerNodeTypeToText(type));
+            item->setData(0, kExplorerNodeTypeRole, static_cast<int>(type));
+            item->setData(0, kExplorerNodeNameRole, text);
+            return item;
+        };
 
         addSystemNode(QStringLiteral("Edit Log"), ExplorerNodeType::EditLog);
         addSystemNode(QStringLiteral("Journal"), ExplorerNodeType::Journal);
@@ -3219,14 +3254,16 @@ namespace StableCore::Storage::Editor
     {
         sc::SCEditingDatabaseState editingState;
         QString error;
-        const bool stateLoaded = session_->GetEditingState(&editingState, &error);
+        const bool stateLoaded =
+            session_->GetEditingState(&editingState, &error);
 
         if (databasePathLabel_ != nullptr)
         {
-            databasePathLabel_->setText(QStringLiteral("Database: %1")
-                                            .arg(session_->DatabasePath().isEmpty()
-                                                     ? QStringLiteral("-")
-                                                     : session_->DatabasePath()));
+            databasePathLabel_->setText(
+                QStringLiteral("Database: %1")
+                    .arg(session_->DatabasePath().isEmpty()
+                             ? QStringLiteral("-")
+                             : session_->DatabasePath()));
         }
 
         if (openModeLabel_ != nullptr)
@@ -3244,10 +3281,11 @@ namespace StableCore::Storage::Editor
 
         if (currentTableLabel_ != nullptr)
         {
-            currentTableLabel_->setText(QStringLiteral("Table: %1")
-                                            .arg(session_->CurrentTableName().isEmpty()
-                                                     ? QStringLiteral("-")
-                                                     : session_->CurrentTableName()));
+            currentTableLabel_->setText(
+                QStringLiteral("Table: %1")
+                    .arg(session_->CurrentTableName().isEmpty()
+                             ? QStringLiteral("-")
+                             : session_->CurrentTableName()));
         }
 
         if (tableStatsLabel_ != nullptr)
@@ -3261,8 +3299,8 @@ namespace StableCore::Storage::Editor
 
         if (filterStateLabel_ != nullptr)
         {
-            const QString filterText = filterEdit_ != nullptr ? filterEdit_->text()
-                                                             : QString();
+            const QString filterText =
+                filterEdit_ != nullptr ? filterEdit_->text() : QString();
             filterStateLabel_->setText(
                 filterText.isEmpty()
                     ? QStringLiteral("Filter: Off")
@@ -3278,12 +3316,10 @@ namespace StableCore::Storage::Editor
                 if (editingState.openMode == sc::SCDatabaseOpenMode::ReadOnly)
                 {
                     transactionState += QStringLiteral("ReadOnly");
-                }
-                else if (editingState.dirty)
+                } else if (editingState.dirty)
                 {
                     transactionState += QStringLiteral("Dirty");
-                }
-                else
+                } else
                 {
                     transactionState += QStringLiteral("Idle");
                 }

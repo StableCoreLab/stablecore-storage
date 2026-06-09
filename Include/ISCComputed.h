@@ -19,12 +19,9 @@ namespace StableCore::Storage
     class ISCComputedContext : public virtual ISCRefObject
     {
     public:
-        virtual ErrorCode GetValue(const wchar_t* fieldName,
-                                   SCValue* outValue) = 0;
-        virtual ErrorCode GetRef(const wchar_t* fieldName,
-                                 RecordId* outValue) = 0;
-        virtual ErrorCode GetRelated(const wchar_t* relationName,
-                                     SCRecordCursorPtr& outCursor) = 0;
+        virtual ErrorCode GetValue(const wchar_t* fieldName, SCValue* outValue) = 0;
+        virtual ErrorCode GetRef(const wchar_t* fieldName, RecordId* outValue) = 0;
+        virtual ErrorCode GetRelated(const wchar_t* relationName, SCRecordCursorPtr& outCursor) = 0;
     };
 
     class ISCComputedEvaluator : public virtual ISCRefObject
@@ -38,10 +35,8 @@ namespace StableCore::Storage
     class ISCRuleRegistry : public virtual ISCRefObject
     {
     public:
-        virtual ErrorCode Register(const wchar_t* ruleId,
-                                   ISCComputedEvaluator* evaluator) = 0;
-        virtual ErrorCode Find(const wchar_t* ruleId,
-                               SCComputedEvaluatorPtr& outEvaluator) = 0;
+        virtual ErrorCode Register(const wchar_t* ruleId, ISCComputedEvaluator* evaluator) = 0;
+        virtual ErrorCode Find(const wchar_t* ruleId, SCComputedEvaluatorPtr& outEvaluator) = 0;
     };
 
     struct SCComputedCacheKey
@@ -66,17 +61,14 @@ namespace StableCore::Storage
     class ISCComputedCache : public virtual ISCRefObject
     {
     public:
-        virtual ErrorCode TryGet(const SCComputedCacheKey& key,
-                                 SCValue* outValue) = 0;
+        virtual ErrorCode TryGet(const SCComputedCacheKey& key, SCValue* outValue) = 0;
         virtual ErrorCode Put(const SCComputedCacheEntry& entry) = 0;
-        virtual ErrorCode Invalidate(
-            const SCChangeSet& SCChangeSet,
-            const std::vector<SCComputedColumnDef>& computedColumns) = 0;
+        virtual ErrorCode Invalidate(const SCChangeSet& SCChangeSet,
+                                     const std::vector<SCComputedColumnDef>& computedColumns) = 0;
         virtual ErrorCode Clear() = 0;
     };
 
-    ErrorCode CreateDefaultExpressionEvaluator(
-        SCComputedEvaluatorPtr& outEvaluator);
+    ErrorCode CreateDefaultExpressionEvaluator(SCComputedEvaluatorPtr& outEvaluator);
     ErrorCode CreateDefaultRuleRegistry(SCRuleRegistryPtr& outRegistry);
     ErrorCode CreateComputedCache(SCComputedCachePtr& outCache);
 

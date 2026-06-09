@@ -4,8 +4,6 @@
 
 namespace StableCore::Storage
 {
-    ErrorCode CreateFileDatabase(const wchar_t* path,
-                                 const SCOpenDatabaseOptions& options,
-                                 SCDbPtr& outDatabase);
+    ErrorCode CreateFileDatabase(const wchar_t* path, const SCOpenDatabaseOptions& options, SCDbPtr& outDatabase);
 
 }  // namespace StableCore::Storage

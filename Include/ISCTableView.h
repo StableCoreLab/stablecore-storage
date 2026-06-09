@@ -23,14 +23,10 @@ namespace StableCore::Storage
     public:
         virtual ErrorCode GetTableName(std::wstring* outTableName) = 0;
         virtual ErrorCode GetColumnCount(std::int32_t* outCount) = 0;
-        virtual ErrorCode GetColumn(std::int32_t index,
-                                    SCTableViewColumnDef* outColumn) = 0;
-        virtual ErrorCode AddComputedColumn(
-            const SCComputedColumnDef& column) = 0;
+        virtual ErrorCode GetColumn(std::int32_t index, SCTableViewColumnDef* outColumn) = 0;
+        virtual ErrorCode AddComputedColumn(const SCComputedColumnDef& column) = 0;
         virtual ErrorCode EnumerateRecords(SCRecordCursorPtr& outCursor) = 0;
-        virtual ErrorCode GetCellValue(RecordId recordId,
-                                       const wchar_t* columnName,
-                                       SCValue* outValue) = 0;
+        virtual ErrorCode GetCellValue(RecordId recordId, const wchar_t* columnName, SCValue* outValue) = 0;
         virtual ErrorCode InvalidateComputedCache() = 0;
     };
 

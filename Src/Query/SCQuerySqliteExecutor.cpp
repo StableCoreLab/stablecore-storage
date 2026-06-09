@@ -15,12 +15,10 @@ namespace StableCore::Storage
 
         constexpr std::uint64_t kDefaultQueryPageLimit = 1000;
 
-        class QueryResultCursor final : public ISCRecordCursor,
-                                        public SCRefCountedObject
+        class QueryResultCursor final : public ISCRecordCursor, public SCRefCountedObject
         {
         public:
-            explicit QueryResultCursor(std::vector<SCRecordPtr> records)
-                : records_(std::move(records))
+            explicit QueryResultCursor(std::vector<SCRecordPtr> records) : records_(std::move(records))
             {
             }
 
@@ -43,8 +41,7 @@ namespace StableCore::Storage
 
         bool IsResidualOnlyOperator(QueryConditionOperator op)
         {
-            return op == QueryConditionOperator::Contains ||
-                   op == QueryConditionOperator::EndsWith;
+            return op == QueryConditionOperator::Contains || op == QueryConditionOperator::EndsWith;
         }
 
         bool IsPushdownFriendlyOperator(QueryConditionOperator op)
@@ -115,8 +112,7 @@ namespace StableCore::Storage
             return {};
         }
 
-        bool CompareValues(const SCValue& lhs, const SCValue& rhs,
-                           QueryConditionOperator op)
+        bool CompareValues(const SCValue& lhs, const SCValue& rhs, QueryConditionOperator op)
         {
             if (lhs.IsNull() || rhs.IsNull())
             {
@@ -190,8 +186,7 @@ namespace StableCore::Storage
             }
         }
 
-        bool EvaluateCondition(const SCValue& actual,
-                               const QueryCondition& condition)
+        bool EvaluateCondition(const SCValue& actual, const QueryCondition& condition)
         {
             switch (condition.op)
             {
@@ -201,15 +196,12 @@ namespace StableCore::Storage
                 case QueryConditionOperator::LessThanOrEqual:
                 case QueryConditionOperator::GreaterThan:
                 case QueryConditionOperator::GreaterThanOrEqual:
-                    return !condition.values.empty() &&
-                           CompareValues(actual, condition.values.front(),
-                                         condition.op);
+                    return !condition.values.empty() && CompareValues(actual, condition.values.front(), condition.op);
 
                 case QueryConditionOperator::In:
                     for (const auto& candidate : condition.values)
                     {
-                        if (CompareValues(actual, candidate,
-                                          QueryConditionOperator::Equal))
+                        if (CompareValues(actual, candidate, QueryConditionOperator::Equal))
                         {
                             return true;
                         }
@@ -221,12 +213,8 @@ namespace StableCore::Storage
                     {
                         return false;
                     }
-                    return CompareValues(
-                               actual, condition.values[0],
-                               QueryConditionOperator::GreaterThanOrEqual) &&
-                           CompareValues(
-                               actual, condition.values[1],
-                               QueryConditionOperator::LessThanOrEqual);
+                    return CompareValues(actual, condition.values[0], QueryConditionOperator::GreaterThanOrEqual) &&
+                           CompareValues(actual, condition.values[1], QueryConditionOperator::LessThanOrEqual);
 
                 case QueryConditionOperator::IsNull:
                     return actual.IsNull();
@@ -245,8 +233,7 @@ namespace StableCore::Storage
                     }
 
                     bool expectedOk = false;
-                    const std::wstring expectedText =
-                        ToStringValue(condition.values.front(), &expectedOk);
+                    const std::wstring expectedText = ToStringValue(condition.values.front(), &expectedOk);
                     if (!expectedOk)
                     {
                         return false;
@@ -255,30 +242,25 @@ namespace StableCore::Storage
                     if (condition.op == QueryConditionOperator::StartsWith)
                     {
                         return actualText.size() >= expectedText.size() &&
-                               actualText.compare(0, expectedText.size(),
-                                                  expectedText) == 0;
+                               actualText.compare(0, expectedText.size(), expectedText) == 0;
                     }
                     if (condition.op == QueryConditionOperator::Contains)
                     {
-                        return actualText.find(expectedText) !=
-                               std::wstring::npos;
+                        return actualText.find(expectedText) != std::wstring::npos;
                     }
                     return actualText.size() >= expectedText.size() &&
                            actualText.compare(
-                               actualText.size() - expectedText.size(),
-                               expectedText.size(), expectedText) == 0;
+                               actualText.size() - expectedText.size(), expectedText.size(), expectedText) == 0;
                 }
             }
 
             return false;
         }
 
-        bool EvaluateConditionOnRecord(const SCRecordPtr& record,
-                                       const QueryCondition& condition)
+        bool EvaluateConditionOnRecord(const SCRecordPtr& record, const QueryCondition& condition)
         {
             SCValue actual = SCValue::Null();
-            const ErrorCode rc =
-                record->GetValue(condition.fieldName.c_str(), &actual);
+            const ErrorCode rc = record->GetValue(condition.fieldName.c_str(), &actual);
             if (rc == SC_E_VALUE_IS_NULL)
             {
                 actual = SCValue::Null();
@@ -292,13 +274,12 @@ namespace StableCore::Storage
 
         bool EvaluateGroupPhase(const SCRecordPtr& record,
                                 const QueryConditionGroup& group,
-                                bool residualPhase, bool* outUnsupported)
+                                bool residualPhase,
+                                bool* outUnsupported)
         {
-            const auto matchesPhase =
-                [residualPhase](QueryConditionOperator op) {
-                    return residualPhase ? IsResidualOnlyOperator(op)
-                                         : IsPushdownFriendlyOperator(op);
-                };
+            const auto matchesPhase = [residualPhase](QueryConditionOperator op) {
+                return residualPhase ? IsResidualOnlyOperator(op) : IsPushdownFriendlyOperator(op);
+            };
 
             bool hasRelevantCondition = false;
             bool result = (group.logic == QueryLogicOperator::And);
@@ -310,8 +291,7 @@ namespace StableCore::Storage
                 }
 
                 hasRelevantCondition = true;
-                const bool matched =
-                    EvaluateConditionOnRecord(record, condition);
+                const bool matched = EvaluateConditionOnRecord(record, condition);
                 if (group.logic == QueryLogicOperator::And)
                 {
                     result = result && matched;
@@ -340,29 +320,24 @@ namespace StableCore::Storage
             return result;
         }
 
-        bool EvaluatePlanForRecord(const SCRecordPtr& record,
-                                   const QueryPlan& plan)
+        bool EvaluatePlanForRecord(const SCRecordPtr& record, const QueryPlan& plan)
         {
             if (plan.conditionGroups.empty())
             {
                 return true;
             }
 
-            auto evaluateGroup =
-                [&plan, &record](const QueryConditionGroup& group) -> bool {
+            auto evaluateGroup = [&plan, &record](const QueryConditionGroup& group) -> bool {
                 bool unsupported = false;
-                const bool pushdown =
-                    EvaluateGroupPhase(record, group, false, &unsupported);
+                const bool pushdown = EvaluateGroupPhase(record, group, false, &unsupported);
                 if (!pushdown)
                 {
                     return false;
                 }
 
-                if (plan.state == QueryPlanState::ScanFallback ||
-                    plan.state == QueryPlanState::PartialIndex)
+                if (plan.state == QueryPlanState::ScanFallback || plan.state == QueryPlanState::PartialIndex)
                 {
-                    return EvaluateGroupPhase(record, group, true,
-                                              &unsupported);
+                    return EvaluateGroupPhase(record, group, true, &unsupported);
                 }
 
                 for (const auto& condition : group.conditions)
@@ -453,15 +428,11 @@ namespace StableCore::Storage
             if (!plan.conditionGroups.empty())
             {
                 sql << L" WHERE ";
-                for (std::size_t groupIndex = 0;
-                     groupIndex < plan.conditionGroups.size(); ++groupIndex)
+                for (std::size_t groupIndex = 0; groupIndex < plan.conditionGroups.size(); ++groupIndex)
                 {
                     if (groupIndex != 0)
                     {
-                        sql << (plan.conditionGroupLogic ==
-                                        QueryLogicOperator::And
-                                    ? L" AND "
-                                    : L" OR ");
+                        sql << (plan.conditionGroupLogic == QueryLogicOperator::And ? L" AND " : L" OR ");
                     }
 
                     const auto& group = plan.conditionGroups[groupIndex];
@@ -470,18 +441,13 @@ namespace StableCore::Storage
                         sql << L"(";
                     }
 
-                    for (std::size_t conditionIndex = 0;
-                         conditionIndex < group.conditions.size();
-                         ++conditionIndex)
+                    for (std::size_t conditionIndex = 0; conditionIndex < group.conditions.size(); ++conditionIndex)
                     {
                         if (conditionIndex != 0)
                         {
-                            sql << (group.logic == QueryLogicOperator::And
-                                        ? L" AND "
-                                        : L" OR ");
+                            sql << (group.logic == QueryLogicOperator::And ? L" AND " : L" OR ");
                         }
-                        sql << BuildConditionSql(
-                            group.conditions[conditionIndex]);
+                        sql << BuildConditionSql(group.conditions[conditionIndex]);
                     }
 
                     if (group.conditions.size() > 1)
@@ -494,26 +460,21 @@ namespace StableCore::Storage
             if (!plan.orderBy.empty())
             {
                 sql << L" ORDER BY ";
-                for (std::size_t index = 0; index < plan.orderBy.size();
-                     ++index)
+                for (std::size_t index = 0; index < plan.orderBy.size(); ++index)
                 {
                     if (index != 0)
                     {
                         sql << L", ";
                     }
                     sql << L"[" << plan.orderBy[index].fieldName << L"] "
-                        << (plan.orderBy[index].direction ==
-                                    QueryOrderDirection::Ascending
-                                ? L"ASC"
-                                : L"DESC");
+                        << (plan.orderBy[index].direction == QueryOrderDirection::Ascending ? L"ASC" : L"DESC");
                 }
             }
 
             if (plan.page.limit != std::numeric_limits<std::uint64_t>::max())
             {
                 sql << L" LIMIT ";
-                sql << (plan.page.limit == 0 ? kDefaultQueryPageLimit
-                                             : plan.page.limit);
+                sql << (plan.page.limit == 0 ? kDefaultQueryPageLimit : plan.page.limit);
                 if (plan.page.offset != 0)
                 {
                     sql << L" OFFSET " << plan.page.offset;
@@ -523,28 +484,22 @@ namespace StableCore::Storage
             return sql.str();
         }
 
-        std::wstring BuildFallbackNote(const QueryPlan& plan,
-                                       QueryFallbackSource source)
+        std::wstring BuildFallbackNote(const QueryPlan& plan, QueryFallbackSource source)
         {
-            const std::wstring prefix = (source == QueryFallbackSource::Planner)
-                                            ? L"planner-fallback:"
-                                            : L"executor-fallback:";
-            const std::wstring reason = plan.fallbackReason.empty()
-                                            ? L"scan-fallback"
-                                            : plan.fallbackReason;
+            const std::wstring prefix =
+                (source == QueryFallbackSource::Planner) ? L"planner-fallback:" : L"executor-fallback:";
+            const std::wstring reason = plan.fallbackReason.empty() ? L"scan-fallback" : plan.fallbackReason;
             return prefix + reason;
         }
 
-        std::wstring BuildIndexId(const std::wstring& tableName,
-                                  const std::wstring& fieldName)
+        std::wstring BuildIndexId(const std::wstring& tableName, const std::wstring& fieldName)
         {
             std::wstringstream sql;
             sql << L"idx_fv_" << tableName << L"_" << fieldName;
             return sql.str();
         }
 
-        void AppendUnique(std::vector<std::wstring>* ids,
-                          const std::wstring& id)
+        void AppendUnique(std::vector<std::wstring>* ids, const std::wstring& id)
         {
             if (ids == nullptr || id.empty())
             {
@@ -557,66 +512,56 @@ namespace StableCore::Storage
             }
         }
 
-        void SortMatchedRecords(std::vector<SCRecordPtr>* records,
-                                const QueryPlan& plan);
+        void SortMatchedRecords(std::vector<SCRecordPtr>* records, const QueryPlan& plan);
 
-        void SortMatchedRecords(std::vector<SCRecordPtr>* records,
-                                const QueryPlan& plan)
+        void SortMatchedRecords(std::vector<SCRecordPtr>* records, const QueryPlan& plan)
         {
             if (records == nullptr || records->empty() || plan.orderBy.empty())
             {
                 return;
             }
 
-            std::stable_sort(
-                records->begin(), records->end(),
-                [&plan](const SCRecordPtr& lhs, const SCRecordPtr& rhs) {
-                    for (const auto& sort : plan.orderBy)
+            std::stable_sort(records->begin(), records->end(), [&plan](const SCRecordPtr& lhs, const SCRecordPtr& rhs) {
+                for (const auto& sort : plan.orderBy)
+                {
+                    SCValue left = SCValue::Null();
+                    SCValue right = SCValue::Null();
+                    lhs->GetValue(sort.fieldName.c_str(), &left);
+                    rhs->GetValue(sort.fieldName.c_str(), &right);
+
+                    if (left == right)
                     {
-                        SCValue left = SCValue::Null();
-                        SCValue right = SCValue::Null();
-                        lhs->GetValue(sort.fieldName.c_str(), &left);
-                        rhs->GetValue(sort.fieldName.c_str(), &right);
-
-                        if (left == right)
-                        {
-                            continue;
-                        }
-
-                        const bool lhsLessThanRhs = CompareValues(
-                            left, right, QueryConditionOperator::LessThan);
-                        const bool rhsLessThanLhs = CompareValues(
-                            right, left, QueryConditionOperator::LessThan);
-
-                        if (sort.direction == QueryOrderDirection::Ascending &&
-                            lhsLessThanRhs)
-                        {
-                            return true;
-                        }
-                        if (sort.direction == QueryOrderDirection::Ascending &&
-                            rhsLessThanLhs)
-                        {
-                            return false;
-                        }
-                        if (sort.direction == QueryOrderDirection::Descending &&
-                            lhsLessThanRhs)
-                        {
-                            return false;
-                        }
-                        if (sort.direction == QueryOrderDirection::Descending &&
-                            rhsLessThanLhs)
-                        {
-                            return true;
-                        }
+                        continue;
                     }
-                    return lhs->GetId() < rhs->GetId();
-                });
+
+                    const bool lhsLessThanRhs = CompareValues(left, right, QueryConditionOperator::LessThan);
+                    const bool rhsLessThanLhs = CompareValues(right, left, QueryConditionOperator::LessThan);
+
+                    if (sort.direction == QueryOrderDirection::Ascending && lhsLessThanRhs)
+                    {
+                        return true;
+                    }
+                    if (sort.direction == QueryOrderDirection::Ascending && rhsLessThanLhs)
+                    {
+                        return false;
+                    }
+                    if (sort.direction == QueryOrderDirection::Descending && lhsLessThanRhs)
+                    {
+                        return false;
+                    }
+                    if (sort.direction == QueryOrderDirection::Descending && rhsLessThanLhs)
+                    {
+                        return true;
+                    }
+                }
+                return lhs->GetId() < rhs->GetId();
+            });
         }
 
-        ErrorCode CollectCandidateRecords(
-            ISCDatabase* database, const QueryPlan& plan,
-            std::vector<SCRecordPtr>* outMatchedRecords,
-            QueryExecutionResult* outResult)
+        ErrorCode CollectCandidateRecords(ISCDatabase* database,
+                                          const QueryPlan& plan,
+                                          std::vector<SCRecordPtr>* outMatchedRecords,
+                                          QueryExecutionResult* outResult)
         {
             if (outMatchedRecords == nullptr || outResult == nullptr)
             {
@@ -624,8 +569,7 @@ namespace StableCore::Storage
             }
 
             SCTablePtr table;
-            const ErrorCode tableRc =
-                database->GetTable(plan.target.name.c_str(), table);
+            const ErrorCode tableRc = database->GetTable(plan.target.name.c_str(), table);
             if (Failed(tableRc))
             {
                 return tableRc;
@@ -657,13 +601,10 @@ namespace StableCore::Storage
                     }
 
                     SCColumnDef column;
-                    if (schema->FindColumn(condition.fieldName.c_str(),
-                                           &column) == SC_OK &&
-                        column.indexed)
+                    if (schema->FindColumn(condition.fieldName.c_str(), &column) == SC_OK && column.indexed)
                     {
                         anyIndexedCondition = true;
-                        usedIndexSet.insert(BuildIndexId(plan.target.name,
-                                                         condition.fieldName));
+                        usedIndexSet.insert(BuildIndexId(plan.target.name, condition.fieldName));
                     }
                 }
             }
@@ -687,8 +628,7 @@ namespace StableCore::Storage
 
             outResult->scannedRows = scannedRows;
             outResult->matchedRows = matched.size();
-            outResult->usedIndexIds.assign(usedIndexSet.begin(),
-                                           usedIndexSet.end());
+            outResult->usedIndexIds.assign(usedIndexSet.begin(), usedIndexSet.end());
             *outMatchedRecords = std::move(matched);
             return SC_OK;
         }
@@ -704,8 +644,7 @@ namespace StableCore::Storage
             }
 
             SCTablePtr table;
-            const ErrorCode tableRc =
-                database->GetTable(plan.target.name.c_str(), table);
+            const ErrorCode tableRc = database->GetTable(plan.target.name.c_str(), table);
             if (Failed(tableRc))
             {
                 return tableRc;
@@ -736,22 +675,16 @@ namespace StableCore::Storage
                     }
 
                     SCColumnDef column;
-                    if (schema->FindColumn(condition.fieldName.c_str(),
-                                           &column) == SC_OK &&
-                        column.indexed)
+                    if (schema->FindColumn(condition.fieldName.c_str(), &column) == SC_OK && column.indexed)
                     {
-                        usedIndexSet.insert(BuildIndexId(plan.target.name,
-                                                         condition.fieldName));
+                        usedIndexSet.insert(BuildIndexId(plan.target.name, condition.fieldName));
                     }
                 }
             }
 
             const bool needsSort = !plan.orderBy.empty();
-            const bool unlimited =
-                plan.page.limit == std::numeric_limits<std::uint64_t>::max();
-            const std::uint64_t pageLimit = (plan.page.limit == 0)
-                                                ? kDefaultQueryPageLimit
-                                                : plan.page.limit;
+            const bool unlimited = plan.page.limit == std::numeric_limits<std::uint64_t>::max();
+            const std::uint64_t pageLimit = (plan.page.limit == 0) ? kDefaultQueryPageLimit : plan.page.limit;
             const std::uint64_t pageOffset = plan.page.offset;
 
             std::vector<SCRecordPtr> matchedRecords;
@@ -761,8 +694,7 @@ namespace StableCore::Storage
                 matchedRecords.reserve(64);
             } else
             {
-                pageRecords.reserve(static_cast<std::size_t>(
-                    pageLimit == 0 ? kDefaultQueryPageLimit : pageLimit));
+                pageRecords.reserve(static_cast<std::size_t>(pageLimit == 0 ? kDefaultQueryPageLimit : pageLimit));
             }
 
             std::uint64_t scannedRows = 0;
@@ -798,14 +730,11 @@ namespace StableCore::Storage
 
             outResult->scannedRows = scannedRows;
             outResult->matchedRows = matchedRows;
-            outResult->usedIndexIds.assign(usedIndexSet.begin(),
-                                           usedIndexSet.end());
+            outResult->usedIndexIds.assign(usedIndexSet.begin(), usedIndexSet.end());
             outResult->mode = QueryExecutionMode::FallbackScan;
             outResult->fallbackTriggered = true;
-            outResult->fallbackSource =
-                plan.state == QueryPlanState::ScanFallback
-                    ? QueryFallbackSource::Planner
-                    : QueryFallbackSource::Executor;
+            outResult->fallbackSource = plan.state == QueryPlanState::ScanFallback ? QueryFallbackSource::Planner
+                                                                                   : QueryFallbackSource::Executor;
             outResult->fallbackReason = plan.fallbackReason;
 
             if (needsSort)
@@ -813,8 +742,7 @@ namespace StableCore::Storage
                 SortMatchedRecords(&matchedRecords, plan);
                 std::vector<SCRecordPtr> paged;
                 paged.reserve(matchedRecords.size());
-                for (std::uint64_t index = 0; index < matchedRecords.size();
-                     ++index)
+                for (std::uint64_t index = 0; index < matchedRecords.size(); ++index)
                 {
                     if (index < pageOffset)
                     {
@@ -824,8 +752,7 @@ namespace StableCore::Storage
                     {
                         break;
                     }
-                    paged.push_back(
-                        matchedRecords[static_cast<std::size_t>(index)]);
+                    paged.push_back(matchedRecords[static_cast<std::size_t>(index)]);
                 }
 
                 outResult->returnedRows = paged.size();
@@ -844,30 +771,27 @@ namespace StableCore::Storage
                 }
             }
 
-            outResult->executionNote =
-                BuildFallbackNote(plan, outResult->fallbackSource);
+            outResult->executionNote = BuildFallbackNote(plan, outResult->fallbackSource);
             outResult->executionNote += L" | " + BuildPlanSqlDescriptor(plan);
             return SC_OK;
         }
 
-        ErrorCode MaterializeCursor(
-            const std::vector<SCRecordPtr>& matchedRecords,
-            const QueryPlan& plan, SCRecordCursorPtr* outCursor,
-            QueryExecutionResult* outResult)
+        ErrorCode MaterializeCursor(const std::vector<SCRecordPtr>& matchedRecords,
+                                    const QueryPlan& plan,
+                                    SCRecordCursorPtr* outCursor,
+                                    QueryExecutionResult* outResult)
         {
             std::uint64_t limit = plan.page.limit;
             if (limit == 0)
             {
                 limit = kDefaultQueryPageLimit;
             }
-            const bool unlimited =
-                plan.page.limit == std::numeric_limits<std::uint64_t>::max();
+            const bool unlimited = plan.page.limit == std::numeric_limits<std::uint64_t>::max();
             const std::uint64_t offset = plan.page.offset;
 
             std::vector<SCRecordPtr> pageRecords;
             pageRecords.reserve(matchedRecords.size());
-            for (std::uint64_t index = 0; index < matchedRecords.size();
-                 ++index)
+            for (std::uint64_t index = 0; index < matchedRecords.size(); ++index)
             {
                 if (index < offset)
                 {
@@ -877,15 +801,13 @@ namespace StableCore::Storage
                 {
                     break;
                 }
-                pageRecords.push_back(
-                    matchedRecords[static_cast<std::size_t>(index)]);
+                pageRecords.push_back(matchedRecords[static_cast<std::size_t>(index)]);
             }
 
             outResult->returnedRows = pageRecords.size();
             if (outCursor != nullptr)
             {
-                *outCursor =
-                    SCMakeRef<QueryResultCursor>(std::move(pageRecords));
+                *outCursor = SCMakeRef<QueryResultCursor>(std::move(pageRecords));
             }
             return SC_OK;
         }
@@ -910,15 +832,13 @@ namespace StableCore::Storage
 
             if (plan.target.type != QueryTargetType::Table)
             {
-                result.executionNote =
-                    L"executor-unsupported:view-target-not-enabled";
+                result.executionNote = L"executor-unsupported:view-target-not-enabled";
                 result.unsupportedSource = QueryUnsupportedSource::Executor;
                 *outResult = std::move(result);
                 return SC_E_NOTIMPL;
             }
 
-            if (plan.constraints.requireIndex &&
-                plan.state != QueryPlanState::DirectIndex)
+            if (plan.constraints.requireIndex && plan.state != QueryPlanState::DirectIndex)
             {
                 result.executionNote = L"executor-unsupported:index-required";
                 result.unsupportedSource = QueryUnsupportedSource::Executor;
@@ -926,11 +846,9 @@ namespace StableCore::Storage
                 return SC_E_INVALIDARG;
             }
 
-            if (plan.state == QueryPlanState::ScanFallback &&
-                !plan.constraints.allowFallbackScan)
+            if (plan.state == QueryPlanState::ScanFallback && !plan.constraints.allowFallbackScan)
             {
-                result.executionNote =
-                    L"executor-unsupported:fallback-disallowed";
+                result.executionNote = L"executor-unsupported:fallback-disallowed";
                 result.unsupportedSource = QueryUnsupportedSource::Executor;
                 *outResult = std::move(result);
                 return SC_E_INVALIDARG;
@@ -938,14 +856,12 @@ namespace StableCore::Storage
 
             if (plan.state == QueryPlanState::ScanFallback)
             {
-                const ErrorCode fallbackRc = ExecuteControlledFallbackScan(
-                    database, plan, context, &result);
+                const ErrorCode fallbackRc = ExecuteControlledFallbackScan(database, plan, context, &result);
                 if (Failed(fallbackRc))
                 {
                     result.mode = QueryExecutionMode::Unsupported;
                     result.unsupportedSource = QueryUnsupportedSource::Executor;
-                    result.executionNote =
-                        L"executor-unsupported:fallback-execution-failed";
+                    result.executionNote = L"executor-unsupported:fallback-execution-failed";
                     result.rc = fallbackRc;
                     *outResult = std::move(result);
                     return fallbackRc;
@@ -957,8 +873,7 @@ namespace StableCore::Storage
             }
 
             std::vector<SCRecordPtr> matchedRecords;
-            const ErrorCode collectRc = CollectCandidateRecords(
-                database, plan, &matchedRecords, &result);
+            const ErrorCode collectRc = CollectCandidateRecords(database, plan, &matchedRecords, &result);
             if (Failed(collectRc))
             {
                 result.mode = QueryExecutionMode::Unsupported;
@@ -997,13 +912,11 @@ namespace StableCore::Storage
                 SortMatchedRecords(&matchedRecords, plan);
             }
 
-            const ErrorCode cursorRc = MaterializeCursor(
-                matchedRecords, plan,
-                static_cast<SCRecordCursorPtr*>(context.resultCursor), &result);
+            const ErrorCode cursorRc =
+                MaterializeCursor(matchedRecords, plan, static_cast<SCRecordCursorPtr*>(context.resultCursor), &result);
             if (Failed(cursorRc))
             {
-                result.executionNote =
-                    L"executor-unsupported:cursor-materialization-failed";
+                result.executionNote = L"executor-unsupported:cursor-materialization-failed";
                 result.mode = QueryExecutionMode::Unsupported;
                 result.unsupportedSource = QueryUnsupportedSource::Executor;
                 result.rc = cursorRc;

@@ -22,18 +22,13 @@ namespace StableCore::Storage
             }
 
             const std::uint64_t currentBytes = context->bytesWritten;
-            const std::uint64_t requestBytes =
-                static_cast<std::uint64_t>(text.size());
-            if (sizePolicy.maxBytes > 0 &&
-                currentBytes + requestBytes > sizePolicy.maxBytes)
+            const std::uint64_t requestBytes = static_cast<std::uint64_t>(text.size());
+            if (sizePolicy.maxBytes > 0 && currentBytes + requestBytes > sizePolicy.maxBytes)
             {
-                if (sizePolicy.overflowPolicy ==
-                    SCExportOverflowPolicy::Truncate)
+                if (sizePolicy.overflowPolicy == SCExportOverflowPolicy::Truncate)
                 {
                     const std::uint64_t remain =
-                        sizePolicy.maxBytes > currentBytes
-                            ? sizePolicy.maxBytes - currentBytes
-                            : 0;
+                        sizePolicy.maxBytes > currentBytes ? sizePolicy.maxBytes - currentBytes : 0;
                     if (remain == 0)
                     {
                         context->cancelled = true;
@@ -41,15 +36,13 @@ namespace StableCore::Storage
                     }
 
                     std::size_t written = 0;
-                    const ErrorCode rc = context->write(
-                        context->userData, text.data(),
-                        static_cast<std::size_t>(remain), &written);
+                    const ErrorCode rc =
+                        context->write(context->userData, text.data(), static_cast<std::size_t>(remain), &written);
                     if (Failed(rc))
                     {
                         return rc;
                     }
-                    context->bytesWritten +=
-                        static_cast<std::uint64_t>(written);
+                    context->bytesWritten += static_cast<std::uint64_t>(written);
                     context->cancelled = true;
                     return SC_E_EXPORT_TOO_LARGE;
                 }
@@ -59,8 +52,7 @@ namespace StableCore::Storage
             }
 
             std::size_t written = 0;
-            const ErrorCode rc = context->write(context->userData, text.data(),
-                                                text.size(), &written);
+            const ErrorCode rc = context->write(context->userData, text.data(), text.size(), &written);
             if (Failed(rc))
             {
                 return rc;
@@ -119,9 +111,7 @@ namespace StableCore::Storage
     SCPackageSizePolicy BuildDefaultPackageSizePolicy(SCExportMode mode)
     {
         SCPackageSizePolicy policy;
-        policy.maxBytes = mode == SCExportMode::Normal
-                              ? 16ULL * 1024ULL * 1024ULL
-                              : 64ULL * 1024ULL * 1024ULL;
+        policy.maxBytes = mode == SCExportMode::Normal ? 16ULL * 1024ULL * 1024ULL : 64ULL * 1024ULL * 1024ULL;
         policy.overflowPolicy = SCExportOverflowPolicy::Fail;
         return policy;
     }
@@ -156,8 +146,7 @@ namespace StableCore::Storage
         return convert.to_bytes(text);
     }
 
-    std::wstring ApplyRedaction(const std::wstring& text,
-                                const SCRedactionPolicy& policy)
+    std::wstring ApplyRedaction(const std::wstring& text, const SCRedactionPolicy& policy)
     {
         if (!policy.redactSensitiveText)
         {

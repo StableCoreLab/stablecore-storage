@@ -13,13 +13,14 @@ namespace StableCore::Storage
     {
     public:
         virtual ~IQueryPlanner() = default;
-        virtual ErrorCode BuildPlan(
-            const QueryTarget& target,
-            const std::vector<QueryConditionGroup>& conditionGroups,
-            QueryLogicOperator conditionGroupLogic,
-            const std::vector<SortSpec>& orderBy, const QueryPage& page,
-            const QueryHints& hints, const QueryConstraints& constraints,
-            QueryPlan* outPlan) const = 0;
+        virtual ErrorCode BuildPlan(const QueryTarget& target,
+                                    const std::vector<QueryConditionGroup>& conditionGroups,
+                                    QueryLogicOperator conditionGroupLogic,
+                                    const std::vector<SortSpec>& orderBy,
+                                    const QueryPage& page,
+                                    const QueryHints& hints,
+                                    const QueryConstraints& constraints,
+                                    QueryPlan* outPlan) const = 0;
     };
 
     // Executor is a unified entry point only; concrete backends may provide
@@ -39,8 +40,7 @@ namespace StableCore::Storage
     {
     public:
         virtual ~IQueryIndexProvider() = default;
-        virtual ErrorCode CheckQueryIndex(
-            QueryIndexCheckResult* outResult) const = 0;
+        virtual ErrorCode CheckQueryIndex(QueryIndexCheckResult* outResult) const = 0;
     };
 
     class IQueryIndexMaintainer
@@ -56,16 +56,14 @@ namespace StableCore::Storage
     {
     public:
         virtual ~IReferenceIndexProvider() = default;
-        virtual ErrorCode GetReferencesBySource(
-            const std::wstring& sourceTable, RecordId sourceRecordId,
-            std::vector<ReferenceRecord>* outRecords) const = 0;
-        virtual ErrorCode GetReferencesByTarget(
-            const std::wstring& targetTable, RecordId targetRecordId,
-            std::vector<ReverseReferenceRecord>* outRecords) const = 0;
-        virtual ErrorCode CheckReferenceIndex(
-            ReferenceIndexCheckResult* outResult) const = 0;
-        virtual ErrorCode GetAllReferencesDiagnosticOnly(
-            ReferenceIndex* outIndex) const = 0;
+        virtual ErrorCode GetReferencesBySource(const std::wstring& sourceTable,
+                                                RecordId sourceRecordId,
+                                                std::vector<ReferenceRecord>* outRecords) const = 0;
+        virtual ErrorCode GetReferencesByTarget(const std::wstring& targetTable,
+                                                RecordId targetRecordId,
+                                                std::vector<ReverseReferenceRecord>* outRecords) const = 0;
+        virtual ErrorCode CheckReferenceIndex(ReferenceIndexCheckResult* outResult) const = 0;
+        virtual ErrorCode GetAllReferencesDiagnosticOnly(ReferenceIndex* outIndex) const = 0;
     };
 
     class IReferenceIndexMaintainer
@@ -73,17 +71,15 @@ namespace StableCore::Storage
     public:
         virtual ~IReferenceIndexMaintainer() = default;
         virtual ErrorCode RebuildReferenceIndexes() = 0;
-        virtual ErrorCode CommitReferenceDelta(
-            const ReferenceIndex& forwardDelta,
-            const ReverseReferenceIndex& reverseDelta) = 0;
+        virtual ErrorCode CommitReferenceDelta(const ReferenceIndex& forwardDelta,
+                                               const ReverseReferenceIndex& reverseDelta) = 0;
     };
 
-    using QueryExecutionContextDispatch = ErrorCode (*)(
-        const QueryPlan& plan, const QueryExecutionContext& context,
-        QueryExecutionResult* outResult);
+    using QueryExecutionContextDispatch = ErrorCode (*)(const QueryPlan& plan,
+                                                        const QueryExecutionContext& context,
+                                                        QueryExecutionResult* outResult);
 
-    void RegisterQueryExecutionContextDispatch(
-        QueryBackendKind backendKind, QueryExecutionContextDispatch dispatch);
+    void RegisterQueryExecutionContextDispatch(QueryBackendKind backendKind, QueryExecutionContextDispatch dispatch);
 
     // Executes a normalized QueryPlan through the registered backend-specific
     // dispatcher.

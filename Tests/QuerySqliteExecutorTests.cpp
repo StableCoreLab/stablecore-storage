@@ -76,8 +76,7 @@ namespace
 
 TEST(QuerySqliteExecutorTests, LegacyFindRecordsRoutesThroughExecutor)
 {
-    const fs::path dbPath =
-        MakeTempDbPath(L"StableCoreStorage_QuerySqlite_Legacy.sqlite");
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_QuerySqlite_Legacy.sqlite");
 
     sc::SCDbPtr db;
     EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
@@ -86,9 +85,7 @@ TEST(QuerySqliteExecutorTests, LegacyFindRecordsRoutesThroughExecutor)
     SeedQueryableBeamRows(table, db);
 
     sc::SCRecordCursorPtr cursor;
-    EXPECT_EQ(
-        table->FindRecords({L"Width", sc::SCValue::FromInt64(200)}, cursor),
-        sc::SC_OK);
+    EXPECT_EQ(table->FindRecords({L"Width", sc::SCValue::FromInt64(200)}, cursor), sc::SC_OK);
 
     sc::SCRecordPtr record;
     EXPECT_EQ(cursor->Next(record), sc::SC_OK);
@@ -101,8 +98,7 @@ TEST(QuerySqliteExecutorTests, LegacyFindRecordsRoutesThroughExecutor)
 
 TEST(QuerySqliteExecutorTests, SqliteExecutorReportsDirectAndPartialModes)
 {
-    const fs::path dbPath =
-        MakeTempDbPath(L"StableCoreStorage_QuerySqlite_Result.sqlite");
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_QuerySqlite_Result.sqlite");
 
     sc::SCDbPtr db;
     EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
@@ -114,15 +110,19 @@ TEST(QuerySqliteExecutorTests, SqliteExecutorReportsDirectAndPartialModes)
     ASSERT_NE(planner, nullptr);
 
     sc::QueryPlan directPlan;
-    EXPECT_EQ(planner->BuildPlan(
-                  sc::QueryTarget{L"Beam", sc::QueryTargetType::Table},
-                  {sc::QueryConditionGroup{
-                      sc::QueryLogicOperator::And,
-                      {sc::QueryCondition{L"Width",
-                                          sc::QueryConditionOperator::Equal,
-                                          {sc::SCValue::FromInt64(200)}}}}},
-                  sc::QueryLogicOperator::And, {}, {}, {}, {}, &directPlan),
-              sc::SC_OK);
+    EXPECT_EQ(
+        planner->BuildPlan(
+            sc::QueryTarget{L"Beam", sc::QueryTargetType::Table},
+            {sc::QueryConditionGroup{
+                sc::QueryLogicOperator::And,
+                {sc::QueryCondition{L"Width", sc::QueryConditionOperator::Equal, {sc::SCValue::FromInt64(200)}}}}},
+            sc::QueryLogicOperator::And,
+            {},
+            {},
+            {},
+            {},
+            &directPlan),
+        sc::SC_OK);
 
     sc::SCRecordCursorPtr directCursor;
     sc::QueryExecutionResult directResult;
@@ -131,27 +131,27 @@ TEST(QuerySqliteExecutorTests, SqliteExecutorReportsDirectAndPartialModes)
     directContext.database = db.Get();
     directContext.backendHandle = db.Get();
     directContext.resultCursor = &directCursor;
-    EXPECT_EQ(sc::ExecuteQueryPlan(directPlan, directContext, &directResult),
-              sc::SC_OK);
+    EXPECT_EQ(sc::ExecuteQueryPlan(directPlan, directContext, &directResult), sc::SC_OK);
     EXPECT_EQ(directResult.mode, sc::QueryExecutionMode::DirectIndex);
     EXPECT_FALSE(directResult.fallbackTriggered);
     EXPECT_EQ(directResult.matchedRows, 1u);
     EXPECT_EQ(directResult.returnedRows, 1u);
     EXPECT_FALSE(directResult.usedIndexIds.empty());
-    EXPECT_NE(directResult.executionNote.find(L"SELECT record_id"),
-              std::wstring::npos);
+    EXPECT_NE(directResult.executionNote.find(L"SELECT record_id"), std::wstring::npos);
 
     sc::QueryPlan partialPlan;
-    EXPECT_EQ(
-        planner->BuildPlan(
-            sc::QueryTarget{L"Beam", sc::QueryTargetType::Table},
-            {sc::QueryConditionGroup{
-                sc::QueryLogicOperator::And,
-                {sc::QueryCondition{L"Name",
-                                    sc::QueryConditionOperator::StartsWith,
-                                    {sc::SCValue::FromString(L"Al")}}}}},
-            sc::QueryLogicOperator::And, {}, {}, {}, {}, &partialPlan),
-        sc::SC_OK);
+    EXPECT_EQ(planner->BuildPlan(sc::QueryTarget{L"Beam", sc::QueryTargetType::Table},
+                                 {sc::QueryConditionGroup{sc::QueryLogicOperator::And,
+                                                          {sc::QueryCondition{L"Name",
+                                                                              sc::QueryConditionOperator::StartsWith,
+                                                                              {sc::SCValue::FromString(L"Al")}}}}},
+                                 sc::QueryLogicOperator::And,
+                                 {},
+                                 {},
+                                 {},
+                                 {},
+                                 &partialPlan),
+              sc::SC_OK);
 
     sc::SCRecordCursorPtr partialCursor;
     sc::QueryExecutionResult partialResult;
@@ -160,8 +160,7 @@ TEST(QuerySqliteExecutorTests, SqliteExecutorReportsDirectAndPartialModes)
     partialContext.database = db.Get();
     partialContext.backendHandle = db.Get();
     partialContext.resultCursor = &partialCursor;
-    EXPECT_EQ(sc::ExecuteQueryPlan(partialPlan, partialContext, &partialResult),
-              sc::SC_OK);
+    EXPECT_EQ(sc::ExecuteQueryPlan(partialPlan, partialContext, &partialResult), sc::SC_OK);
     EXPECT_EQ(partialResult.mode, sc::QueryExecutionMode::PartialIndex);
     EXPECT_FALSE(partialResult.fallbackTriggered);
     EXPECT_EQ(partialResult.matchedRows, 2u);
@@ -171,8 +170,7 @@ TEST(QuerySqliteExecutorTests, SqliteExecutorReportsDirectAndPartialModes)
 
 TEST(QuerySqliteExecutorTests, ExecutorRejectsRequireIndexOnPartialPlans)
 {
-    const fs::path dbPath =
-        MakeTempDbPath(L"StableCoreStorage_QuerySqlite_Unsupported.sqlite");
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_QuerySqlite_Unsupported.sqlite");
 
     sc::SCDbPtr db;
     EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
@@ -184,9 +182,7 @@ TEST(QuerySqliteExecutorTests, ExecutorRejectsRequireIndexOnPartialPlans)
     plan.target = sc::QueryTarget{L"Beam", sc::QueryTargetType::Table};
     plan.conditionGroups = {sc::QueryConditionGroup{
         sc::QueryLogicOperator::And,
-        {sc::QueryCondition{L"Name",
-                            sc::QueryConditionOperator::StartsWith,
-                            {sc::SCValue::FromString(L"Al")}}}}};
+        {sc::QueryCondition{L"Name", sc::QueryConditionOperator::StartsWith, {sc::SCValue::FromString(L"Al")}}}}};
     plan.conditionGroupLogic = sc::QueryLogicOperator::And;
     plan.state = sc::QueryPlanState::PartialIndex;
     plan.constraints.requireIndex = true;
@@ -200,17 +196,14 @@ TEST(QuerySqliteExecutorTests, ExecutorRejectsRequireIndexOnPartialPlans)
     context.database = db.Get();
     context.backendHandle = db.Get();
     context.resultCursor = &cursor;
-    EXPECT_EQ(sc::ExecuteQueryPlan(plan, context, &result),
-              sc::SC_E_INVALIDARG);
+    EXPECT_EQ(sc::ExecuteQueryPlan(plan, context, &result), sc::SC_E_INVALIDARG);
     EXPECT_EQ(result.mode, sc::QueryExecutionMode::Unsupported);
-    EXPECT_NE(result.executionNote.find(L"executor-unsupported:index-required"),
-              std::wstring::npos);
+    EXPECT_NE(result.executionNote.find(L"executor-unsupported:index-required"), std::wstring::npos);
 }
 
 TEST(QuerySqliteExecutorTests, SqliteExecutorRunsControlledFallbackScan)
 {
-    const fs::path dbPath =
-        MakeTempDbPath(L"StableCoreStorage_QuerySqlite_Fallback.sqlite");
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_QuerySqlite_Fallback.sqlite");
 
     sc::SCDbPtr db;
     EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
@@ -222,15 +215,19 @@ TEST(QuerySqliteExecutorTests, SqliteExecutorRunsControlledFallbackScan)
     ASSERT_NE(planner, nullptr);
 
     sc::QueryPlan plan;
-    EXPECT_EQ(planner->BuildPlan(
-                  sc::QueryTarget{L"Beam", sc::QueryTargetType::Table},
-                  {sc::QueryConditionGroup{
-                      sc::QueryLogicOperator::And,
-                      {sc::QueryCondition{L"Name",
-                                          sc::QueryConditionOperator::Contains,
-                                          {sc::SCValue::FromString(L"Al")}}}}},
-                  sc::QueryLogicOperator::And, {}, {}, {}, {}, &plan),
-              sc::SC_OK);
+    EXPECT_EQ(
+        planner->BuildPlan(
+            sc::QueryTarget{L"Beam", sc::QueryTargetType::Table},
+            {sc::QueryConditionGroup{
+                sc::QueryLogicOperator::And,
+                {sc::QueryCondition{L"Name", sc::QueryConditionOperator::Contains, {sc::SCValue::FromString(L"Al")}}}}},
+            sc::QueryLogicOperator::And,
+            {},
+            {},
+            {},
+            {},
+            &plan),
+        sc::SC_OK);
     EXPECT_EQ(plan.state, sc::QueryPlanState::ScanFallback);
 
     sc::SCRecordCursorPtr cursor;
@@ -248,6 +245,5 @@ TEST(QuerySqliteExecutorTests, SqliteExecutorRunsControlledFallbackScan)
     EXPECT_EQ(result.scannedRows, 3u);
     EXPECT_EQ(result.matchedRows, 2u);
     EXPECT_EQ(result.returnedRows, 2u);
-    EXPECT_NE(result.executionNote.find(L"planner-fallback"),
-              std::wstring::npos);
+    EXPECT_NE(result.executionNote.find(L"planner-fallback"), std::wstring::npos);
 }

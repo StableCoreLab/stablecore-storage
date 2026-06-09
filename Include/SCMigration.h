@@ -118,15 +118,15 @@ namespace StableCore::Storage
     };
 
     ErrorCode BuildDefaultVersionGraph(SCVersionGraph* outGraph);
-    ErrorCode BuildVersionGraph(
-        std::int32_t currentVersion, std::int32_t targetVersion,
-        const std::vector<SCMigrationStep>& availableSteps,
-        SCVersionGraph* outGraph);
+    ErrorCode BuildVersionGraph(std::int32_t currentVersion,
+                                std::int32_t targetVersion,
+                                const std::vector<SCMigrationStep>& availableSteps,
+                                SCVersionGraph* outGraph);
 
-    ErrorCode BuildMigrationPlan(
-        std::int32_t currentVersion, std::int32_t targetVersion,
-        const std::vector<SCMigrationStep>& availableSteps,
-        SCMigrationPlan* outPlan);
+    ErrorCode BuildMigrationPlan(std::int32_t currentVersion,
+                                 std::int32_t targetVersion,
+                                 const std::vector<SCMigrationStep>& availableSteps,
+                                 SCMigrationPlan* outPlan);
 
     ErrorCode BuildUpgradePlan(std::int32_t currentVersion,
                                std::int32_t targetVersion,

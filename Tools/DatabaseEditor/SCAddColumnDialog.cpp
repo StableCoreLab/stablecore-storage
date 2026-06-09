@@ -102,24 +102,27 @@ namespace StableCore::Storage::Editor
         buttonBox_ = new QDialogButtonBox(
             QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
         okButton_ = buttonBox_->button(QDialogButtonBox::Ok);
-        connect(buttonBox_, &QDialogButtonBox::accepted, this, &QDialog::accept);
-        connect(buttonBox_, &QDialogButtonBox::rejected, this, &QDialog::reject);
+        connect(buttonBox_, &QDialogButtonBox::accepted, this,
+                &QDialog::accept);
+        connect(buttonBox_, &QDialogButtonBox::rejected, this,
+                &QDialog::reject);
         layout->addWidget(buttonBox_);
 
         connect(nullableCheck_, &QCheckBox::toggled, this,
                 &SCAddColumnDialog::UpdateValidationState);
         connect(relationCheck_, &QCheckBox::toggled, this,
                 &SCAddColumnDialog::UpdateValidationState);
-        connect(valueKindCombo_, qOverload<int>(&QComboBox::currentIndexChanged),
-                this, &SCAddColumnDialog::UpdateValidationState);
+        connect(valueKindCombo_,
+                qOverload<int>(&QComboBox::currentIndexChanged), this,
+                &SCAddColumnDialog::UpdateValidationState);
         connect(defaultValueEdit_, &QLineEdit::textChanged, this,
                 &SCAddColumnDialog::UpdateValidationState);
 
         UpdateValidationState();
     }
 
-    SCAddColumnDialog::SCAddColumnDialog(
-        const sc::SCColumnDef& initialValue, QWidget* parent)
+    SCAddColumnDialog::SCAddColumnDialog(const sc::SCColumnDef& initialValue,
+                                         QWidget* parent)
         : SCAddColumnDialog(parent)
     {
         setWindowTitle(QStringLiteral("Edit Column"));
@@ -137,14 +140,16 @@ namespace StableCore::Storage::Editor
         {
             valueKindCombo_->setCurrentIndex(valueKindIndex);
         }
-        relationCheck_->setChecked(value.columnKind == sc::ColumnKind::Relation);
+        relationCheck_->setChecked(value.columnKind ==
+                                   sc::ColumnKind::Relation);
         nullableCheck_->setChecked(value.nullable);
         editableCheck_->setChecked(value.editable);
         userDefinedCheck_->setChecked(value.userDefined);
         indexedCheck_->setChecked(value.indexed);
         participatesInCalcCheck_->setChecked(value.participatesInCalc);
         unitEdit_->setText(QString::fromStdWString(value.unit));
-        referenceTableEdit_->setText(QString::fromStdWString(value.referenceTable));
+        referenceTableEdit_->setText(
+            QString::fromStdWString(value.referenceTable));
 
         if (value.defaultValue.IsNull())
         {
@@ -240,8 +245,8 @@ namespace StableCore::Storage::Editor
             !defaultValueEdit_->text().trimmed().isEmpty();
         const bool nonNullableWithoutDefault =
             !nullableCheck_->isChecked() && !hasDefaultValue;
-        const bool requiresDefault = nonNullableWithoutDefault &&
-                                     currentTableHasRecords_;
+        const bool requiresDefault =
+            nonNullableWithoutDefault && currentTableHasRecords_;
 
         if (validationLabel_ != nullptr)
         {

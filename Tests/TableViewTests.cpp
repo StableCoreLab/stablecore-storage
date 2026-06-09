@@ -74,8 +74,7 @@ namespace
     sc::ErrorCode CreateFileDb(const wchar_t* fileName, sc::SCDbPtr& db)
     {
         const fs::path path = MakeTempDbPath(fileName);
-        return sc::CreateFileDatabase(path.c_str(), sc::SCOpenDatabaseOptions{},
-                                       db);
+        return sc::CreateFileDatabase(path.c_str(), sc::SCOpenDatabaseOptions{}, db);
     }
 
 }  // namespace
@@ -83,8 +82,7 @@ namespace
 TEST(StorageTableView, CombinesFactAndComputedColumns)
 {
     sc::SCDbPtr db;
-    ASSERT_EQ(CreateFileDb(L"StableCoreStorage_TableView_Combine.sqlite", db),
-              sc::SC_OK);
+    ASSERT_EQ(CreateFileDb(L"StableCoreStorage_TableView_Combine.sqlite", db), sc::SC_OK);
 
     sc::SCTablePtr floorTable = CreateFloorTable(db);
     sc::SCTablePtr beamTable = CreateBeamTable(db);
@@ -105,8 +103,7 @@ TEST(StorageTableView, CombinesFactAndComputedColumns)
     ASSERT_EQ(db->Commit(edit.Get()), sc::SC_OK);
 
     sc::SCComputedTableViewPtr view;
-    ASSERT_EQ(sc::CreateComputedTableView(db.Get(), L"Beam", nullptr, view),
-              sc::SC_OK);
+    ASSERT_EQ(sc::CreateComputedTableView(db.Get(), L"Beam", nullptr, view), sc::SC_OK);
 
     sc::SCComputedColumnDef volume;
     volume.name = L"Volume";
@@ -135,8 +132,7 @@ TEST(StorageTableView, CombinesFactAndComputedColumns)
 TEST(StorageTableView, AggregateColumnTracksRelatedRecords)
 {
     sc::SCDbPtr db;
-    ASSERT_EQ(CreateFileDb(L"StableCoreStorage_TableView_Aggregate.sqlite", db),
-              sc::SC_OK);
+    ASSERT_EQ(CreateFileDb(L"StableCoreStorage_TableView_Aggregate.sqlite", db), sc::SC_OK);
 
     sc::SCTablePtr floorTable = CreateFloorTable(db);
     sc::SCTablePtr beamTable = CreateBeamTable(db);
@@ -160,9 +156,7 @@ TEST(StorageTableView, AggregateColumnTracksRelatedRecords)
     ASSERT_EQ(db->Commit(edit.Get()), sc::SC_OK);
 
     sc::SCComputedTableViewPtr floorView;
-    ASSERT_EQ(
-        sc::CreateComputedTableView(db.Get(), L"Floor", nullptr, floorView),
-        sc::SC_OK);
+    ASSERT_EQ(sc::CreateComputedTableView(db.Get(), L"Floor", nullptr, floorView), sc::SC_OK);
 
     sc::SCComputedColumnDef beamCount;
     beamCount.name = L"BeamCount";
@@ -175,8 +169,7 @@ TEST(StorageTableView, AggregateColumnTracksRelatedRecords)
     ASSERT_EQ(floorView->AddComputedColumn(beamCount), sc::SC_OK);
 
     sc::SCValue cell;
-    ASSERT_EQ(floorView->GetCellValue(floor->GetId(), L"BeamCount", &cell),
-              sc::SC_OK);
+    ASSERT_EQ(floorView->GetCellValue(floor->GetId(), L"BeamCount", &cell), sc::SC_OK);
     std::int64_t count = 0;
     ASSERT_EQ(cell.AsInt64(&count), sc::SC_OK);
     EXPECT_EQ(count, 3);
@@ -185,15 +178,13 @@ TEST(StorageTableView, AggregateColumnTracksRelatedRecords)
 TEST(StorageTableView, RejectsInvalidComputedColumnDefinitions)
 {
     sc::SCDbPtr db;
-    ASSERT_EQ(CreateFileDb(L"StableCoreStorage_TableView_Invalid.sqlite", db),
-              sc::SC_OK);
+    ASSERT_EQ(CreateFileDb(L"StableCoreStorage_TableView_Invalid.sqlite", db), sc::SC_OK);
 
     sc::SCTablePtr floorTable = CreateFloorTable(db);
     sc::SCTablePtr beamTable = CreateBeamTable(db);
 
     sc::SCComputedTableViewPtr view;
-    ASSERT_EQ(sc::CreateComputedTableView(db.Get(), L"Beam", nullptr, view),
-              sc::SC_OK);
+    ASSERT_EQ(sc::CreateComputedTableView(db.Get(), L"Beam", nullptr, view), sc::SC_OK);
 
     sc::SCComputedColumnDef invalidExpression;
     invalidExpression.name = L"InvalidExpression";
@@ -233,8 +224,7 @@ TEST(StorageTableView, RejectsInvalidComputedColumnDefinitions)
 TEST(StorageTableView, ComputedColumnTracksEditUndoRedo)
 {
     sc::SCDbPtr db;
-    ASSERT_EQ(CreateFileDb(L"StableCoreStorage_TableView_UndoRedo.sqlite", db),
-              sc::SC_OK);
+    ASSERT_EQ(CreateFileDb(L"StableCoreStorage_TableView_UndoRedo.sqlite", db), sc::SC_OK);
 
     sc::SCTablePtr floorTable = CreateFloorTable(db);
     sc::SCTablePtr beamTable = CreateBeamTable(db);
@@ -255,8 +245,7 @@ TEST(StorageTableView, ComputedColumnTracksEditUndoRedo)
     ASSERT_EQ(db->Commit(seedEdit.Get()), sc::SC_OK);
 
     sc::SCComputedTableViewPtr view;
-    ASSERT_EQ(sc::CreateComputedTableView(db.Get(), L"Beam", nullptr, view),
-              sc::SC_OK);
+    ASSERT_EQ(sc::CreateComputedTableView(db.Get(), L"Beam", nullptr, view), sc::SC_OK);
 
     sc::SCComputedColumnDef doubledWidth;
     doubledWidth.name = L"DoubledWidth";
@@ -268,8 +257,7 @@ TEST(StorageTableView, ComputedColumnTracksEditUndoRedo)
     ASSERT_EQ(view->AddComputedColumn(doubledWidth), sc::SC_OK);
 
     sc::SCValue cell;
-    ASSERT_EQ(view->GetCellValue(beam->GetId(), L"DoubledWidth", &cell),
-              sc::SC_OK);
+    ASSERT_EQ(view->GetCellValue(beam->GetId(), L"DoubledWidth", &cell), sc::SC_OK);
     double doubled = 0.0;
     ASSERT_EQ(cell.AsDouble(&doubled), sc::SC_OK);
     EXPECT_DOUBLE_EQ(doubled, 1.0);
@@ -279,20 +267,17 @@ TEST(StorageTableView, ComputedColumnTracksEditUndoRedo)
     ASSERT_EQ(beam->SetDouble(L"Width", 1.5), sc::SC_OK);
     ASSERT_EQ(db->Commit(edit.Get()), sc::SC_OK);
 
-    ASSERT_EQ(view->GetCellValue(beam->GetId(), L"DoubledWidth", &cell),
-              sc::SC_OK);
+    ASSERT_EQ(view->GetCellValue(beam->GetId(), L"DoubledWidth", &cell), sc::SC_OK);
     ASSERT_EQ(cell.AsDouble(&doubled), sc::SC_OK);
     EXPECT_DOUBLE_EQ(doubled, 3.0);
 
     ASSERT_EQ(db->Undo(), sc::SC_OK);
-    ASSERT_EQ(view->GetCellValue(beam->GetId(), L"DoubledWidth", &cell),
-              sc::SC_OK);
+    ASSERT_EQ(view->GetCellValue(beam->GetId(), L"DoubledWidth", &cell), sc::SC_OK);
     ASSERT_EQ(cell.AsDouble(&doubled), sc::SC_OK);
     EXPECT_DOUBLE_EQ(doubled, 1.0);
 
     ASSERT_EQ(db->Redo(), sc::SC_OK);
-    ASSERT_EQ(view->GetCellValue(beam->GetId(), L"DoubledWidth", &cell),
-              sc::SC_OK);
+    ASSERT_EQ(view->GetCellValue(beam->GetId(), L"DoubledWidth", &cell), sc::SC_OK);
     ASSERT_EQ(cell.AsDouble(&doubled), sc::SC_OK);
     EXPECT_DOUBLE_EQ(doubled, 3.0);
 }

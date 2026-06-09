@@ -12,6 +12,7 @@ option(SCSTORAGE_BUILD_DB_EDITOR "Build the Qt database editor tool" OFF)
 
 set(SCSTORAGE_TARGET SCStorage)
 set(SCSTORAGE_PRODUCT_EXAMPLE_TARGET SCStorageProductExample)
+set(SCSTORAGE_SCHEMA_EDIT_EXAMPLE_TARGET SCStorageSchemaEditExample)
 set(SCSTORAGE_TESTS_TARGET SCStorageTests)
 set(SCSTORAGE_DB_EDITOR_TESTS_TARGET SCStorageDatabaseEditorTests)
 set(SCSTORAGE_BIN_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../Bin")
@@ -94,6 +95,7 @@ set(SCSTORAGE_LIBRARY_SOURCES
     Src/Query/SCQueryExecutor.cpp
     Src/Query/SCQuerySqliteExecutor.cpp
     Src/Query/SCQueryPlanner.cpp
+    Src/Schema/SCSchemaEdit.cpp
     Src/Sqlite/SCSqliteAdapter.cpp
 )
 
@@ -112,6 +114,7 @@ set(SCSTORAGE_PUBLIC_HEADERS
     Include/ISCInterfaces.h
     Include/SCMigration.h
     Include/SCQuery.h
+    Include/SCSchemaEdit.h
     Include/SCRefCounted.h
     Include/ISCRefPtr.h
     Include/SCStorage.h
@@ -170,6 +173,20 @@ target_link_libraries(${SCSTORAGE_PRODUCT_EXAMPLE_TARGET}
 )
 SCStorageSourceGroupTree("${CMAKE_CURRENT_SOURCE_DIR}" Examples/ProductIntegrationExample.cpp)
 
+add_executable(${SCSTORAGE_SCHEMA_EDIT_EXAMPLE_TARGET}
+    Examples/SchemaEditExample.cpp
+)
+SCStorageConfigureOutputDirs(${SCSTORAGE_SCHEMA_EDIT_EXAMPLE_TARGET})
+if (MSVC)
+    target_compile_options(${SCSTORAGE_SCHEMA_EDIT_EXAMPLE_TARGET} PRIVATE /MP)
+endif()
+
+target_link_libraries(${SCSTORAGE_SCHEMA_EDIT_EXAMPLE_TARGET}
+    PRIVATE
+        ${SCSTORAGE_TARGET}
+)
+SCStorageSourceGroupTree("${CMAKE_CURRENT_SOURCE_DIR}" Examples/SchemaEditExample.cpp)
+
 if (SCSTORAGE_BUILD_DB_EDITOR)
     set(CMAKE_AUTOMOC ON)
     set(CMAKE_AUTOUIC OFF)
@@ -207,6 +224,7 @@ if (SCSTORAGE_BUILD_TESTS)
         Tests/QueryPlannerBridgeTests.cpp
         Tests/QuerySqliteExecutorTests.cpp
         Tests/PerformanceSmokeTests.cpp
+        Tests/SchemaEditTests.cpp
         Tests/TableViewTests.cpp
     )
     SCStorageConfigureOutputDirs(${SCSTORAGE_TESTS_TARGET})
@@ -228,6 +246,7 @@ if (SCSTORAGE_BUILD_TESTS)
         Tests/QueryPlannerBridgeTests.cpp
         Tests/QuerySqliteExecutorTests.cpp
         Tests/PerformanceSmokeTests.cpp
+        Tests/SchemaEditTests.cpp
         Tests/TableViewTests.cpp
     )
 

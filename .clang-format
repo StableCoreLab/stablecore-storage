@@ -2,10 +2,12 @@ BasedOnStyle: Google
 IndentWidth: 4
 TabWidth: 4
 UseTab: Never
-ColumnLimit: 80
+ColumnLimit: 120
 AccessModifierOffset: -4          # <-- 修饰符与 class 对齐
 DerivePointerAlignment: false
 PointerAlignment: Left
+BinPackParameters: false
+BinPackArguments: false
 AllowShortFunctionsOnASingleLine: None  # 永不将函数放在单行上
 SortIncludes: false
 IncludeBlocks: Regroup

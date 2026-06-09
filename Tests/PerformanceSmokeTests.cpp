@@ -24,13 +24,9 @@ namespace
     fs::path MakeTempDbPath(const wchar_t* fileName)
     {
         static std::atomic<std::uint64_t> counter{0};
-        const auto now = std::chrono::high_resolution_clock::now()
-                             .time_since_epoch()
-                             .count();
-        const std::wstring uniqueName =
-            std::wstring(fileName) + L"." + std::to_wstring(now) + L"." +
-            std::to_wstring(counter.fetch_add(1, std::memory_order_relaxed)) +
-            L".sqlite";
+        const auto now = std::chrono::high_resolution_clock::now().time_since_epoch().count();
+        const std::wstring uniqueName = std::wstring(fileName) + L"." + std::to_wstring(now) + L"." +
+                                        std::to_wstring(counter.fetch_add(1, std::memory_order_relaxed)) + L".sqlite";
         fs::path path = fs::temp_directory_path() / uniqueName;
         std::error_code ec;
         fs::remove(path, ec);
@@ -53,9 +49,7 @@ namespace
         const auto start = std::chrono::steady_clock::now();
         const bool ok = fn();
         const auto elapsed = std::chrono::steady_clock::now() - start;
-        *outElapsedMs =
-            std::chrono::duration_cast<std::chrono::milliseconds>(elapsed)
-                .count();
+        *outElapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count();
         return ok;
     }
 
@@ -111,8 +105,7 @@ namespace
         return table;
     }
 
-    void SeedFloorRecord(const sc::SCTablePtr& floorTable, sc::SCDbPtr& db,
-                         sc::SCRecordPtr* outFloor)
+    void SeedFloorRecord(const sc::SCTablePtr& floorTable, sc::SCDbPtr& db, sc::SCRecordPtr* outFloor)
     {
         ASSERT_NE(outFloor, nullptr);
 
@@ -127,8 +120,7 @@ namespace
         *outFloor = floor;
     }
 
-    std::vector<sc::SCBatchTableRequest> BuildBeamImportRequests(
-        sc::RecordId floorId, std::size_t rowCount)
+    std::vector<sc::SCBatchTableRequest> BuildBeamImportRequests(sc::RecordId floorId, std::size_t rowCount)
     {
         std::vector<sc::SCBatchTableRequest> requests;
         sc::SCBatchTableRequest request;
@@ -138,10 +130,8 @@ namespace
         for (std::size_t index = 0; index < rowCount; ++index)
         {
             request.creates.push_back(sc::SCBatchCreateRecordRequest{{
-                {L"Width",
-                 sc::SCValue::FromInt64(static_cast<std::int64_t>(index))},
-                {L"Name",
-                 sc::SCValue::FromString(L"Beam-" + std::to_wstring(index))},
+                {L"Width", sc::SCValue::FromInt64(static_cast<std::int64_t>(index))},
+                {L"Name", sc::SCValue::FromString(L"Beam-" + std::to_wstring(index))},
                 {L"FloorRef", sc::SCValue::FromRecordId(floorId)},
             }});
         }
@@ -162,8 +152,7 @@ namespace
         return count;
     }
 
-    void AssertSortedDescendingByWidth(const sc::SCRecordCursorPtr& cursor,
-                                       std::size_t expectedCount)
+    void AssertSortedDescendingByWidth(const sc::SCRecordCursorPtr& cursor, std::size_t expectedCount)
     {
         sc::SCRecordPtr record;
         std::int64_t previousWidth = std::numeric_limits<std::int64_t>::max();
@@ -186,8 +175,7 @@ namespace
 
 TEST(StoragePerformance, SqliteBulkImportBaseline)
 {
-    const fs::path dbPath =
-        MakeTempDbPath(L"StableCoreStorage_PerfSmoke_BulkImport.sqlite");
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_PerfSmoke_BulkImport.sqlite");
 
     sc::SCDbPtr db;
     ASSERT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
@@ -198,8 +186,7 @@ TEST(StoragePerformance, SqliteBulkImportBaseline)
     sc::SCRecordPtr floor;
     SeedFloorRecord(floorTable, db, &floor);
 
-    const auto requests =
-        BuildBeamImportRequests(floor->GetId(), kSmokeRowCount);
+    const auto requests = BuildBeamImportRequests(floor->GetId(), kSmokeRowCount);
 
     sc::SCBatchExecutionOptions options;
     options.editName = L"perf bulk import";
@@ -208,22 +195,15 @@ TEST(StoragePerformance, SqliteBulkImportBaseline)
     sc::SCBatchExecutionResult result;
     long long elapsedMs = 0;
     ASSERT_TRUE(MeasureMs(
-        [&]() -> bool {
-            return sc::ExecuteImport(db.Get(), requests, options, &result) ==
-                   sc::SC_OK;
-        },
-        &elapsedMs));
+        [&]() -> bool { return sc::ExecuteImport(db.Get(), requests, options, &result) == sc::SC_OK; }, &elapsedMs));
 
     sc::SCRecordCursorPtr cursor;
     ASSERT_EQ(beamTable->EnumerateRecords(cursor), sc::SC_OK);
 
     RecordProperty("elapsed_ms", elapsedMs);
-    RecordProperty("created_count",
-                   static_cast<unsigned long long>(result.createdCount));
-    RecordProperty("chunk_count",
-                   static_cast<unsigned long long>(result.chunkCount));
-    RecordProperty("checkpoint_count",
-                   static_cast<unsigned long long>(result.checkpointCount));
+    RecordProperty("created_count", static_cast<unsigned long long>(result.createdCount));
+    RecordProperty("chunk_count", static_cast<unsigned long long>(result.chunkCount));
+    RecordProperty("checkpoint_count", static_cast<unsigned long long>(result.checkpointCount));
 
     EXPECT_EQ(result.createdCount, kSmokeRowCount);
     EXPECT_LE(elapsedMs, kBulkImportMaxMs);
@@ -232,8 +212,7 @@ TEST(StoragePerformance, SqliteBulkImportBaseline)
 
 TEST(StoragePerformance, SqliteQueryAndSortBaseline)
 {
-    const fs::path dbPath =
-        MakeTempDbPath(L"StableCoreStorage_PerfSmoke_Query.sqlite");
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_PerfSmoke_Query.sqlite");
 
     sc::SCDbPtr db;
     ASSERT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
@@ -251,10 +230,8 @@ TEST(StoragePerformance, SqliteQueryAndSortBaseline)
     for (std::size_t index = 0; index < kSmokeRowCount; ++index)
     {
         request.creates.push_back(sc::SCBatchCreateRecordRequest{{
-            {L"Width",
-             sc::SCValue::FromInt64(static_cast<std::int64_t>(index))},
-            {L"Name",
-             sc::SCValue::FromString(L"Sort-" + std::to_wstring(index))},
+            {L"Width", sc::SCValue::FromInt64(static_cast<std::int64_t>(index))},
+            {L"Name", sc::SCValue::FromString(L"Sort-" + std::to_wstring(index))},
             {L"FloorRef", sc::SCValue::FromRecordId(floor->GetId())},
         }});
     }
@@ -265,26 +242,25 @@ TEST(StoragePerformance, SqliteQueryAndSortBaseline)
     options.chunkSize = 256;
 
     sc::SCBatchExecutionResult importResult;
-    ASSERT_EQ(sc::ExecuteImport(db.Get(), requests, options, &importResult),
-              sc::SC_OK);
+    ASSERT_EQ(sc::ExecuteImport(db.Get(), requests, options, &importResult), sc::SC_OK);
 
     auto planner = sc::CreateDefaultQueryPlanner();
     ASSERT_NE(planner, nullptr);
 
     sc::QueryPlan plan;
-    ASSERT_EQ(planner->BuildPlan(
-                  sc::QueryTarget{L"Beam", sc::QueryTargetType::Table},
-                  {sc::QueryConditionGroup{
-                      sc::QueryLogicOperator::And,
-                      {sc::QueryCondition{
-                          L"FloorRef",
-                          sc::QueryConditionOperator::Equal,
-                          {sc::SCValue::FromRecordId(floor->GetId())}}}}},
-                  sc::QueryLogicOperator::And,
-                  {sc::SortSpec{L"Width", sc::QueryOrderDirection::Descending}},
-                  sc::QueryPage{0, std::numeric_limits<std::uint64_t>::max()},
-                  {}, {}, &plan),
-              sc::SC_OK);
+    ASSERT_EQ(
+        planner->BuildPlan(sc::QueryTarget{L"Beam", sc::QueryTargetType::Table},
+                           {sc::QueryConditionGroup{sc::QueryLogicOperator::And,
+                                                    {sc::QueryCondition{L"FloorRef",
+                                                                        sc::QueryConditionOperator::Equal,
+                                                                        {sc::SCValue::FromRecordId(floor->GetId())}}}}},
+                           sc::QueryLogicOperator::And,
+                           {sc::SortSpec{L"Width", sc::QueryOrderDirection::Descending}},
+                           sc::QueryPage{0, std::numeric_limits<std::uint64_t>::max()},
+                           {},
+                           {},
+                           &plan),
+        sc::SC_OK);
     ASSERT_EQ(plan.state, sc::QueryPlanState::DirectIndex);
 
     sc::SCRecordCursorPtr cursor;
@@ -296,17 +272,12 @@ TEST(StoragePerformance, SqliteQueryAndSortBaseline)
 
     sc::QueryExecutionResult result;
     long long elapsedMs = 0;
-    ASSERT_TRUE(MeasureMs(
-        [&]() -> bool {
-            return sc::ExecuteQueryPlan(plan, context, &result) == sc::SC_OK;
-        },
-        &elapsedMs));
+    ASSERT_TRUE(
+        MeasureMs([&]() -> bool { return sc::ExecuteQueryPlan(plan, context, &result) == sc::SC_OK; }, &elapsedMs));
 
     RecordProperty("elapsed_ms", elapsedMs);
-    RecordProperty("matched_rows",
-                   static_cast<unsigned long long>(result.matchedRows));
-    RecordProperty("returned_rows",
-                   static_cast<unsigned long long>(result.returnedRows));
+    RecordProperty("matched_rows", static_cast<unsigned long long>(result.matchedRows));
+    RecordProperty("returned_rows", static_cast<unsigned long long>(result.returnedRows));
 
     EXPECT_EQ(result.mode, sc::QueryExecutionMode::DirectIndex);
     EXPECT_EQ(result.matchedRows, kSmokeRowCount);
@@ -318,8 +289,7 @@ TEST(StoragePerformance, SqliteQueryAndSortBaseline)
 
 TEST(StoragePerformance, SqliteRecoveryFinalizeBaseline)
 {
-    const fs::path dbPath =
-        MakeTempDbPath(L"StableCoreStorage_PerfSmoke_Recovery.sqlite");
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_PerfSmoke_Recovery.sqlite");
 
     sc::SCImportSessionId sessionId = 0;
     {
@@ -337,37 +307,30 @@ TEST(StoragePerformance, SqliteRecoveryFinalizeBaseline)
         sessionOptions.chunkSize = 256;
 
         sc::SCImportStagingArea session;
-        ASSERT_EQ(sc::BeginImportSession(db.Get(), sessionOptions, &session),
-                  sc::SC_OK);
+        ASSERT_EQ(sc::BeginImportSession(db.Get(), sessionOptions, &session), sc::SC_OK);
         sessionId = session.sessionId;
 
         std::size_t chunkId = 1;
-        for (std::size_t offset = 0; offset < kSmokeRowCount;
-             offset += sessionOptions.chunkSize)
+        for (std::size_t offset = 0; offset < kSmokeRowCount; offset += sessionOptions.chunkSize)
         {
             sc::SCImportChunk chunk;
             chunk.chunkId = chunkId++;
 
             sc::SCBatchTableRequest request;
             request.tableName = L"Beam";
-            const std::size_t chunkEnd =
-                std::min(offset + sessionOptions.chunkSize, kSmokeRowCount);
+            const std::size_t chunkEnd = std::min(offset + sessionOptions.chunkSize, kSmokeRowCount);
             for (std::size_t index = offset; index < chunkEnd; ++index)
             {
                 request.creates.push_back(sc::SCBatchCreateRecordRequest{{
-                    {L"Width",
-                     sc::SCValue::FromInt64(static_cast<std::int64_t>(index))},
-                    {L"Name", sc::SCValue::FromString(L"Recover-" +
-                                                      std::to_wstring(index))},
+                    {L"Width", sc::SCValue::FromInt64(static_cast<std::int64_t>(index))},
+                    {L"Name", sc::SCValue::FromString(L"Recover-" + std::to_wstring(index))},
                     {L"FloorRef", sc::SCValue::FromRecordId(floor->GetId())},
                 }});
             }
             chunk.requests.push_back(std::move(request));
 
             sc::SCImportCheckpoint checkpoint;
-            ASSERT_EQ(
-                sc::AppendImportChunk(db.Get(), &session, chunk, &checkpoint),
-                sc::SC_OK);
+            ASSERT_EQ(sc::AppendImportChunk(db.Get(), &session, chunk, &checkpoint), sc::SC_OK);
             EXPECT_EQ(checkpoint.sessionId, sessionId);
         }
     }
@@ -376,8 +339,7 @@ TEST(StoragePerformance, SqliteRecoveryFinalizeBaseline)
     ASSERT_EQ(CreateFileDb(dbPath.c_str(), reopened), sc::SC_OK);
 
     sc::SCImportRecoveryState recoveryState;
-    ASSERT_EQ(reopened->LoadImportRecoveryState(sessionId, &recoveryState),
-              sc::SC_OK);
+    ASSERT_EQ(reopened->LoadImportRecoveryState(sessionId, &recoveryState), sc::SC_OK);
     ASSERT_TRUE(recoveryState.canResume);
     ASSERT_TRUE(recoveryState.canFinalize);
 
@@ -390,17 +352,13 @@ TEST(StoragePerformance, SqliteRecoveryFinalizeBaseline)
     long long elapsedMs = 0;
     ASSERT_TRUE(MeasureMs(
         [&]() -> bool {
-            return sc::FinalizeImportSession(reopened.Get(),
-                                             recoveryState.stagingArea, commit,
-                                             &result) == sc::SC_OK;
+            return sc::FinalizeImportSession(reopened.Get(), recoveryState.stagingArea, commit, &result) == sc::SC_OK;
         },
         &elapsedMs));
 
     RecordProperty("elapsed_ms", elapsedMs);
-    RecordProperty("created_count",
-                   static_cast<unsigned long long>(result.createdCount));
-    RecordProperty("chunk_count",
-                   static_cast<unsigned long long>(result.chunkCount));
+    RecordProperty("created_count", static_cast<unsigned long long>(result.createdCount));
+    RecordProperty("chunk_count", static_cast<unsigned long long>(result.chunkCount));
 
     EXPECT_EQ(result.importSessionId, sessionId);
     EXPECT_EQ(result.createdCount, kSmokeRowCount);
@@ -412,6 +370,5 @@ TEST(StoragePerformance, SqliteRecoveryFinalizeBaseline)
     ASSERT_EQ(beamTable->EnumerateRecords(cursor), sc::SC_OK);
     EXPECT_EQ(CountRecords(cursor), kSmokeRowCount);
 
-    ASSERT_EQ(reopened->LoadImportRecoveryState(sessionId, &recoveryState),
-              sc::SC_E_RECORD_NOT_FOUND);
+    ASSERT_EQ(reopened->LoadImportRecoveryState(sessionId, &recoveryState), sc::SC_E_RECORD_NOT_FOUND);
 }

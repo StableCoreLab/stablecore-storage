@@ -36,8 +36,7 @@ namespace StableCore::Storage
             };
         }
 
-        std::int32_t ResolveLatestSupportedVersion(
-            const std::vector<SCMigrationStep>& steps)
+        std::int32_t ResolveLatestSupportedVersion(const std::vector<SCMigrationStep>& steps)
         {
             std::int32_t latest = kMinimumSupportedSchemaVersion;
             for (const auto& step : steps)
@@ -48,13 +47,12 @@ namespace StableCore::Storage
         }
 
         void AppendVersionNode(std::vector<SCVersionNode>& nodes,
-                               std::int32_t version, const std::wstring& name,
+                               std::int32_t version,
+                               const std::wstring& name,
                                const std::wstring& description)
         {
-            const auto it = std::find_if(nodes.begin(), nodes.end(),
-                                         [version](const SCVersionNode& node) {
-                                             return node.version == version;
-                                         });
+            const auto it = std::find_if(
+                nodes.begin(), nodes.end(), [version](const SCVersionNode& node) { return node.version == version; });
 
             if (it != nodes.end())
             {
@@ -74,8 +72,7 @@ namespace StableCore::Storage
         {
             for (auto& node : nodes)
             {
-                node.readable = node.version >= minimumVersion &&
-                                node.version <= latestVersion;
+                node.readable = node.version >= minimumVersion && node.version <= latestVersion;
                 node.writable = node.version == latestVersion;
 
                 if (node.version < minimumVersion)
@@ -94,8 +91,7 @@ namespace StableCore::Storage
             }
         }
 
-        SCCompatibilityWindow BuildCompatibilityWindow(
-            std::int32_t latestVersion)
+        SCCompatibilityWindow BuildCompatibilityWindow(std::int32_t latestVersion)
         {
             SCCompatibilityWindow window;
             window.minReadableVersion = kMinimumSupportedSchemaVersion;
@@ -107,8 +103,7 @@ namespace StableCore::Storage
             return window;
         }
 
-        std::vector<SCMigrationStep> EdgesToSteps(
-            const std::vector<SCMigrationEdge>& edges)
+        std::vector<SCMigrationStep> EdgesToSteps(const std::vector<SCMigrationEdge>& edges)
         {
             std::vector<SCMigrationStep> steps;
             steps.reserve(edges.size());
@@ -133,14 +128,13 @@ namespace StableCore::Storage
 
     ErrorCode BuildDefaultVersionGraph(SCVersionGraph* outGraph)
     {
-        return BuildVersionGraph(0, GetLatestSupportedSchemaVersion(),
-                                 GetDefaultMigrationSteps(), outGraph);
+        return BuildVersionGraph(0, GetLatestSupportedSchemaVersion(), GetDefaultMigrationSteps(), outGraph);
     }
 
-    ErrorCode BuildVersionGraph(
-        std::int32_t currentVersion, std::int32_t targetVersion,
-        const std::vector<SCMigrationStep>& availableSteps,
-        SCVersionGraph* outGraph)
+    ErrorCode BuildVersionGraph(std::int32_t currentVersion,
+                                std::int32_t targetVersion,
+                                const std::vector<SCMigrationStep>& availableSteps,
+                                SCVersionGraph* outGraph)
     {
         if (outGraph == nullptr)
         {
@@ -153,31 +147,24 @@ namespace StableCore::Storage
 
         SCVersionGraph graph;
         graph.currentVersion = currentVersion;
-        graph.latestSupportedVersion =
-            ResolveLatestSupportedVersion(availableSteps);
+        graph.latestSupportedVersion = ResolveLatestSupportedVersion(availableSteps);
         if (targetVersion > graph.latestSupportedVersion)
         {
             graph.latestSupportedVersion = targetVersion;
         }
 
         const std::int32_t minimumVersion = kMinimumSupportedSchemaVersion;
-        graph.compatibilityWindow =
-            BuildCompatibilityWindow(graph.latestSupportedVersion);
+        graph.compatibilityWindow = BuildCompatibilityWindow(graph.latestSupportedVersion);
 
-        AppendVersionNode(graph.nodes, minimumVersion,
-                          L"v" + std::to_wstring(minimumVersion),
-                          L"Minimum supported schema version.");
-        AppendVersionNode(graph.nodes, currentVersion,
-                          L"v" + std::to_wstring(currentVersion),
-                          L"Current schema version.");
-        AppendVersionNode(graph.nodes, targetVersion,
-                          L"v" + std::to_wstring(targetVersion),
-                          L"Target schema version.");
+        AppendVersionNode(
+            graph.nodes, minimumVersion, L"v" + std::to_wstring(minimumVersion), L"Minimum supported schema version.");
+        AppendVersionNode(
+            graph.nodes, currentVersion, L"v" + std::to_wstring(currentVersion), L"Current schema version.");
+        AppendVersionNode(graph.nodes, targetVersion, L"v" + std::to_wstring(targetVersion), L"Target schema version.");
 
         for (const auto& step : availableSteps)
         {
-            if (step.fromVersion < 0 || step.toVersion < 0 ||
-                step.toVersion <= step.fromVersion)
+            if (step.fromVersion < 0 || step.toVersion < 0 || step.toVersion <= step.fromVersion)
             {
                 return SC_E_INVALIDARG;
             }
@@ -191,24 +178,19 @@ namespace StableCore::Storage
                 true,
             });
 
-            AppendVersionNode(graph.nodes, step.fromVersion,
-                              L"v" + std::to_wstring(step.fromVersion),
-                              step.name);
-            AppendVersionNode(graph.nodes, step.toVersion,
-                              L"v" + std::to_wstring(step.toVersion),
-                              step.name);
+            AppendVersionNode(graph.nodes, step.fromVersion, L"v" + std::to_wstring(step.fromVersion), step.name);
+            AppendVersionNode(graph.nodes, step.toVersion, L"v" + std::to_wstring(step.toVersion), step.name);
         }
 
-        FinalizeGraphNodes(graph.nodes, graph.latestSupportedVersion,
-                           minimumVersion);
+        FinalizeGraphNodes(graph.nodes, graph.latestSupportedVersion, minimumVersion);
         *outGraph = std::move(graph);
         return SC_OK;
     }
 
-    ErrorCode BuildMigrationPlan(
-        std::int32_t currentVersion, std::int32_t targetVersion,
-        const std::vector<SCMigrationStep>& availableSteps,
-        SCMigrationPlan* outPlan)
+    ErrorCode BuildMigrationPlan(std::int32_t currentVersion,
+                                 std::int32_t targetVersion,
+                                 const std::vector<SCMigrationStep>& availableSteps,
+                                 SCMigrationPlan* outPlan)
     {
         if (outPlan == nullptr)
         {
@@ -226,11 +208,9 @@ namespace StableCore::Storage
         std::int32_t cursor = currentVersion;
         while (cursor < targetVersion)
         {
-            const auto stepIt =
-                std::find_if(availableSteps.begin(), availableSteps.end(),
-                             [&](const SCMigrationStep& step) {
-                                 return step.fromVersion == cursor;
-                             });
+            const auto stepIt = std::find_if(availableSteps.begin(),
+                                             availableSteps.end(),
+                                             [&](const SCMigrationStep& step) { return step.fromVersion == cursor; });
             if (stepIt == availableSteps.end())
             {
                 return SC_E_RECORD_NOT_FOUND;
@@ -266,11 +246,9 @@ namespace StableCore::Storage
         plan.upgradeRequired = targetVersion > currentVersion;
         plan.requiresConfirmation = plan.upgradeRequired;
 
-        const std::vector<SCMigrationStep> availableSteps =
-            EdgesToSteps(graph.edges);
+        const std::vector<SCMigrationStep> availableSteps = EdgesToSteps(graph.edges);
         SCMigrationPlan migrationPlan;
-        const ErrorCode planRc = BuildMigrationPlan(
-            currentVersion, targetVersion, availableSteps, &migrationPlan);
+        const ErrorCode planRc = BuildMigrationPlan(currentVersion, targetVersion, availableSteps, &migrationPlan);
         if (Failed(planRc))
         {
             return planRc;
@@ -282,12 +260,10 @@ namespace StableCore::Storage
             plan.reason = L"Target version already matches current version.";
         } else if (currentVersion < targetVersion)
         {
-            plan.reason =
-                L"Upgrade is required to reach the target schema version.";
+            plan.reason = L"Upgrade is required to reach the target schema version.";
         } else
         {
-            plan.reason =
-                L"Requested target version is older than the current version.";
+            plan.reason = L"Requested target version is older than the current version.";
         }
 
         *outPlan = std::move(plan);
@@ -334,8 +310,7 @@ namespace StableCore::Storage
         if (schemaVersion < graph.compatibilityWindow.minReadableVersion)
         {
             decision.mode = SCOpenMode::Unsupported;
-            decision.reason =
-                L"Schema version is older than the minimum supported version.";
+            decision.reason = L"Schema version is older than the minimum supported version.";
             *outDecision = std::move(decision);
             return SC_OK;
         }
@@ -345,50 +320,43 @@ namespace StableCore::Storage
             decision.mode = SCOpenMode::ReadOnly;
             decision.readOnlyOnly = true;
             decision.writable = false;
-            decision.reason =
-                L"Previous shutdown was unclean; open in read-only mode only.";
+            decision.reason = L"Previous shutdown was unclean; open in read-only mode only.";
             *outDecision = std::move(decision);
             return SC_OK;
         }
 
         if (schemaVersion > graph.compatibilityWindow.maxReadableVersion)
         {
-            decision.mode = graph.compatibilityWindow.readOnlyAllowed
-                                ? SCOpenMode::ReadOnly
-                                : SCOpenMode::Unsupported;
+            decision.mode = graph.compatibilityWindow.readOnlyAllowed ? SCOpenMode::ReadOnly : SCOpenMode::Unsupported;
             decision.readOnlyOnly = graph.compatibilityWindow.readOnlyAllowed;
             decision.writable = false;
-            decision.reason = graph.compatibilityWindow.readOnlyAllowed
-                                  ? L"Schema version is newer than the "
-                                    L"supported write window; open read-only."
-                                  : L"Schema version is newer than the "
-                                    L"supported read window.";
+            decision.reason = graph.compatibilityWindow.readOnlyAllowed ? L"Schema version is newer than the "
+                                                                          L"supported write window; open read-only."
+                                                                        : L"Schema version is newer than the "
+                                                                          L"supported read window.";
             *outDecision = std::move(decision);
             return SC_OK;
         }
 
         if (schemaVersion < graph.compatibilityWindow.minWritableVersion)
         {
-            decision.mode = graph.compatibilityWindow.upgradeAllowed
-                                ? SCOpenMode::UpgradeRequired
-                                : SCOpenMode::ReadOnly;
+            decision.mode =
+                graph.compatibilityWindow.upgradeAllowed ? SCOpenMode::UpgradeRequired : SCOpenMode::ReadOnly;
             decision.needsUpgrade = graph.compatibilityWindow.upgradeAllowed;
             decision.readOnlyOnly = true;
             decision.writable = false;
-            decision.reason =
-                graph.compatibilityWindow.upgradeAllowed
-                    ? L"Schema version is within the readable window but "
-                      L"requires upgrade before write."
-                    : L"Schema version is readable but not writable in the "
-                      L"current compatibility window.";
+            decision.reason = graph.compatibilityWindow.upgradeAllowed
+                                  ? L"Schema version is within the readable window but "
+                                    L"requires upgrade before write."
+                                  : L"Schema version is readable but not writable in the "
+                                    L"current compatibility window.";
             *outDecision = std::move(decision);
             return SC_OK;
         }
 
         decision.mode = SCOpenMode::ReadWrite;
         decision.writable = true;
-        decision.reason =
-            L"Schema version is within the writable compatibility window.";
+        decision.reason = L"Schema version is within the writable compatibility window.";
         *outDecision = std::move(decision);
         return SC_OK;
     }

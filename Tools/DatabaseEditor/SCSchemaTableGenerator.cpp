@@ -46,9 +46,8 @@ namespace StableCore::Storage::Editor
             }
         }
 
-        QString MakeIndexName(
-            const QString& tableName,
-            const std::vector<sc::SCIndexColumnDef>& columns)
+        QString MakeIndexName(const QString& tableName,
+                              const std::vector<sc::SCIndexColumnDef>& columns)
         {
             QStringList parts;
             parts.push_back(QStringLiteral("idx"));
@@ -59,8 +58,9 @@ namespace StableCore::Storage::Editor
             }
 
             QString name = parts.join(QLatin1Char('_'));
-            name.replace(QRegularExpression(QStringLiteral(R"([^A-Za-z0-9_]+)")),
-                         QStringLiteral("_"));
+            name.replace(
+                QRegularExpression(QStringLiteral(R"([^A-Za-z0-9_]+)")),
+                QStringLiteral("_"));
             return name;
         }
 
@@ -76,10 +76,82 @@ namespace StableCore::Storage::Editor
             return displayName;
         }
 
+        QString DefaultValueLiteral(const sc::SCColumnDef& column)
+        {
+            if (column.defaultValue.IsNull())
+            {
+                return {};
+            }
+
+            switch (column.defaultValue.GetKind())
+            {
+                case sc::ValueKind::Int64: {
+                    std::int64_t value = 0;
+                    if (column.defaultValue.AsInt64(&value) == sc::SC_OK)
+                    {
+                        return QString::number(value);
+                    }
+                    break;
+                }
+                case sc::ValueKind::Double: {
+                    double value = 0.0;
+                    if (column.defaultValue.AsDouble(&value) == sc::SC_OK)
+                    {
+                        return QString::number(value, 'g', 12);
+                    }
+                    break;
+                }
+                case sc::ValueKind::Bool: {
+                    bool value = false;
+                    if (column.defaultValue.AsBool(&value) == sc::SC_OK)
+                    {
+                        return value ? QStringLiteral("true")
+                                     : QStringLiteral("false");
+                    }
+                    break;
+                }
+                case sc::ValueKind::String: {
+                    std::wstring value;
+                    if (column.defaultValue.AsStringCopy(&value) == sc::SC_OK)
+                    {
+                        return QStringLiteral("\"") +
+                               EscapeCppString(ToQString(value)) +
+                               QStringLiteral("\"");
+                    }
+                    break;
+                }
+                case sc::ValueKind::RecordId: {
+                    sc::RecordId value = 0;
+                    if (column.defaultValue.AsRecordId(&value) == sc::SC_OK)
+                    {
+                        return QString::number(static_cast<qlonglong>(value));
+                    }
+                    break;
+                }
+                case sc::ValueKind::Enum: {
+                    std::wstring value;
+                    if (column.defaultValue.AsEnumCopy(&value) == sc::SC_OK)
+                    {
+                        return QStringLiteral("\"") +
+                               EscapeCppString(ToQString(value)) +
+                               QStringLiteral("\"");
+                    }
+                    break;
+                }
+                case sc::ValueKind::Binary:
+                case sc::ValueKind::Null:
+                default:
+                    break;
+            }
+
+            return {};
+        }
+
         QString PrimaryKeyColumnName(const sc::SCTableSchemaSnapshot& snapshot,
                                      const SCSchemaTableExportOptions& options)
         {
-            const QString manualOverride = options.primaryKeyColumnName.trimmed();
+            const QString manualOverride =
+                options.primaryKeyColumnName.trimmed();
             if (!manualOverride.isEmpty())
             {
                 return manualOverride;
@@ -136,9 +208,8 @@ namespace StableCore::Storage::Editor
         }
     }  // namespace
 
-    QString BuildSchemaTableCode(
-        const sc::SCTableSchemaSnapshot& snapshot,
-        const SCSchemaTableExportOptions& options)
+    QString BuildSchemaTableCode(const sc::SCTableSchemaSnapshot& snapshot,
+                                 const SCSchemaTableExportOptions& options)
     {
         const QString tableName = ToQString(snapshot.table.name).trimmed();
         if (tableName.isEmpty())
@@ -166,10 +237,10 @@ namespace StableCore::Storage::Editor
             FilterIndexes(snapshot, options);
 
         QString code;
-        code += QStringLiteral("SC_SCHEMA_TABLE(") + EscapeCppString(tableName) +
-                QStringLiteral(")\n{\n");
-        code += QStringLiteral("    Table(\"") +
-                EscapeCppString(tableName) + QStringLiteral("\")\n");
+        code += QStringLiteral("SC_SCHEMA_TABLE(") +
+                EscapeCppString(tableName) + QStringLiteral(")\n{\n");
+        code += QStringLiteral("    Table(\"") + EscapeCppString(tableName) +
+                QStringLiteral("\")\n");
 
         if (!tableDescription.isEmpty())
         {
@@ -185,14 +256,19 @@ namespace StableCore::Storage::Editor
         for (const sc::SCColumnDef& column : factColumns)
         {
             const QString columnName = ToQString(column.name);
-            QString line = QStringLiteral("        .Column(\"") +
-                           EscapeCppString(columnName) +
-                           QStringLiteral("\", ") +
-                           ValueKindToSCType(column.valueKind) +
-                           QStringLiteral(")\n");
+            QString line =
+                QStringLiteral("        .Column(\"") +
+                EscapeCppString(columnName) + QStringLiteral("\", ") +
+                ValueKindToSCType(column.valueKind) + QStringLiteral(")\n");
             if (!column.nullable)
             {
                 line += QStringLiteral("            .NotNull()\n");
+            }
+            const QString defaultValue = DefaultValueLiteral(column);
+            if (!defaultValue.isEmpty())
+            {
+                line += QStringLiteral("            .Default(") + defaultValue +
+                        QStringLiteral(")\n");
             }
             if (!ToQString(column.referenceTable).isEmpty())
             {
@@ -226,8 +302,7 @@ namespace StableCore::Storage::Editor
         {
             code.chop(1);
             code += QStringLiteral(";\n");
-        }
-        else
+        } else
         {
             code += QStringLiteral(";\n");
         }

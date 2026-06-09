@@ -88,6 +88,10 @@ namespace StableCore::Storage
         AddColumn,
         UpdateColumn,
         RemoveColumn,
+        AddConstraint,
+        RemoveConstraint,
+        AddIndex,
+        RemoveIndex,
     };
 
     enum class RecordState
@@ -106,8 +110,13 @@ namespace StableCore::Storage
     class SCValue
     {
     public:
-        using Storage = std::variant<std::monostate, std::int64_t, double, bool,
-                                     std::wstring, RecordIdValue, SCEnumValue,
+        using Storage = std::variant<std::monostate,
+                                     std::int64_t,
+                                     double,
+                                     bool,
+                                     std::wstring,
+                                     RecordIdValue,
+                                     SCEnumValue,
                                      std::vector<std::uint8_t>>;
 
         SCValue() = default;
@@ -287,8 +296,7 @@ namespace StableCore::Storage
             return IsNull() ? SC_E_VALUE_IS_NULL : SC_E_TYPE_MISMATCH;
         }
 
-        ErrorCode AsBinary(const std::uint8_t** outValue,
-                           std::size_t* outSize) const noexcept
+        ErrorCode AsBinary(const std::uint8_t** outValue, std::size_t* outSize) const noexcept
         {
             if (outValue == nullptr || outSize == nullptr)
             {
@@ -357,8 +365,7 @@ namespace StableCore::Storage
         explicit SCValue(SCEnumValue value) : value_(std::move(value))
         {
         }
-        explicit SCValue(std::vector<std::uint8_t> value)
-            : value_(std::move(value))
+        explicit SCValue(std::vector<std::uint8_t> value) : value_(std::move(value))
         {
         }
 
@@ -508,6 +515,12 @@ namespace StableCore::Storage
         SCColumnDef oldColumn;
         SCColumnDef newColumn;
         std::int64_t columnRowId{-1};
+        SCConstraintDef oldConstraint;
+        SCConstraintDef newConstraint;
+        std::int64_t constraintRowId{-1};
+        SCIndexDef oldIndex;
+        SCIndexDef newIndex;
+        std::int64_t indexRowId{-1};
     };
 
     struct JournalTransaction

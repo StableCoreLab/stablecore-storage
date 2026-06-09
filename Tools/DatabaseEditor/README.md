@@ -66,7 +66,7 @@ SC_SCHEMA_TABLE(ProjectInfo)
 }
 ```
 
-This feature creates the table and its columns from the schema description. Column descriptions are imported as display names. Table descriptions and primary keys are treated as import hints unless the underlying storage model can persist them.
+This feature creates the table and its columns from the schema description. Column descriptions are imported as display names, and default values are imported when the DSL provides them. Table descriptions and primary keys are treated as import hints unless the underlying storage model can persist them.
 
 ## Table Deletion
 

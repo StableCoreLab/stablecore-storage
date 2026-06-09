@@ -38,8 +38,7 @@ namespace StableCore::Storage
             (void)database;
             static std::once_flag once;
             std::call_once(once, []() {
-                RegisterQueryExecutionContextDispatch(
-                    QueryBackendKind::SQLite, &ExecuteSqliteQueryDispatch);
+                RegisterQueryExecutionContextDispatch(QueryBackendKind::SQLite, &ExecuteSqliteQueryDispatch);
             });
         }
 
@@ -56,13 +55,11 @@ namespace StableCore::Storage
                 return {};
             }
 
-            const int bytes = WideCharToMultiByte(CP_UTF8, 0, text.c_str(),
-                                                  static_cast<int>(text.size()),
-                                                  nullptr, 0, nullptr, nullptr);
+            const int bytes = WideCharToMultiByte(
+                CP_UTF8, 0, text.c_str(), static_cast<int>(text.size()), nullptr, 0, nullptr, nullptr);
             std::string utf8(static_cast<std::size_t>(bytes), '\0');
-            WideCharToMultiByte(CP_UTF8, 0, text.c_str(),
-                                static_cast<int>(text.size()), utf8.data(),
-                                bytes, nullptr, nullptr);
+            WideCharToMultiByte(
+                CP_UTF8, 0, text.c_str(), static_cast<int>(text.size()), utf8.data(), bytes, nullptr, nullptr);
             return utf8;
 #else
             return std::string(text.begin(), text.end());
@@ -77,8 +74,7 @@ namespace StableCore::Storage
             }
 
 #if defined(_WIN32)
-            const int chars =
-                MultiByteToWideChar(CP_UTF8, 0, text, -1, nullptr, 0);
+            const int chars = MultiByteToWideChar(CP_UTF8, 0, text, -1, nullptr, 0);
             if (chars <= 1)
             {
                 return {};
@@ -95,13 +91,10 @@ namespace StableCore::Storage
 
         std::wstring TrimCopy(const std::wstring& text)
         {
-            const auto first = std::find_if_not(
-                text.begin(), text.end(),
-                [](wchar_t ch) { return std::iswspace(ch) != 0; });
-            const auto last = std::find_if_not(
-                text.rbegin(), text.rend(),
-                [](wchar_t ch) { return std::iswspace(ch) != 0; })
-                                  .base();
+            const auto first =
+                std::find_if_not(text.begin(), text.end(), [](wchar_t ch) { return std::iswspace(ch) != 0; });
+            const auto last =
+                std::find_if_not(text.rbegin(), text.rend(), [](wchar_t ch) { return std::iswspace(ch) != 0; }).base();
             if (first >= last)
             {
                 return {};
@@ -109,8 +102,7 @@ namespace StableCore::Storage
             return std::wstring(first, last);
         }
 
-        bool TryParseInt64Strict(const std::wstring& text,
-                                std::int64_t* outValue)
+        bool TryParseInt64Strict(const std::wstring& text, std::int64_t* outValue)
         {
             if (outValue == nullptr)
             {
@@ -167,8 +159,7 @@ namespace StableCore::Storage
             normalized.reserve(text.size());
             for (wchar_t ch : text)
             {
-                normalized.push_back(
-                    static_cast<wchar_t>(std::towlower(ch)));
+                normalized.push_back(static_cast<wchar_t>(std::towlower(ch)));
             }
 
             if (normalized == L"true" || normalized == L"1")
@@ -222,8 +213,7 @@ namespace StableCore::Storage
             return false;
         }
 
-        bool HexToBytes(const std::wstring& hex,
-                        std::vector<std::uint8_t>* outBytes)
+        bool HexToBytes(const std::wstring& hex, std::vector<std::uint8_t>* outBytes)
         {
             if (outBytes == nullptr || (hex.size() % 2) != 0)
             {
@@ -236,8 +226,7 @@ namespace StableCore::Storage
             {
                 std::uint8_t high = 0;
                 std::uint8_t low = 0;
-                if (!HexValue(hex[index], &high) ||
-                    !HexValue(hex[index + 1], &low))
+                if (!HexValue(hex[index], &high) || !HexValue(hex[index + 1], &low))
                 {
                     return false;
                 }
@@ -248,8 +237,7 @@ namespace StableCore::Storage
             return true;
         }
 
-        ErrorCode ConvertColumnValue(const SCValue& source,
-                                     ValueKind targetKind, SCValue* outValue)
+        ErrorCode ConvertColumnValue(const SCValue& source, ValueKind targetKind, SCValue* outValue)
         {
             if (outValue == nullptr)
             {
@@ -260,11 +248,9 @@ namespace StableCore::Storage
                 *outValue = SCValue::Null();
                 return SC_OK;
             }
-            if (source.GetKind() == ValueKind::Binary ||
-                targetKind == ValueKind::Binary)
+            if (source.GetKind() == ValueKind::Binary || targetKind == ValueKind::Binary)
             {
-                if (source.GetKind() == ValueKind::Binary &&
-                    targetKind == ValueKind::Binary)
+                if (source.GetKind() == ValueKind::Binary && targetKind == ValueKind::Binary)
                 {
                     std::vector<std::uint8_t> bytes;
                     const ErrorCode rc = source.AsBinaryCopy(&bytes);
@@ -295,12 +281,10 @@ namespace StableCore::Storage
                             *outValue = SCValue::FromInt64(intValue);
                             return SC_OK;
                         case ValueKind::Double:
-                            *outValue = SCValue::FromDouble(
-                                static_cast<double>(intValue));
+                            *outValue = SCValue::FromDouble(static_cast<double>(intValue));
                             return SC_OK;
                         case ValueKind::String:
-                            *outValue =
-                                SCValue::FromString(std::to_wstring(intValue));
+                            *outValue = SCValue::FromString(std::to_wstring(intValue));
                             return SC_OK;
                         default:
                             return SC_E_TYPE_MISMATCH;
@@ -334,8 +318,7 @@ namespace StableCore::Storage
                     }
                     if (targetKind == ValueKind::String)
                     {
-                        *outValue = SCValue::FromString(
-                            boolValue ? L"true" : L"false");
+                        *outValue = SCValue::FromString(boolValue ? L"true" : L"false");
                         return SC_OK;
                     }
                     return SC_E_TYPE_MISMATCH;
@@ -439,8 +422,7 @@ namespace StableCore::Storage
             if (slash == std::wstring::npos)
             {
                 wchar_t currentDirectory[MAX_PATH] = {};
-                const DWORD len =
-                    GetCurrentDirectoryW(MAX_PATH, currentDirectory);
+                const DWORD len = GetCurrentDirectoryW(MAX_PATH, currentDirectory);
                 if (len == 0 || len >= MAX_PATH)
                 {
                     return {};
@@ -452,8 +434,7 @@ namespace StableCore::Storage
                 if (directory.empty())
                 {
                     wchar_t currentDirectory[MAX_PATH] = {};
-                    const DWORD len =
-                        GetCurrentDirectoryW(MAX_PATH, currentDirectory);
+                    const DWORD len = GetCurrentDirectoryW(MAX_PATH, currentDirectory);
                     if (len == 0 || len >= MAX_PATH)
                     {
                         return {};
@@ -462,16 +443,14 @@ namespace StableCore::Storage
                 }
             }
 
-            if (!directory.empty() && directory.back() != L'\\' &&
-                directory.back() != L'/')
+            if (!directory.empty() && directory.back() != L'\\' && directory.back() != L'/')
             {
                 directory.push_back(L'\\');
             }
             return directory;
         }
 
-        bool CreateSiblingTempFile(const std::wstring& targetPath,
-                                   std::wstring* outTempPath)
+        bool CreateSiblingTempFile(const std::wstring& targetPath, std::wstring* outTempPath)
         {
             if (outTempPath == nullptr)
             {
@@ -496,8 +475,7 @@ namespace StableCore::Storage
 
         struct ScopedDeleteFile
         {
-            explicit ScopedDeleteFile(std::wstring path)
-                : path_(std::move(path))
+            explicit ScopedDeleteFile(std::wstring path) : path_(std::move(path))
             {
             }
             ~ScopedDeleteFile()
@@ -524,8 +502,7 @@ namespace StableCore::Storage
 
 #endif
 
-        ErrorCode GetSingleCount(sqlite3* db, const char* sql,
-                                 std::size_t* outCount)
+        ErrorCode GetSingleCount(sqlite3* db, const char* sql, std::size_t* outCount)
         {
             if (outCount == nullptr)
             {
@@ -533,8 +510,7 @@ namespace StableCore::Storage
             }
 
             sqlite3_stmt* stmt = nullptr;
-            const int prepareRc =
-                sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+            const int prepareRc = sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
             if (prepareRc != SQLITE_OK)
             {
                 if (stmt != nullptr)
@@ -548,8 +524,7 @@ namespace StableCore::Storage
             ErrorCode rc = SC_OK;
             if (stepRc == SQLITE_ROW)
             {
-                *outCount =
-                    static_cast<std::size_t>(sqlite3_column_int64(stmt, 0));
+                *outCount = static_cast<std::size_t>(sqlite3_column_int64(stmt, 0));
             } else if (stepRc == SQLITE_DONE)
             {
                 *outCount = 0;
@@ -566,9 +541,7 @@ namespace StableCore::Storage
         {
             sqlite3_stmt* stmt = nullptr;
             const int prepareRc = sqlite3_prepare_v2(
-                db,
-                "UPDATE metadata SET value = ? WHERE key = 'baseline_version';",
-                -1, &stmt, nullptr);
+                db, "UPDATE metadata SET value = ? WHERE key = 'baseline_version';", -1, &stmt, nullptr);
             if (prepareRc != SQLITE_OK)
             {
                 if (stmt != nullptr)
@@ -579,9 +552,7 @@ namespace StableCore::Storage
             }
 
             const int bindRc = sqlite3_bind_text(
-                stmt, 1,
-                std::to_string(static_cast<std::uint64_t>(version)).c_str(), -1,
-                SQLITE_TRANSIENT);
+                stmt, 1, std::to_string(static_cast<std::uint64_t>(version)).c_str(), -1, SQLITE_TRANSIENT);
             if (bindRc != SQLITE_OK)
             {
                 sqlite3_finalize(stmt);
@@ -604,52 +575,47 @@ namespace StableCore::Storage
             return MapSqliteError(rc);
         }
 
-        ErrorCode ClearJournalHistoryForBackup(
-            sqlite3* db, VersionId currentVersion,
-            std::size_t* removedTransactionCount,
-            std::size_t* removedEntryCount)
+        ErrorCode ClearJournalHistoryForBackup(sqlite3* db,
+                                               VersionId currentVersion,
+                                               std::size_t* removedTransactionCount,
+                                               std::size_t* removedEntryCount)
         {
             const ErrorCode txCountRc =
-                GetSingleCount(db, "SELECT COUNT(*) FROM journal_transactions;",
-                               removedTransactionCount);
+                GetSingleCount(db, "SELECT COUNT(*) FROM journal_transactions;", removedTransactionCount);
             if (Failed(txCountRc))
             {
                 return txCountRc;
             }
 
-            const ErrorCode entryCountRc = GetSingleCount(
-                db, "SELECT COUNT(*) FROM journal_entries;", removedEntryCount);
+            const ErrorCode entryCountRc =
+                GetSingleCount(db, "SELECT COUNT(*) FROM journal_entries;", removedEntryCount);
             if (Failed(entryCountRc))
             {
                 return entryCountRc;
             }
 
             std::size_t removedSchemaEntryCount = 0;
-            const ErrorCode schemaEntryCountRc = GetSingleCount(
-                db, "SELECT COUNT(*) FROM journal_schema_entries;",
-                &removedSchemaEntryCount);
+            const ErrorCode schemaEntryCountRc =
+                GetSingleCount(db, "SELECT COUNT(*) FROM journal_schema_entries;", &removedSchemaEntryCount);
             if (Failed(schemaEntryCountRc))
             {
                 return schemaEntryCountRc;
             }
             *removedEntryCount += removedSchemaEntryCount;
 
-            const ErrorCode deleteEntriesRc =
-                RunSqliteExec(db, "DELETE FROM journal_entries;");
+            const ErrorCode deleteEntriesRc = RunSqliteExec(db, "DELETE FROM journal_entries;");
             if (Failed(deleteEntriesRc))
             {
                 return deleteEntriesRc;
             }
 
-            const ErrorCode deleteSchemaEntriesRc =
-                RunSqliteExec(db, "DELETE FROM journal_schema_entries;");
+            const ErrorCode deleteSchemaEntriesRc = RunSqliteExec(db, "DELETE FROM journal_schema_entries;");
             if (Failed(deleteSchemaEntriesRc))
             {
                 return deleteSchemaEntriesRc;
             }
 
-            const ErrorCode deleteTransactionsRc =
-                RunSqliteExec(db, "DELETE FROM journal_transactions;");
+            const ErrorCode deleteTransactionsRc = RunSqliteExec(db, "DELETE FROM journal_transactions;");
             if (Failed(deleteTransactionsRc))
             {
                 return deleteTransactionsRc;
@@ -666,8 +632,7 @@ namespace StableCore::Storage
         ErrorCode ValidateTargetDatabase(sqlite3* db)
         {
             sqlite3_stmt* stmt = nullptr;
-            int prepareRc = sqlite3_prepare_v2(db, "PRAGMA integrity_check;",
-                                               -1, &stmt, nullptr);
+            int prepareRc = sqlite3_prepare_v2(db, "PRAGMA integrity_check;", -1, &stmt, nullptr);
             if (prepareRc != SQLITE_OK)
             {
                 if (stmt != nullptr)
@@ -681,20 +646,17 @@ namespace StableCore::Storage
             if (stepRc != SQLITE_ROW)
             {
                 sqlite3_finalize(stmt);
-                return MapSqliteError(stepRc == SQLITE_DONE ? SQLITE_OK
-                                                            : stepRc);
+                return MapSqliteError(stepRc == SQLITE_DONE ? SQLITE_OK : stepRc);
             }
 
-            const std::wstring integrity = FromUtf8(
-                reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0)));
+            const std::wstring integrity = FromUtf8(reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0)));
             sqlite3_finalize(stmt);
             if (integrity != L"ok")
             {
                 return SC_E_VALIDATION_FAILED;
             }
 
-            prepareRc = sqlite3_prepare_v2(db, "PRAGMA foreign_key_check;", -1,
-                                           &stmt, nullptr);
+            prepareRc = sqlite3_prepare_v2(db, "PRAGMA foreign_key_check;", -1, &stmt, nullptr);
             if (prepareRc != SQLITE_OK)
             {
                 if (stmt != nullptr)
@@ -715,8 +677,7 @@ namespace StableCore::Storage
             return SC_OK;
         }
 
-        ErrorCode GetFileSizeBytes(const std::wstring& path,
-                                   std::uint64_t* outSize)
+        ErrorCode GetFileSizeBytes(const std::wstring& path, std::uint64_t* outSize)
         {
             if (outSize == nullptr)
             {
@@ -725,8 +686,7 @@ namespace StableCore::Storage
 
 #if defined(_WIN32)
             WIN32_FILE_ATTRIBUTE_DATA data{};
-            if (!GetFileAttributesExW(path.c_str(), GetFileExInfoStandard,
-                                      &data))
+            if (!GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &data))
             {
                 return SC_E_IO_ERROR;
             }
@@ -809,8 +769,7 @@ namespace StableCore::Storage
             return true;
         }
 
-        bool ReadToken(const std::wstring& payload, std::size_t* cursor,
-                       std::wstring* outToken)
+        bool ReadToken(const std::wstring& payload, std::size_t* cursor, std::wstring* outToken)
         {
             if (cursor == nullptr || outToken == nullptr)
             {
@@ -827,8 +786,7 @@ namespace StableCore::Storage
                 return false;
             }
 
-            const std::wstring lengthText =
-                payload.substr(*cursor, colon - *cursor);
+            const std::wstring lengthText = payload.substr(*cursor, colon - *cursor);
             std::size_t length = 0;
             try
             {
@@ -849,8 +807,7 @@ namespace StableCore::Storage
             return true;
         }
 
-        std::wstring SerializeImportSessionPayload(
-            const SCImportStagingArea& session)
+        std::wstring SerializeImportSessionPayload(const SCImportStagingArea& session)
         {
             std::wstring payload;
             AppendToken(&payload, L"SCIMPORT1");
@@ -858,8 +815,7 @@ namespace StableCore::Storage
             AppendToken(&payload, session.sessionName);
             AppendToken(&payload, std::to_wstring(session.baseVersion));
             AppendToken(&payload, std::to_wstring(session.chunkSize));
-            AppendToken(&payload,
-                        std::to_wstring(static_cast<int>(session.state)));
+            AppendToken(&payload, std::to_wstring(static_cast<int>(session.state)));
             AppendToken(&payload, std::to_wstring(session.chunks.size()));
             for (const auto& chunk : session.chunks)
             {
@@ -868,37 +824,30 @@ namespace StableCore::Storage
                 for (const auto& request : chunk.requests)
                 {
                     AppendToken(&payload, request.tableName);
-                    AppendToken(&payload,
-                                std::to_wstring(request.creates.size()));
+                    AppendToken(&payload, std::to_wstring(request.creates.size()));
                     for (const auto& create : request.creates)
                     {
-                        AppendToken(&payload,
-                                    std::to_wstring(create.values.size()));
+                        AppendToken(&payload, std::to_wstring(create.values.size()));
                         for (const auto& assignment : create.values)
                         {
                             AppendToken(&payload, assignment.fieldName);
-                            AppendToken(&payload, SerializeImportValue(
-                                                      assignment.SCValue));
+                            AppendToken(&payload, SerializeImportValue(assignment.SCValue));
                         }
                     }
 
-                    AppendToken(&payload,
-                                std::to_wstring(request.updates.size()));
+                    AppendToken(&payload, std::to_wstring(request.updates.size()));
                     for (const auto& update : request.updates)
                     {
                         AppendToken(&payload, std::to_wstring(update.recordId));
-                        AppendToken(&payload,
-                                    std::to_wstring(update.values.size()));
+                        AppendToken(&payload, std::to_wstring(update.values.size()));
                         for (const auto& assignment : update.values)
                         {
                             AppendToken(&payload, assignment.fieldName);
-                            AppendToken(&payload, SerializeImportValue(
-                                                      assignment.SCValue));
+                            AppendToken(&payload, SerializeImportValue(assignment.SCValue));
                         }
                     }
 
-                    AppendToken(&payload,
-                                std::to_wstring(request.deletes.size()));
+                    AppendToken(&payload, std::to_wstring(request.deletes.size()));
                     for (RecordId recordId : request.deletes)
                     {
                         AppendToken(&payload, std::to_wstring(recordId));
@@ -908,8 +857,7 @@ namespace StableCore::Storage
             return payload;
         }
 
-        bool DeserializeImportValue(const std::wstring& token,
-                                    SCValue* outValue)
+        bool DeserializeImportValue(const std::wstring& token, SCValue* outValue)
         {
             if (outValue == nullptr)
             {
@@ -917,12 +865,9 @@ namespace StableCore::Storage
             }
 
             const std::size_t separator = token.find(L'\n');
-            const std::wstring kindText = (separator == std::wstring::npos)
-                                              ? token
-                                              : token.substr(0, separator);
-            const std::wstring payload = (separator == std::wstring::npos)
-                                             ? std::wstring{}
-                                             : token.substr(separator + 1);
+            const std::wstring kindText = (separator == std::wstring::npos) ? token : token.substr(0, separator);
+            const std::wstring payload =
+                (separator == std::wstring::npos) ? std::wstring{} : token.substr(separator + 1);
 
             int kind = 0;
             try
@@ -965,8 +910,7 @@ namespace StableCore::Storage
                 case ValueKind::RecordId:
                     try
                     {
-                        *outValue = SCValue::FromRecordId(
-                            static_cast<RecordId>(std::stoll(payload)));
+                        *outValue = SCValue::FromRecordId(static_cast<RecordId>(std::stoll(payload)));
                         return true;
                     } catch (...)
                     {
@@ -989,8 +933,183 @@ namespace StableCore::Storage
             }
         }
 
-        bool DeserializeImportSessionPayload(const std::wstring& payload,
-                                             SCImportStagingArea* outSession)
+        std::wstring SerializeConstraintDef(const SCConstraintDef& def)
+        {
+            std::wstring payload;
+            AppendToken(&payload, std::to_wstring(static_cast<int>(def.kind)));
+            AppendToken(&payload, def.name);
+            AppendToken(&payload, std::to_wstring(static_cast<int>(def.sourceKind)));
+            AppendToken(&payload, def.referencedTable);
+            AppendToken(&payload, def.checkExpression);
+            AppendToken(&payload, std::to_wstring(def.columns.size()));
+            for (const std::wstring& column : def.columns)
+            {
+                AppendToken(&payload, column);
+            }
+            AppendToken(&payload, std::to_wstring(def.referencedColumns.size()));
+            for (const std::wstring& column : def.referencedColumns)
+            {
+                AppendToken(&payload, column);
+            }
+            return payload;
+        }
+
+        bool DeserializeConstraintDef(const std::wstring& payload, SCConstraintDef* outDef)
+        {
+            if (outDef == nullptr)
+            {
+                return false;
+            }
+
+            std::size_t cursor = 0;
+            std::wstring token;
+            if (!ReadToken(payload, &cursor, &token))
+            {
+                return false;
+            }
+
+            int kind = 0;
+            try
+            {
+                kind = std::stoi(token);
+            } catch (...)
+            {
+                return false;
+            }
+
+            SCConstraintDef def;
+            def.kind = static_cast<SCConstraintKind>(kind);
+            if (!ReadToken(payload, &cursor, &def.name) || !ReadToken(payload, &cursor, &token))
+            {
+                return false;
+            }
+
+            try
+            {
+                def.sourceKind = static_cast<SCSchemaSourceKind>(std::stoi(token));
+            } catch (...)
+            {
+                return false;
+            }
+
+            if (!ReadToken(payload, &cursor, &def.referencedTable) ||
+                !ReadToken(payload, &cursor, &def.checkExpression) || !ReadToken(payload, &cursor, &token))
+            {
+                return false;
+            }
+
+            std::size_t columnCount = 0;
+            try
+            {
+                columnCount = static_cast<std::size_t>(std::stoull(token));
+            } catch (...)
+            {
+                return false;
+            }
+
+            for (std::size_t index = 0; index < columnCount; ++index)
+            {
+                if (!ReadToken(payload, &cursor, &token))
+                {
+                    return false;
+                }
+                def.columns.push_back(token);
+            }
+
+            if (!ReadToken(payload, &cursor, &token))
+            {
+                return false;
+            }
+
+            std::size_t referencedColumnCount = 0;
+            try
+            {
+                referencedColumnCount = static_cast<std::size_t>(std::stoull(token));
+            } catch (...)
+            {
+                return false;
+            }
+
+            for (std::size_t index = 0; index < referencedColumnCount; ++index)
+            {
+                if (!ReadToken(payload, &cursor, &token))
+                {
+                    return false;
+                }
+                def.referencedColumns.push_back(token);
+            }
+
+            *outDef = std::move(def);
+            return cursor == payload.size();
+        }
+
+        std::wstring SerializeIndexDef(const SCIndexDef& def)
+        {
+            std::wstring payload;
+            AppendToken(&payload, def.name);
+            AppendToken(&payload, std::to_wstring(static_cast<int>(def.sourceKind)));
+            AppendToken(&payload, std::to_wstring(def.columns.size()));
+            for (const SCIndexColumnDef& column : def.columns)
+            {
+                AppendToken(&payload, column.columnName);
+                AppendToken(&payload, column.descending ? L"1" : L"0");
+            }
+            return payload;
+        }
+
+        bool DeserializeIndexDef(const std::wstring& payload, SCIndexDef* outDef)
+        {
+            if (outDef == nullptr)
+            {
+                return false;
+            }
+
+            std::size_t cursor = 0;
+            std::wstring token;
+            SCIndexDef def;
+            if (!ReadToken(payload, &cursor, &def.name) || !ReadToken(payload, &cursor, &token))
+            {
+                return false;
+            }
+
+            try
+            {
+                def.sourceKind = static_cast<SCSchemaSourceKind>(std::stoi(token));
+            } catch (...)
+            {
+                return false;
+            }
+
+            if (!ReadToken(payload, &cursor, &token))
+            {
+                return false;
+            }
+
+            std::size_t columnCount = 0;
+            try
+            {
+                columnCount = static_cast<std::size_t>(std::stoull(token));
+            } catch (...)
+            {
+                return false;
+            }
+
+            for (std::size_t index = 0; index < columnCount; ++index)
+            {
+                SCIndexColumnDef column;
+                if (!ReadToken(payload, &cursor, &column.columnName) || !ReadToken(payload, &cursor, &token))
+                {
+                    return false;
+                }
+                column.descending = (token == L"1");
+                def.columns.push_back(std::move(column));
+            }
+
+            *outDef = std::move(def);
+            return cursor == payload.size();
+        }
+
+        bool DeserializeImportSessionPayload(const std::wstring& payload, SCImportStagingArea* outSession)
         {
             if (outSession == nullptr)
             {
@@ -1011,8 +1130,7 @@ namespace StableCore::Storage
             }
             try
             {
-                session.sessionId =
-                    static_cast<SCImportSessionId>(std::stoull(token));
+                session.sessionId = static_cast<SCImportSessionId>(std::stoull(token));
             } catch (...)
             {
                 return false;
@@ -1028,8 +1146,7 @@ namespace StableCore::Storage
             }
             try
             {
-                session.baseVersion =
-                    static_cast<VersionId>(std::stoull(token));
+                session.baseVersion = static_cast<VersionId>(std::stoull(token));
             } catch (...)
             {
                 return false;
@@ -1040,8 +1157,7 @@ namespace StableCore::Storage
             }
             try
             {
-                session.chunkSize =
-                    static_cast<std::size_t>(std::stoull(token));
+                session.chunkSize = static_cast<std::size_t>(std::stoull(token));
             } catch (...)
             {
                 return false;
@@ -1052,8 +1168,7 @@ namespace StableCore::Storage
             }
             try
             {
-                session.state =
-                    static_cast<SCImportSessionState>(std::stoi(token));
+                session.state = static_cast<SCImportSessionState>(std::stoi(token));
             } catch (...)
             {
                 return false;
@@ -1071,8 +1186,7 @@ namespace StableCore::Storage
                 return false;
             }
 
-            for (std::size_t chunkIndex = 0; chunkIndex < chunkCount;
-                 ++chunkIndex)
+            for (std::size_t chunkIndex = 0; chunkIndex < chunkCount; ++chunkIndex)
             {
                 SCImportChunk chunk;
                 if (!ReadToken(payload, &cursor, &token))
@@ -1081,8 +1195,7 @@ namespace StableCore::Storage
                 }
                 try
                 {
-                    chunk.chunkId =
-                        static_cast<SCImportChunkId>(std::stoull(token));
+                    chunk.chunkId = static_cast<SCImportChunkId>(std::stoull(token));
                 } catch (...)
                 {
                     return false;
@@ -1101,8 +1214,7 @@ namespace StableCore::Storage
                     return false;
                 }
 
-                for (std::size_t requestIndex = 0; requestIndex < requestCount;
-                     ++requestIndex)
+                for (std::size_t requestIndex = 0; requestIndex < requestCount; ++requestIndex)
                 {
                     SCBatchTableRequest request;
                     if (!ReadToken(payload, &cursor, &request.tableName))
@@ -1117,14 +1229,12 @@ namespace StableCore::Storage
                     std::size_t createCount = 0;
                     try
                     {
-                        createCount =
-                            static_cast<std::size_t>(std::stoull(token));
+                        createCount = static_cast<std::size_t>(std::stoull(token));
                     } catch (...)
                     {
                         return false;
                     }
-                    for (std::size_t createIndex = 0; createIndex < createCount;
-                         ++createIndex)
+                    for (std::size_t createIndex = 0; createIndex < createCount; ++createIndex)
                     {
                         SCBatchCreateRecordRequest create;
                         if (!ReadToken(payload, &cursor, &token))
@@ -1134,25 +1244,21 @@ namespace StableCore::Storage
                         std::size_t valueCount = 0;
                         try
                         {
-                            valueCount =
-                                static_cast<std::size_t>(std::stoull(token));
+                            valueCount = static_cast<std::size_t>(std::stoull(token));
                         } catch (...)
                         {
                             return false;
                         }
-                        for (std::size_t valueIndex = 0;
-                             valueIndex < valueCount; ++valueIndex)
+                        for (std::size_t valueIndex = 0; valueIndex < valueCount; ++valueIndex)
                         {
                             SCFieldValueAssignment assignment;
                             std::wstring valueToken;
-                            if (!ReadToken(payload, &cursor,
-                                           &assignment.fieldName) ||
+                            if (!ReadToken(payload, &cursor, &assignment.fieldName) ||
                                 !ReadToken(payload, &cursor, &valueToken))
                             {
                                 return false;
                             }
-                            if (!DeserializeImportValue(valueToken,
-                                                        &assignment.SCValue))
+                            if (!DeserializeImportValue(valueToken, &assignment.SCValue))
                             {
                                 return false;
                             }
@@ -1168,14 +1274,12 @@ namespace StableCore::Storage
                     std::size_t updateCount = 0;
                     try
                     {
-                        updateCount =
-                            static_cast<std::size_t>(std::stoull(token));
+                        updateCount = static_cast<std::size_t>(std::stoull(token));
                     } catch (...)
                     {
                         return false;
                     }
-                    for (std::size_t updateIndex = 0; updateIndex < updateCount;
-                         ++updateIndex)
+                    for (std::size_t updateIndex = 0; updateIndex < updateCount; ++updateIndex)
                     {
                         SCBatchUpdateRecordRequest update;
                         if (!ReadToken(payload, &cursor, &token))
@@ -1184,8 +1288,7 @@ namespace StableCore::Storage
                         }
                         try
                         {
-                            update.recordId =
-                                static_cast<RecordId>(std::stoll(token));
+                            update.recordId = static_cast<RecordId>(std::stoll(token));
                         } catch (...)
                         {
                             return false;
@@ -1197,25 +1300,21 @@ namespace StableCore::Storage
                         std::size_t valueCount = 0;
                         try
                         {
-                            valueCount =
-                                static_cast<std::size_t>(std::stoull(token));
+                            valueCount = static_cast<std::size_t>(std::stoull(token));
                         } catch (...)
                         {
                             return false;
                         }
-                        for (std::size_t valueIndex = 0;
-                             valueIndex < valueCount; ++valueIndex)
+                        for (std::size_t valueIndex = 0; valueIndex < valueCount; ++valueIndex)
                         {
                             SCFieldValueAssignment assignment;
                             std::wstring valueToken;
-                            if (!ReadToken(payload, &cursor,
-                                           &assignment.fieldName) ||
+                            if (!ReadToken(payload, &cursor, &assignment.fieldName) ||
                                 !ReadToken(payload, &cursor, &valueToken))
                             {
                                 return false;
                             }
-                            if (!DeserializeImportValue(valueToken,
-                                                        &assignment.SCValue))
+                            if (!DeserializeImportValue(valueToken, &assignment.SCValue))
                             {
                                 return false;
                             }
@@ -1231,14 +1330,12 @@ namespace StableCore::Storage
                     std::size_t deleteCount = 0;
                     try
                     {
-                        deleteCount =
-                            static_cast<std::size_t>(std::stoull(token));
+                        deleteCount = static_cast<std::size_t>(std::stoull(token));
                     } catch (...)
                     {
                         return false;
                     }
-                    for (std::size_t deleteIndex = 0; deleteIndex < deleteCount;
-                         ++deleteIndex)
+                    for (std::size_t deleteIndex = 0; deleteIndex < deleteCount; ++deleteIndex)
                     {
                         if (!ReadToken(payload, &cursor, &token))
                         {
@@ -1246,8 +1343,7 @@ namespace StableCore::Storage
                         }
                         try
                         {
-                            request.deletes.push_back(
-                                static_cast<RecordId>(std::stoll(token)));
+                            request.deletes.push_back(static_cast<RecordId>(std::stoll(token)));
                         } catch (...)
                         {
                             return false;
@@ -1337,13 +1433,11 @@ namespace StableCore::Storage
             }
             ErrorCode BindInt64(int index, std::int64_t SCValue)
             {
-                return MapSqliteError(
-                    sqlite3_bind_int64(stmt_, index, SCValue));
+                return MapSqliteError(sqlite3_bind_int64(stmt_, index, SCValue));
             }
             ErrorCode BindDouble(int index, double SCValue)
             {
-                return MapSqliteError(
-                    sqlite3_bind_double(stmt_, index, SCValue));
+                return MapSqliteError(sqlite3_bind_double(stmt_, index, SCValue));
             }
             ErrorCode BindNull(int index)
             {
@@ -1353,17 +1447,17 @@ namespace StableCore::Storage
             ErrorCode BindText(int index, const std::wstring& SCValue)
             {
                 const std::string utf8 = ToUtf8(SCValue);
-                return MapSqliteError(sqlite3_bind_text(
-                    stmt_, index, utf8.c_str(), static_cast<int>(utf8.size()),
-                    SQLITE_TRANSIENT));
+                return MapSqliteError(
+                    sqlite3_bind_text(stmt_, index, utf8.c_str(), static_cast<int>(utf8.size()), SQLITE_TRANSIENT));
             }
 
-            ErrorCode BindBlob(int index,
-                               const std::vector<std::uint8_t>& SCValue)
+            ErrorCode BindBlob(int index, const std::vector<std::uint8_t>& SCValue)
             {
-                return MapSqliteError(sqlite3_bind_blob(
-                    stmt_, index, SCValue.empty() ? nullptr : SCValue.data(),
-                    static_cast<int>(SCValue.size()), SQLITE_TRANSIENT));
+                return MapSqliteError(sqlite3_bind_blob(stmt_,
+                                                        index,
+                                                        SCValue.empty() ? nullptr : SCValue.data(),
+                                                        static_cast<int>(SCValue.size()),
+                                                        SQLITE_TRANSIENT));
             }
 
             ErrorCode Step(bool* outHasRow = nullptr)
@@ -1405,20 +1499,17 @@ namespace StableCore::Storage
             }
             std::wstring ColumnText(int index) const
             {
-                return FromUtf8(reinterpret_cast<const char*>(
-                    sqlite3_column_text(stmt_, index)));
+                return FromUtf8(reinterpret_cast<const char*>(sqlite3_column_text(stmt_, index)));
             }
             std::vector<std::uint8_t> ColumnBlob(int index) const
             {
-                const auto* data = static_cast<const std::uint8_t*>(
-                    sqlite3_column_blob(stmt_, index));
+                const auto* data = static_cast<const std::uint8_t*>(sqlite3_column_blob(stmt_, index));
                 const int size = sqlite3_column_bytes(stmt_, index);
                 if (data == nullptr || size <= 0)
                 {
                     return {};
                 }
-                return std::vector<std::uint8_t>(
-                    data, data + static_cast<std::size_t>(size));
+                return std::vector<std::uint8_t>(data, data + static_cast<std::size_t>(size));
             }
 
         private:
@@ -1431,17 +1522,15 @@ namespace StableCore::Storage
             explicit SqliteDb(const std::wstring& path, bool readOnly)
             {
                 const std::string utf8 = ToUtf8(path);
-                const int rc = sqlite3_open_v2(
-                    utf8.c_str(), &db_,
-                    (readOnly ? SQLITE_OPEN_READONLY
-                              : (SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE)) |
-                        SQLITE_OPEN_FULLMUTEX,
-                    nullptr);
+                const int rc =
+                    sqlite3_open_v2(utf8.c_str(),
+                                    &db_,
+                                    (readOnly ? SQLITE_OPEN_READONLY : (SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE)) |
+                                        SQLITE_OPEN_FULLMUTEX,
+                                    nullptr);
                 if (rc != SQLITE_OK)
                 {
-                    const std::string message = (db_ != nullptr)
-                                                    ? sqlite3_errmsg(db_)
-                                                    : "sqlite open failed";
+                    const std::string message = (db_ != nullptr) ? sqlite3_errmsg(db_) : "sqlite open failed";
                     if (db_ != nullptr)
                     {
                         sqlite3_close(db_);
@@ -1450,8 +1539,7 @@ namespace StableCore::Storage
                     throw std::runtime_error(message);
                 }
 
-                sqlite3_exec(db_, "PRAGMA foreign_keys = ON;", nullptr, nullptr,
-                             nullptr);
+                sqlite3_exec(db_, "PRAGMA foreign_keys = ON;", nullptr, nullptr, nullptr);
             }
 
             ~SqliteDb()
@@ -1499,8 +1587,7 @@ namespace StableCore::Storage
             {
                 if (Failed(db_.Execute("BEGIN IMMEDIATE TRANSACTION;")))
                 {
-                    throw std::runtime_error(
-                        "failed to begin sqlite transaction");
+                    throw std::runtime_error("failed to begin sqlite transaction");
                 }
             }
 
@@ -1554,8 +1641,7 @@ namespace StableCore::Storage
         class SqliteDatabase;
         class SqliteTable;
 
-        ErrorCode ValidateValueKind(ValueKind expected, const SCValue& value,
-                                    bool nullable)
+        ErrorCode ValidateValueKind(ValueKind expected, const SCValue& value, bool nullable)
         {
             if (value.IsNull())
             {
@@ -1580,8 +1666,7 @@ namespace StableCore::Storage
                 {
                     return SC_E_SCHEMA_VIOLATION;
                 }
-                if (!def.defaultValue.IsNull() &&
-                    def.defaultValue.GetKind() != ValueKind::RecordId)
+                if (!def.defaultValue.IsNull() && def.defaultValue.GetKind() != ValueKind::RecordId)
                 {
                     return SC_E_SCHEMA_VIOLATION;
                 }
@@ -1591,12 +1676,76 @@ namespace StableCore::Storage
                 {
                     return SC_E_SCHEMA_VIOLATION;
                 }
-                if (!def.defaultValue.IsNull() &&
-                    def.defaultValue.GetKind() != def.valueKind)
+                if (!def.defaultValue.IsNull() && def.defaultValue.GetKind() != def.valueKind)
                 {
                     return SC_E_SCHEMA_VIOLATION;
                 }
             }
+            return SC_OK;
+        }
+
+        ErrorCode ValidateConstraintDefShape(const SCConstraintDef& def)
+        {
+            if (def.name.empty() || def.columns.empty())
+            {
+                return SC_E_INVALIDARG;
+            }
+
+            switch (def.kind)
+            {
+                case SCConstraintKind::PrimaryKey:
+                case SCConstraintKind::Unique:
+                    if (!def.referencedTable.empty() || !def.referencedColumns.empty() || !def.checkExpression.empty())
+                    {
+                        return SC_E_SCHEMA_VIOLATION;
+                    }
+                    break;
+                case SCConstraintKind::ForeignKey:
+                    if (def.referencedTable.empty())
+                    {
+                        return SC_E_SCHEMA_VIOLATION;
+                    }
+                    if (!def.checkExpression.empty())
+                    {
+                        return SC_E_SCHEMA_VIOLATION;
+                    }
+                    if (!def.referencedColumns.empty() && def.referencedColumns.size() != def.columns.size())
+                    {
+                        return SC_E_SCHEMA_VIOLATION;
+                    }
+                    break;
+                case SCConstraintKind::Check:
+                    if (def.checkExpression.empty())
+                    {
+                        return SC_E_SCHEMA_VIOLATION;
+                    }
+                    if (!def.referencedTable.empty() || !def.referencedColumns.empty())
+                    {
+                        return SC_E_SCHEMA_VIOLATION;
+                    }
+                    break;
+                default:
+                    return SC_E_SCHEMA_VIOLATION;
+            }
+
+            return SC_OK;
+        }
+
+        ErrorCode ValidateIndexDefShape(const SCIndexDef& def)
+        {
+            if (def.name.empty() || def.columns.empty())
+            {
+                return SC_E_INVALIDARG;
+            }
+
+            for (const SCIndexColumnDef& column : def.columns)
+            {
+                if (column.columnName.empty())
+                {
+                    return SC_E_INVALIDARG;
+                }
+            }
+
             return SC_OK;
         }
 
@@ -1649,8 +1798,7 @@ namespace StableCore::Storage
             return static_cast<JournalOp>(op);
         }
 
-        bool EqualsIgnoreCase(const std::wstring& left,
-                              const std::wstring& right) noexcept
+        bool EqualsIgnoreCase(const std::wstring& left, const std::wstring& right) noexcept
         {
             if (left.size() != right.size())
             {
@@ -1684,9 +1832,14 @@ namespace StableCore::Storage
             return result;
         }
 
-        void BindValueForStorage(SqliteStmt& stmt, int kindIndex, int intIndex,
-                                 int doubleIndex, int boolIndex, int textIndex,
-                                 int blobIndex, const SCValue& value)
+        void BindValueForStorage(SqliteStmt& stmt,
+                                 int kindIndex,
+                                 int intIndex,
+                                 int doubleIndex,
+                                 int boolIndex,
+                                 int textIndex,
+                                 int blobIndex,
+                                 const SCValue& value)
         {
             stmt.BindInt(kindIndex, ToSqliteValueKind(value.GetKind()));
 
@@ -1772,9 +1925,12 @@ namespace StableCore::Storage
             }
         }
 
-        SCValue ReadValueFromStorage(const SqliteStmt& stmt, int kindIndex,
-                                     int intIndex, int doubleIndex,
-                                     int boolIndex, int textIndex,
+        SCValue ReadValueFromStorage(const SqliteStmt& stmt,
+                                     int kindIndex,
+                                     int intIndex,
+                                     int doubleIndex,
+                                     int boolIndex,
+                                     int textIndex,
                                      int blobIndex)
         {
             switch (FromSqliteValueKind(stmt.ColumnInt(kindIndex)))
@@ -1800,11 +1956,16 @@ namespace StableCore::Storage
             }
         }
 
-        void BindColumnDefForStorage(SqliteStmt& stmt, int displayNameIndex,
-                                     int valueKindIndex, int columnKindIndex,
-                                     int nullableIndex, int editableIndex,
-                                     int userDefinedIndex, int indexedIndex,
-                                     int participatesIndex, int unitIndex,
+        void BindColumnDefForStorage(SqliteStmt& stmt,
+                                     int displayNameIndex,
+                                     int valueKindIndex,
+                                     int columnKindIndex,
+                                     int nullableIndex,
+                                     int editableIndex,
+                                     int userDefinedIndex,
+                                     int indexedIndex,
+                                     int participatesIndex,
+                                     int unitIndex,
                                      int referenceTableIndex,
                                      int defaultKindIndex,
                                      int defaultInt64Index,
@@ -1824,25 +1985,38 @@ namespace StableCore::Storage
             stmt.BindInt(participatesIndex, def.participatesInCalc ? 1 : 0);
             stmt.BindText(unitIndex, def.unit);
             stmt.BindText(referenceTableIndex, def.referenceTable);
-            BindValueForStorage(stmt, defaultKindIndex, defaultInt64Index,
-                                defaultDoubleIndex, defaultBoolIndex,
-                                defaultTextIndex, defaultBlobIndex,
+            BindValueForStorage(stmt,
+                                defaultKindIndex,
+                                defaultInt64Index,
+                                defaultDoubleIndex,
+                                defaultBoolIndex,
+                                defaultTextIndex,
+                                defaultBlobIndex,
                                 def.defaultValue);
         }
 
-        SCColumnDef ReadColumnDefFromStorage(
-            const SqliteStmt& stmt, int displayNameIndex, int valueKindIndex,
-            int columnKindIndex, int nullableIndex, int editableIndex,
-            int userDefinedIndex, int indexedIndex, int participatesIndex,
-            int unitIndex, int referenceTableIndex, int defaultKindIndex,
-            int defaultInt64Index, int defaultDoubleIndex, int defaultBoolIndex,
-            int defaultTextIndex, int defaultBlobIndex)
+        SCColumnDef ReadColumnDefFromStorage(const SqliteStmt& stmt,
+                                             int displayNameIndex,
+                                             int valueKindIndex,
+                                             int columnKindIndex,
+                                             int nullableIndex,
+                                             int editableIndex,
+                                             int userDefinedIndex,
+                                             int indexedIndex,
+                                             int participatesIndex,
+                                             int unitIndex,
+                                             int referenceTableIndex,
+                                             int defaultKindIndex,
+                                             int defaultInt64Index,
+                                             int defaultDoubleIndex,
+                                             int defaultBoolIndex,
+                                             int defaultTextIndex,
+                                             int defaultBlobIndex)
         {
             SCColumnDef def;
             def.displayName = stmt.ColumnText(displayNameIndex);
             def.valueKind = FromSqliteValueKind(stmt.ColumnInt(valueKindIndex));
-            def.columnKind =
-                FromSqliteColumnKind(stmt.ColumnInt(columnKindIndex));
+            def.columnKind = FromSqliteColumnKind(stmt.ColumnInt(columnKindIndex));
             def.nullable = stmt.ColumnBool(nullableIndex);
             def.editable = stmt.ColumnBool(editableIndex);
             def.userDefined = stmt.ColumnBool(userDefinedIndex);
@@ -1850,9 +2024,13 @@ namespace StableCore::Storage
             def.participatesInCalc = stmt.ColumnBool(participatesIndex);
             def.unit = stmt.ColumnText(unitIndex);
             def.referenceTable = stmt.ColumnText(referenceTableIndex);
-            def.defaultValue = ReadValueFromStorage(
-                stmt, defaultKindIndex, defaultInt64Index, defaultDoubleIndex,
-                defaultBoolIndex, defaultTextIndex, defaultBlobIndex);
+            def.defaultValue = ReadValueFromStorage(stmt,
+                                                    defaultKindIndex,
+                                                    defaultInt64Index,
+                                                    defaultDoubleIndex,
+                                                    defaultBoolIndex,
+                                                    defaultTextIndex,
+                                                    defaultBlobIndex);
             return def;
         }
 
@@ -1865,24 +2043,40 @@ namespace StableCore::Storage
                 SCColumnDef def;
             };
 
-            SqliteSchema(SqliteDatabase* db, std::wstring tableName,
-                         std::int64_t tableRowId)
-                : db_(db),
-                  tableName_(std::move(tableName)),
-                  tableRowId_(tableRowId)
+            struct SchemaConstraintEntry
+            {
+                std::int64_t rowId{0};
+                SCConstraintDef def;
+            };
+
+            struct SchemaIndexEntry
+            {
+                std::int64_t rowId{0};
+                SCIndexDef def;
+            };
+
+            SqliteSchema(SqliteDatabase* db, std::wstring tableName, std::int64_t tableRowId)
+                : db_(db), tableName_(std::move(tableName)), tableRowId_(tableRowId)
             {
             }
 
             ErrorCode GetColumnCount(std::int32_t* outCount) override;
-            ErrorCode GetColumn(std::int32_t index,
-                                SCColumnDef* outDef) override;
-            ErrorCode FindColumn(const wchar_t* name,
-                                 SCColumnDef* outDef) override;
-            ErrorCode GetSchemaSnapshot(
-                SCTableSchemaSnapshot* outSnapshot) override;
+            ErrorCode GetColumn(std::int32_t index, SCColumnDef* outDef) override;
+            ErrorCode FindColumn(const wchar_t* name, SCColumnDef* outDef) override;
+            ErrorCode GetSchemaSnapshot(SCTableSchemaSnapshot* outSnapshot) override;
+            ErrorCode GetConstraintCount(std::int32_t* outCount) override;
+            ErrorCode GetConstraint(std::int32_t index, SCConstraintDef* outDef) override;
+            ErrorCode FindConstraint(const wchar_t* name, SCConstraintDef* outDef) override;
+            ErrorCode GetIndexCount(std::int32_t* outCount) override;
+            ErrorCode GetIndex(std::int32_t index, SCIndexDef* outDef) override;
+            ErrorCode FindIndex(const wchar_t* name, SCIndexDef* outDef) override;
             ErrorCode AddColumn(const SCColumnDef& def) override;
             ErrorCode UpdateColumn(const SCColumnDef& def) override;
             ErrorCode RemoveColumn(const wchar_t* name) override;
+            ErrorCode AddConstraint(const SCConstraintDef& def) override;
+            ErrorCode RemoveConstraint(const wchar_t* name) override;
+            ErrorCode AddIndex(const SCIndexDef& def) override;
+            ErrorCode RemoveIndex(const wchar_t* name) override;
 
             void LoadTableDescription(const std::wstring& description)
             {
@@ -1891,12 +2085,121 @@ namespace StableCore::Storage
 
             void LoadConstraint(const SCConstraintDef& def)
             {
-                constraints_.push_back(def);
+                LoadConstraint(def, nextConstraintRowId_++);
+            }
+
+            void LoadConstraint(const SCConstraintDef& def, std::int64_t rowId)
+            {
+                const std::int64_t normalizedRowId = rowId > 0 ? rowId : nextConstraintRowId_++;
+                if (normalizedRowId >= nextConstraintRowId_)
+                {
+                    nextConstraintRowId_ = normalizedRowId + 1;
+                }
+
+                const auto insertIt = std::find_if(
+                    constraints_.begin(), constraints_.end(), [normalizedRowId](const SchemaConstraintEntry& existing) {
+                        return existing.rowId > normalizedRowId;
+                    });
+                constraints_.insert(insertIt, SchemaConstraintEntry{normalizedRowId, def});
+                constraintsByName_[def.name] = SchemaConstraintEntry{normalizedRowId, def};
+                constraintRowIdsByName_[def.name] = normalizedRowId;
+            }
+
+            void ReplaceConstraint(const SCConstraintDef& def)
+            {
+                const auto vecIt = std::find_if(
+                    constraints_.begin(), constraints_.end(), [&def](const SchemaConstraintEntry& existing) {
+                        return existing.def.name == def.name;
+                    });
+                if (vecIt != constraints_.end())
+                {
+                    vecIt->def = def;
+                }
+                const std::int64_t rowId = vecIt != constraints_.end() ? vecIt->rowId : -1;
+                constraintsByName_[def.name] = SchemaConstraintEntry{rowId, def};
+                if (rowId >= 0)
+                {
+                    constraintRowIdsByName_[def.name] = rowId;
+                }
+            }
+
+            void UnloadConstraint(const wchar_t* name)
+            {
+                if (name == nullptr)
+                {
+                    return;
+                }
+
+                constraintsByName_.erase(name);
+                constraintRowIdsByName_.erase(name);
+
+                const auto vecIt =
+                    std::find_if(constraints_.begin(), constraints_.end(), [name](const SchemaConstraintEntry& def) {
+                        return def.def.name == name;
+                    });
+                if (vecIt != constraints_.end())
+                {
+                    constraints_.erase(vecIt);
+                }
             }
 
             void LoadIndex(const SCIndexDef& def)
             {
-                indexes_.push_back(def);
+                LoadIndex(def, nextIndexRowId_++);
+            }
+
+            void LoadIndex(const SCIndexDef& def, std::int64_t rowId)
+            {
+                const std::int64_t normalizedRowId = rowId > 0 ? rowId : nextIndexRowId_++;
+                if (normalizedRowId >= nextIndexRowId_)
+                {
+                    nextIndexRowId_ = normalizedRowId + 1;
+                }
+
+                const auto insertIt =
+                    std::find_if(indexes_.begin(), indexes_.end(), [normalizedRowId](const SchemaIndexEntry& existing) {
+                        return existing.rowId > normalizedRowId;
+                    });
+                indexes_.insert(insertIt, SchemaIndexEntry{normalizedRowId, def});
+                indexesByName_[def.name] = SchemaIndexEntry{normalizedRowId, def};
+                indexRowIdsByName_[def.name] = normalizedRowId;
+            }
+
+            void ReplaceIndex(const SCIndexDef& def)
+            {
+                const auto vecIt =
+                    std::find_if(indexes_.begin(), indexes_.end(), [&def](const SchemaIndexEntry& existing) {
+                        return existing.def.name == def.name;
+                    });
+                if (vecIt != indexes_.end())
+                {
+                    vecIt->def = def;
+                }
+                const std::int64_t rowId = vecIt != indexes_.end() ? vecIt->rowId : -1;
+                indexesByName_[def.name] = SchemaIndexEntry{rowId, def};
+                if (rowId >= 0)
+                {
+                    indexRowIdsByName_[def.name] = rowId;
+                }
+            }
+
+            void UnloadIndex(const wchar_t* name)
+            {
+                if (name == nullptr)
+                {
+                    return;
+                }
+
+                indexesByName_.erase(name);
+                indexRowIdsByName_.erase(name);
+
+                const auto vecIt = std::find_if(indexes_.begin(), indexes_.end(), [name](const SchemaIndexEntry& def) {
+                    return def.def.name == name;
+                });
+                if (vecIt != indexes_.end())
+                {
+                    indexes_.erase(vecIt);
+                }
             }
 
             std::wstring LegacyPrimaryKeyName() const
@@ -1906,24 +2209,23 @@ namespace StableCore::Storage
 
             std::wstring LegacyIndexName(const std::wstring& columnName) const
             {
-                return L"idx_" + SanitizeIdentifier(tableName_) + L"_" +
-                       SanitizeIdentifier(columnName);
+                return L"idx_" + SanitizeIdentifier(tableName_) + L"_" + SanitizeIdentifier(columnName);
             }
 
-            void SetLegacyIndexState(const std::wstring& columnName,
-                                     bool indexed)
+            void SetLegacyIndexState(const std::wstring& columnName, bool indexed)
             {
                 const std::wstring indexName = LegacyIndexName(columnName);
-                const auto indexIt = std::find_if(
-                    indexes_.begin(), indexes_.end(),
-                    [&indexName](const SCIndexDef& index) {
-                        return index.name == indexName;
+                const auto indexIt =
+                    std::find_if(indexes_.begin(), indexes_.end(), [&indexName](const SchemaIndexEntry& index) {
+                        return index.def.name == indexName;
                     });
 
                 if (!indexed)
                 {
                     if (indexIt != indexes_.end())
                     {
+                        indexesByName_.erase(indexName);
+                        indexRowIdsByName_.erase(indexName);
                         indexes_.erase(indexIt);
                     }
                     return;
@@ -1935,31 +2237,46 @@ namespace StableCore::Storage
                 index.columns.push_back(SCIndexColumnDef{columnName, false});
                 if (indexIt != indexes_.end())
                 {
-                    *indexIt = std::move(index);
+                    indexIt->def = index;
+                    indexesByName_[indexName] = *indexIt;
                 } else
                 {
-                    indexes_.push_back(std::move(index));
+                    LoadIndex(std::move(index));
                 }
             }
 
             void RemovePrimaryKeyIfColumnMatches(const std::wstring& columnName)
             {
                 const auto it = std::remove_if(
-                    constraints_.begin(), constraints_.end(),
-                    [&columnName](const SCConstraintDef& constraint) {
-                        return constraint.kind == SCConstraintKind::PrimaryKey &&
-                               constraint.columns.size() == 1 &&
-                               EqualsIgnoreCase(constraint.columns.front(),
-                                                columnName);
+                    constraints_.begin(), constraints_.end(), [&columnName](const SchemaConstraintEntry& constraint) {
+                        return constraint.def.kind == SCConstraintKind::PrimaryKey &&
+                               constraint.def.columns.size() == 1 &&
+                               EqualsIgnoreCase(constraint.def.columns.front(), columnName);
                     });
+                for (auto iter = it; iter != constraints_.end(); ++iter)
+                {
+                    constraintsByName_.erase(iter->def.name);
+                    constraintRowIdsByName_.erase(iter->def.name);
+                }
                 constraints_.erase(it, constraints_.end());
             }
 
-            const SCColumnDef* FindColumnDef(
-                const std::wstring& name) const noexcept
+            const SCColumnDef* FindColumnDef(const std::wstring& name) const noexcept
             {
                 const auto it = columnsByName_.find(name);
                 return it == columnsByName_.end() ? nullptr : &it->second.def;
+            }
+
+            const SCConstraintDef* FindConstraintDef(const std::wstring& name) const noexcept
+            {
+                const auto it = constraintsByName_.find(name);
+                return it == constraintsByName_.end() ? nullptr : &it->second.def;
+            }
+
+            const SCIndexDef* FindIndexDef(const std::wstring& name) const noexcept
+            {
+                const auto it = indexesByName_.find(name);
+                return it == indexesByName_.end() ? nullptr : &it->second.def;
             }
 
             std::int64_t FindColumnRowId(const wchar_t* name) const noexcept
@@ -1973,6 +2290,28 @@ namespace StableCore::Storage
                 return it == columnRowIdsByName_.end() ? -1 : it->second;
             }
 
+            std::int64_t FindConstraintRowId(const wchar_t* name) const noexcept
+            {
+                if (name == nullptr)
+                {
+                    return -1;
+                }
+
+                const auto it = constraintRowIdsByName_.find(name);
+                return it == constraintRowIdsByName_.end() ? -1 : it->second;
+            }
+
+            std::int64_t FindIndexRowId(const wchar_t* name) const noexcept
+            {
+                if (name == nullptr)
+                {
+                    return -1;
+                }
+
+                const auto it = indexRowIdsByName_.find(name);
+                return it == indexRowIdsByName_.end() ? -1 : it->second;
+            }
+
             void LoadColumn(const SCColumnDef& def)
             {
                 LoadColumn(def, nextColumnRowId_++);
@@ -1980,39 +2319,32 @@ namespace StableCore::Storage
 
             void LoadColumn(const SCColumnDef& def, std::int64_t rowId)
             {
-                const std::int64_t normalizedRowId =
-                    rowId > 0 ? rowId : nextColumnRowId_++;
+                const std::int64_t normalizedRowId = rowId > 0 ? rowId : nextColumnRowId_++;
                 if (normalizedRowId >= nextColumnRowId_)
                 {
                     nextColumnRowId_ = normalizedRowId + 1;
                 }
 
-                const auto insertIt =
-                    std::find_if(columns_.begin(), columns_.end(),
-                                 [normalizedRowId](
-                                     const SchemaColumnEntry& existing) {
-                                     return existing.rowId > normalizedRowId;
-                                 });
-                columns_.insert(insertIt,
-                                SchemaColumnEntry{normalizedRowId, def});
-                columnsByName_[def.name] =
-                    SchemaColumnEntry{normalizedRowId, def};
+                const auto insertIt = std::find_if(
+                    columns_.begin(), columns_.end(), [normalizedRowId](const SchemaColumnEntry& existing) {
+                        return existing.rowId > normalizedRowId;
+                    });
+                columns_.insert(insertIt, SchemaColumnEntry{normalizedRowId, def});
+                columnsByName_[def.name] = SchemaColumnEntry{normalizedRowId, def};
                 columnRowIdsByName_[def.name] = normalizedRowId;
             }
 
             void ReplaceColumn(const SCColumnDef& def)
             {
                 const auto vecIt =
-                    std::find_if(columns_.begin(), columns_.end(),
-                                 [&def](const SchemaColumnEntry& existing) {
-                                     return existing.def.name == def.name;
-                                 });
+                    std::find_if(columns_.begin(), columns_.end(), [&def](const SchemaColumnEntry& existing) {
+                        return existing.def.name == def.name;
+                    });
                 if (vecIt != columns_.end())
                 {
                     vecIt->def = def;
                 }
-                const std::int64_t rowId =
-                    vecIt != columns_.end() ? vecIt->rowId : -1;
+                const std::int64_t rowId = vecIt != columns_.end() ? vecIt->rowId : -1;
                 columnsByName_[def.name] = SchemaColumnEntry{rowId, def};
                 if (rowId >= 0)
                 {
@@ -2039,11 +2371,9 @@ namespace StableCore::Storage
                     columnRowIdsByName_.erase(rowIdIt);
                 }
 
-                const auto vecIt =
-                    std::find_if(columns_.begin(), columns_.end(),
-                                 [name](const SchemaColumnEntry& def) {
-                                     return def.def.name == name;
-                                 });
+                const auto vecIt = std::find_if(columns_.begin(), columns_.end(), [name](const SchemaColumnEntry& def) {
+                    return def.def.name == name;
+                });
                 if (vecIt != columns_.end())
                 {
                     columns_.erase(vecIt);
@@ -2061,15 +2391,20 @@ namespace StableCore::Storage
             std::wstring description_;
             std::int64_t tableRowId_{0};
             std::vector<SchemaColumnEntry> columns_;
-            std::vector<SCConstraintDef> constraints_;
-            std::vector<SCIndexDef> indexes_;
+            std::vector<SchemaConstraintEntry> constraints_;
+            std::vector<SchemaIndexEntry> indexes_;
             std::unordered_map<std::wstring, SchemaColumnEntry> columnsByName_;
+            std::unordered_map<std::wstring, SchemaConstraintEntry> constraintsByName_;
+            std::unordered_map<std::wstring, SchemaIndexEntry> indexesByName_;
             std::unordered_map<std::wstring, std::int64_t> columnRowIdsByName_;
+            std::unordered_map<std::wstring, std::int64_t> constraintRowIdsByName_;
+            std::unordered_map<std::wstring, std::int64_t> indexRowIdsByName_;
             std::int64_t nextColumnRowId_{1};
+            std::int64_t nextConstraintRowId_{1};
+            std::int64_t nextIndexRowId_{1};
         };
 
-        class SqliteEditSession final : public ISCEditSession,
-                                        public SCRefCountedObject
+        class SqliteEditSession final : public ISCEditSession, public SCRefCountedObject
         {
         public:
             SqliteEditSession(std::wstring name, VersionId openedVersion)
@@ -2104,8 +2439,7 @@ namespace StableCore::Storage
         class SqliteRecord final : public ISCRecord, public SCRefCountedObject
         {
         public:
-            SqliteRecord(SqliteDatabase* db, SqliteTable* table,
-                         std::shared_ptr<SqliteRecordData> data)
+            SqliteRecord(SqliteDatabase* db, SqliteTable* table, std::shared_ptr<SqliteRecordData> data)
                 : db_(db), table_(table), data_(std::move(data))
             {
             }
@@ -2115,13 +2449,10 @@ namespace StableCore::Storage
             VersionId GetLastModifiedVersion() const noexcept override;
 
             ErrorCode GetValue(const wchar_t* name, SCValue* outValue) override;
-            ErrorCode SetValue(const wchar_t* name,
-                               const SCValue& value) override;
+            ErrorCode SetValue(const wchar_t* name, const SCValue& value) override;
 
-            ErrorCode GetInt64(const wchar_t* name,
-                               std::int64_t* outValue) override;
-            ErrorCode SetInt64(const wchar_t* name,
-                               std::int64_t value) override;
+            ErrorCode GetInt64(const wchar_t* name, std::int64_t* outValue) override;
+            ErrorCode SetInt64(const wchar_t* name, std::int64_t value) override;
 
             ErrorCode GetDouble(const wchar_t* name, double* outValue) override;
             ErrorCode SetDouble(const wchar_t* name, double value) override;
@@ -2129,42 +2460,30 @@ namespace StableCore::Storage
             ErrorCode GetBool(const wchar_t* name, bool* outValue) override;
             ErrorCode SetBool(const wchar_t* name, bool value) override;
 
-            ErrorCode GetString(const wchar_t* name,
-                                const wchar_t** outValue) override;
-            ErrorCode GetStringCopy(const wchar_t* name,
-                                    std::wstring* outValue) override;
-            ErrorCode SetString(const wchar_t* name,
-                                const wchar_t* value) override;
+            ErrorCode GetString(const wchar_t* name, const wchar_t** outValue) override;
+            ErrorCode GetStringCopy(const wchar_t* name, std::wstring* outValue) override;
+            ErrorCode SetString(const wchar_t* name, const wchar_t* value) override;
 
-            ErrorCode GetBinary(const wchar_t* name,
-                                const std::uint8_t** outValue,
-                                std::size_t* outSize) override;
-            ErrorCode GetBinaryCopy(
-                const wchar_t* name, std::vector<std::uint8_t>* outValue)
-                override;
-            ErrorCode SetBinary(const wchar_t* name,
-                                const std::uint8_t* value,
-                                std::size_t size) override;
+            ErrorCode GetBinary(const wchar_t* name, const std::uint8_t** outValue, std::size_t* outSize) override;
+            ErrorCode GetBinaryCopy(const wchar_t* name, std::vector<std::uint8_t>* outValue) override;
+            ErrorCode SetBinary(const wchar_t* name, const std::uint8_t* value, std::size_t size) override;
 
             ErrorCode GetRef(const wchar_t* name, RecordId* outValue) override;
             ErrorCode SetRef(const wchar_t* name, RecordId value) override;
 
         private:
             ErrorCode ReadTypedValue(const wchar_t* name, SCValue* outValue);
-            ErrorCode ResolveValueStorage(const wchar_t* name,
-                                          const SCValue** outValue) const;
+            ErrorCode ResolveValueStorage(const wchar_t* name, const SCValue** outValue) const;
 
             SqliteDatabase* db_{nullptr};
             SqliteTable* table_{nullptr};
             std::shared_ptr<SqliteRecordData> data_;
         };
 
-        class SqliteRecordCursor final : public ISCRecordCursor,
-                                         public SCRefCountedObject
+        class SqliteRecordCursor final : public ISCRecordCursor, public SCRefCountedObject
         {
         public:
-            explicit SqliteRecordCursor(std::vector<SCRecordPtr> records)
-                : records_(std::move(records))
+            explicit SqliteRecordCursor(std::vector<SCRecordPtr> records) : records_(std::move(records))
             {
             }
 
@@ -2188,11 +2507,8 @@ namespace StableCore::Storage
         class SqliteTable final : public ISCTable, public SCRefCountedObject
         {
         public:
-            SqliteTable(SqliteDatabase* db, std::wstring name,
-                        std::int64_t tableRowId)
-                : db_(db),
-                  name_(std::move(name)),
-                  schema_(SCMakeRef<SqliteSchema>(db, name_, tableRowId))
+            SqliteTable(SqliteDatabase* db, std::wstring name, std::int64_t tableRowId)
+                : db_(db), name_(std::move(name)), schema_(SCMakeRef<SqliteSchema>(db, name_, tableRowId))
             {
             }
 
@@ -2205,8 +2521,7 @@ namespace StableCore::Storage
                 return SC_OK;
             }
             ErrorCode EnumerateRecords(SCRecordCursorPtr& outCursor) override;
-            ErrorCode FindRecords(const SCQueryCondition& condition,
-                                  SCRecordCursorPtr& outCursor) override;
+            ErrorCode FindRecords(const SCQueryCondition& condition, SCRecordCursorPtr& outCursor) override;
 
             const std::wstring& Name() const noexcept
             {
@@ -2227,15 +2542,13 @@ namespace StableCore::Storage
                 return it == records_.end() ? nullptr : it->second;
             }
 
-            std::unordered_map<RecordId, std::shared_ptr<SqliteRecordData>>&
-            Records() noexcept
+            std::unordered_map<RecordId, std::shared_ptr<SqliteRecordData>>& Records() noexcept
             {
                 return records_;
             }
 
         private:
-            SCRecordPtr MakeRecord(
-                const std::shared_ptr<SqliteRecordData>& data)
+            SCRecordPtr MakeRecord(const std::shared_ptr<SqliteRecordData>& data)
             {
                 return SCMakeRef<SqliteRecord>(db_, this, data);
             }
@@ -2243,8 +2556,7 @@ namespace StableCore::Storage
             SqliteDatabase* db_{nullptr};
             std::wstring name_;
             SCRefPtr<SqliteSchema> schema_;
-            std::unordered_map<RecordId, std::shared_ptr<SqliteRecordData>>
-                records_;
+            std::unordered_map<RecordId, std::shared_ptr<SqliteRecordData>> records_;
         };
 
         class SqliteDatabase final : public ISCDatabase,
@@ -2256,52 +2568,40 @@ namespace StableCore::Storage
         public:
             explicit SqliteDatabase(const std::wstring& path);
             explicit SqliteDatabase(const std::wstring& path, bool readOnly);
-            explicit SqliteDatabase(const std::wstring& path,
-                                    const SCOpenDatabaseOptions& options);
+            explicit SqliteDatabase(const std::wstring& path, const SCOpenDatabaseOptions& options);
             ~SqliteDatabase() override;
 
-            ErrorCode BeginEdit(const wchar_t* name,
-                                SCEditPtr& outEdit) override;
+            ErrorCode BeginEdit(const wchar_t* name, SCEditPtr& outEdit) override;
             ErrorCode Commit(ISCEditSession* edit) override;
             ErrorCode Rollback(ISCEditSession* edit) override;
             ErrorCode Undo() override;
             ErrorCode Redo() override;
             ErrorCode GetTableCount(std::int32_t* outCount) override;
-            ErrorCode GetTableName(std::int32_t index,
-                                   std::wstring* outName) override;
-            ErrorCode GetTable(const wchar_t* name,
-                               SCTablePtr& outTable) override;
-            ErrorCode CreateTable(const wchar_t* name,
-                                  SCTablePtr& outTable) override;
+            ErrorCode GetTableName(std::int32_t index, std::wstring* outName) override;
+            ErrorCode GetTable(const wchar_t* name, SCTablePtr& outTable) override;
+            ErrorCode CreateTable(const wchar_t* name, SCTablePtr& outTable) override;
             ErrorCode DeleteTable(const wchar_t* name) override;
             ErrorCode AddObserver(ISCDatabaseObserver* observer) override;
             ErrorCode RemoveObserver(ISCDatabaseObserver* observer) override;
             ErrorCode ExecuteUpgradePlan(const SCUpgradePlan& plan,
                                          bool confirmed,
                                          SCUpgradeResult* outResult) override;
-            ErrorCode BeginImportSession(
-                const SCImportSessionOptions& options,
-                SCImportStagingArea* outSession) override;
-            ErrorCode AppendImportChunk(
-                SCImportStagingArea* session, const SCImportChunk& chunk,
-                SCImportCheckpoint* outCheckpoint) override;
-            ErrorCode LoadImportRecoveryState(
-                std::uint64_t sessionId,
-                SCImportRecoveryState* outState) override;
-            ErrorCode FinalizeImportSession(
-                const SCImportFinalizeCommit& commit,
-                SCImportRecoveryState* outState) override;
+            ErrorCode BeginImportSession(const SCImportSessionOptions& options,
+                                         SCImportStagingArea* outSession) override;
+            ErrorCode AppendImportChunk(SCImportStagingArea* session,
+                                        const SCImportChunk& chunk,
+                                        SCImportCheckpoint* outCheckpoint) override;
+            ErrorCode LoadImportRecoveryState(std::uint64_t sessionId, SCImportRecoveryState* outState) override;
+            ErrorCode FinalizeImportSession(const SCImportFinalizeCommit& commit,
+                                            SCImportRecoveryState* outState) override;
             ErrorCode AbortImportSession(std::uint64_t sessionId) override;
             ErrorCode CreateBackupCopy(const wchar_t* targetPath,
                                        const SCBackupOptions& options,
                                        SCBackupResult* outResult) override;
-            ErrorCode ClearColumnValues(ISCTable* table,
-                                        const wchar_t* name) override;
-            ErrorCode ResetHistoryBaseline(
-                SCBackupResult* outResult = nullptr) override;
+            ErrorCode ClearColumnValues(ISCTable* table, const wchar_t* name) override;
+            ErrorCode ResetHistoryBaseline(SCBackupResult* outResult = nullptr) override;
             ErrorCode GetEditLogState(SCEditLogState* outState) const override;
-            ErrorCode GetEditingState(
-                SCEditingDatabaseState* outState) const override;
+            ErrorCode GetEditingState(SCEditingDatabaseState* outState) const override;
             VersionId GetCurrentVersion() const noexcept override
             {
                 return version_;
@@ -2310,22 +2610,18 @@ namespace StableCore::Storage
             {
                 return schemaVersion_;
             }
-            ErrorCode CollectDiagnostics(
-                SCStorageHealthReport* outReport) const override;
-            ErrorCode GetReferencesBySource(
-                const std::wstring& sourceTable, RecordId sourceRecordId,
-                std::vector<ReferenceRecord>* outRecords) const override;
-            ErrorCode GetReferencesByTarget(
-                const std::wstring& targetTable, RecordId targetRecordId,
-                std::vector<ReverseReferenceRecord>* outRecords) const override;
-            ErrorCode CheckReferenceIndex(
-                ReferenceIndexCheckResult* outResult) const override;
-            ErrorCode GetAllReferencesDiagnosticOnly(
-                ReferenceIndex* outIndex) const override;
+            ErrorCode CollectDiagnostics(SCStorageHealthReport* outReport) const override;
+            ErrorCode GetReferencesBySource(const std::wstring& sourceTable,
+                                            RecordId sourceRecordId,
+                                            std::vector<ReferenceRecord>* outRecords) const override;
+            ErrorCode GetReferencesByTarget(const std::wstring& targetTable,
+                                            RecordId targetRecordId,
+                                            std::vector<ReverseReferenceRecord>* outRecords) const override;
+            ErrorCode CheckReferenceIndex(ReferenceIndexCheckResult* outResult) const override;
+            ErrorCode GetAllReferencesDiagnosticOnly(ReferenceIndex* outIndex) const override;
             ErrorCode RebuildReferenceIndexes() override;
-            ErrorCode CommitReferenceDelta(
-                const ReferenceIndex& forwardDelta,
-                const ReverseReferenceIndex& reverseDelta) override;
+            ErrorCode CommitReferenceDelta(const ReferenceIndex& forwardDelta,
+                                           const ReverseReferenceIndex& reverseDelta) override;
 
             friend class SqliteSchema;
 
@@ -2350,17 +2646,11 @@ namespace StableCore::Storage
                                  const std::shared_ptr<SqliteRecordData>& data,
                                  const std::wstring& fieldName,
                                  const SCValue& value);
-            ErrorCode DeleteRecord(
-                SqliteTable* table,
-                const std::shared_ptr<SqliteRecordData>& data);
-            void RecordCreate(SqliteTable* table,
-                              const std::shared_ptr<SqliteRecordData>& data);
-            ErrorCode PersistAddedColumn(SqliteSchema* schema,
-                                         const SCColumnDef& def);
-            ErrorCode PersistUpdatedColumn(SqliteSchema* schema,
-                                           const SCColumnDef& def);
-            ErrorCode PersistRemovedColumn(SqliteSchema* schema,
-                                           const wchar_t* columnName);
+            ErrorCode DeleteRecord(SqliteTable* table, const std::shared_ptr<SqliteRecordData>& data);
+            void RecordCreate(SqliteTable* table, const std::shared_ptr<SqliteRecordData>& data);
+            ErrorCode PersistAddedColumn(SqliteSchema* schema, const SCColumnDef& def);
+            ErrorCode PersistUpdatedColumn(SqliteSchema* schema, const SCColumnDef& def);
+            ErrorCode PersistRemovedColumn(SqliteSchema* schema, const wchar_t* columnName);
 
         private:
             struct JournalLookup
@@ -2383,8 +2673,7 @@ namespace StableCore::Storage
             void LoadJournalStacks();
             void MaterializeIndexes();
             ErrorCode EnsureImportSessionStore();
-            void EnsureColumnIndex(std::int64_t tableRowId,
-                                   const std::wstring& columnName);
+            void EnsureColumnIndex(std::int64_t tableRowId, const std::wstring& columnName);
             void RunStartupIntegrityCheck();
             void LogStartupDiagnostic(SCDiagnosticSeverity severity,
                                       const std::wstring& category,
@@ -2392,79 +2681,77 @@ namespace StableCore::Storage
             void SetCleanShutdownFlag(bool cleanShutdown);
             ErrorCode EnsureWritable() const;
             ErrorCode ValidateActiveEdit(ISCEditSession* edit) const;
-            ErrorCode ValidateWrite(
-                SqliteTable* table,
-                const std::shared_ptr<SqliteRecordData>& data,
-                const std::wstring& fieldName, const SCValue& value);
-            ErrorCode ValidateColumnDefForSchema(SqliteSchema* schema,
-                                                 const SCColumnDef& def) const;
+            ErrorCode ValidateWrite(SqliteTable* table,
+                                    const std::shared_ptr<SqliteRecordData>& data,
+                                    const std::wstring& fieldName,
+                                    const SCValue& value);
+            ErrorCode ValidateColumnDefForSchema(SqliteSchema* schema, const SCColumnDef& def) const;
+            ErrorCode ValidateConstraintDefForSchema(SqliteSchema* schema, const SCConstraintDef& def) const;
+            ErrorCode ValidateIndexDefForSchema(SqliteSchema* schema, const SCIndexDef& def) const;
             ErrorCode ValidateRequiredValuesForCommit() const;
             bool HasAliveRecords(SqliteSchema* schema) const;
-            bool IsRecordReferenced(const std::wstring& tableName,
-                                    RecordId recordId) const;
+            bool IsRecordReferenced(const std::wstring& tableName, RecordId recordId) const;
             void MarkReferenceIndexDirty() noexcept;
             void RefreshReferenceIndexState();
-            JournalLookup LookupRecordJournalState(
-                const std::wstring& tableName, RecordId recordId) const;
-            void RemoveFieldJournalEntries(const std::wstring& tableName,
-                                           RecordId recordId);
-            void RemoveAllJournalEntriesForRecord(const std::wstring& tableName,
-                                                  RecordId recordId);
+            JournalLookup LookupRecordJournalState(const std::wstring& tableName, RecordId recordId) const;
+            void RemoveFieldJournalEntries(const std::wstring& tableName, RecordId recordId);
+            void RemoveAllJournalEntriesForRecord(const std::wstring& tableName, RecordId recordId);
             void RecordSchemaJournal(const std::wstring& tableName,
                                      const SCColumnDef& oldColumn,
                                      const SCColumnDef& newColumn,
                                      JournalOp op,
                                      std::int64_t columnRowId = -1);
-            void RecordJournal(const std::wstring& tableName, RecordId recordId,
+            void RecordConstraintJournal(const std::wstring& tableName,
+                                         const SCConstraintDef& oldConstraint,
+                                         const SCConstraintDef& newConstraint,
+                                         JournalOp op,
+                                         std::int64_t constraintRowId = -1);
+            void RecordIndexJournal(const std::wstring& tableName,
+                                    const SCIndexDef& oldIndex,
+                                    const SCIndexDef& newIndex,
+                                    JournalOp op,
+                                    std::int64_t indexRowId = -1);
+            void RecordJournal(const std::wstring& tableName,
+                               RecordId recordId,
                                const std::wstring& fieldName,
-                               const SCValue& oldValue, const SCValue& newValue,
-                               bool oldDeleted, bool newDeleted, JournalOp op);
-            ErrorCode PersistSchemaAddColumn(SqliteSchema* schema,
-                                             const SCColumnDef& def,
-                                             std::int64_t rowId = -1);
-            ErrorCode PersistSchemaUpdateColumn(SqliteSchema* schema,
-                                                const SCColumnDef& def);
-            ErrorCode PersistSchemaRemoveColumn(SqliteSchema* schema,
-                                               const wchar_t* columnName);
-            ErrorCode SyncLegacyIndexMetadata(SqliteSchema* schema,
-                                              const std::wstring& columnName,
-                                              bool indexed);
-            ErrorCode RemoveLegacyPrimaryKeyMetadata(
-                SqliteSchema* schema, const std::wstring& columnName);
+                               const SCValue& oldValue,
+                               const SCValue& newValue,
+                               bool oldDeleted,
+                               bool newDeleted,
+                               JournalOp op);
+            ErrorCode PersistSchemaAddColumn(SqliteSchema* schema, const SCColumnDef& def, std::int64_t rowId = -1);
+            ErrorCode PersistSchemaUpdateColumn(SqliteSchema* schema, const SCColumnDef& def);
+            ErrorCode PersistSchemaRemoveColumn(SqliteSchema* schema, const wchar_t* columnName);
+            ErrorCode PersistSchemaAddConstraint(SqliteSchema* schema,
+                                                 const SCConstraintDef& def,
+                                                 std::int64_t rowId = -1);
+            ErrorCode PersistSchemaRemoveConstraint(SqliteSchema* schema, const wchar_t* name);
+            ErrorCode PersistSchemaAddIndex(SqliteSchema* schema, const SCIndexDef& def, std::int64_t rowId = -1);
+            ErrorCode PersistSchemaRemoveIndex(SqliteSchema* schema, const wchar_t* name);
+            ErrorCode SyncLegacyIndexMetadata(SqliteSchema* schema, const std::wstring& columnName, bool indexed);
+            ErrorCode RemoveLegacyPrimaryKeyMetadata(SqliteSchema* schema, const std::wstring& columnName);
+            ErrorCode PersistAddedConstraint(SqliteSchema* schema, const SCConstraintDef& def);
+            ErrorCode PersistRemovedConstraint(SqliteSchema* schema, const wchar_t* name);
+            ErrorCode PersistAddedIndex(SqliteSchema* schema, const SCIndexDef& def);
+            ErrorCode PersistRemovedIndex(SqliteSchema* schema, const wchar_t* name);
             ErrorCode ApplyJournalReverse(const JournalTransaction& tx);
             ErrorCode ApplyJournalForward(const JournalTransaction& tx);
             ErrorCode ApplyEntry(const JournalEntry& entry, bool reverse);
-            ErrorCode ApplySchemaEntry(const JournalEntry& entry,
-                                       bool reverse);
-            void UpdateTouchedVersions(const JournalTransaction& tx,
-                                       VersionId version);
-            SCChangeSet BuildChangeSet(const JournalTransaction& tx,
-                                       ChangeSource source,
-                                       VersionId version) const;
+            ErrorCode ApplySchemaEntry(const JournalEntry& entry, bool reverse);
+            void UpdateTouchedVersions(const JournalTransaction& tx, VersionId version);
+            SCChangeSet BuildChangeSet(const JournalTransaction& tx, ChangeSource source, VersionId version) const;
             void NotifyObservers(const SCChangeSet& SCChangeSet);
-            std::vector<std::pair<std::wstring, RecordId>> GetTouchedRecordKeys(
-                const JournalTransaction& tx) const;
-            void PersistTouchedRecords(const JournalTransaction& tx,
-                                       VersionId version);
-            std::int64_t InsertJournalTransaction(const JournalTransaction& tx,
-                                                  int stackKind,
-                                                  int stackOrder);
-            void PersistJournalEntries(std::int64_t txId,
-                                       const JournalTransaction& tx);
-            void PersistSchemaJournalEntries(std::int64_t txId,
-                                             const JournalTransaction& tx,
-                                             int* sequence);
+            std::vector<std::pair<std::wstring, RecordId>> GetTouchedRecordKeys(const JournalTransaction& tx) const;
+            void PersistTouchedRecords(const JournalTransaction& tx, VersionId version);
+            std::int64_t InsertJournalTransaction(const JournalTransaction& tx, int stackKind, int stackOrder);
+            void PersistJournalEntries(std::int64_t txId, const JournalTransaction& tx);
+            void PersistSchemaJournalEntries(std::int64_t txId, const JournalTransaction& tx, int* sequence);
             void DeleteRedoJournalRows();
-            void UpdateJournalTransactionStack(std::int64_t txId, int stackKind,
-                                               int stackOrder);
+            void UpdateJournalTransactionStack(std::int64_t txId, int stackKind, int stackOrder);
             void DeleteJournalTransaction(std::int64_t txId);
-            void ReloadColumnValuesFromStorage(SqliteTable* table,
-                                               const wchar_t* columnName);
-            std::wstring SerializeImportSession(
-                const SCImportStagingArea& session) const;
-            ErrorCode DeserializeImportSession(
-                const std::wstring& payload,
-                SCImportStagingArea* outSession) const;
+            void ReloadColumnValuesFromStorage(SqliteTable* table, const wchar_t* columnName);
+            std::wstring SerializeImportSession(const SCImportStagingArea& session) const;
+            ErrorCode DeserializeImportSession(const std::wstring& payload, SCImportStagingArea* outSession) const;
 
             std::wstring path_;
             SqliteDb db_;
@@ -2501,8 +2788,7 @@ namespace StableCore::Storage
             return SC_OK;
         }
 
-        ErrorCode SqliteSchema::GetColumn(std::int32_t index,
-                                          SCColumnDef* outDef)
+        ErrorCode SqliteSchema::GetColumn(std::int32_t index, SCColumnDef* outDef)
         {
             if (outDef == nullptr)
             {
@@ -2516,8 +2802,7 @@ namespace StableCore::Storage
             return SC_OK;
         }
 
-        ErrorCode SqliteSchema::FindColumn(const wchar_t* name,
-                                           SCColumnDef* outDef)
+        ErrorCode SqliteSchema::FindColumn(const wchar_t* name, SCColumnDef* outDef)
         {
             if (name == nullptr)
             {
@@ -2536,8 +2821,7 @@ namespace StableCore::Storage
             return SC_OK;
         }
 
-        ErrorCode SqliteSchema::GetSchemaSnapshot(
-            SCTableSchemaSnapshot* outSnapshot)
+        ErrorCode SqliteSchema::GetSchemaSnapshot(SCTableSchemaSnapshot* outSnapshot)
         {
             if (outSnapshot == nullptr)
             {
@@ -2556,9 +2840,110 @@ namespace StableCore::Storage
                 outSnapshot->columns.push_back(column.def);
             }
 
-            outSnapshot->constraints = constraints_;
-            outSnapshot->indexes = indexes_;
+            outSnapshot->constraints.reserve(constraints_.size());
+            for (const auto& constraint : constraints_)
+            {
+                outSnapshot->constraints.push_back(constraint.def);
+            }
 
+            outSnapshot->indexes.reserve(indexes_.size());
+            for (const auto& index : indexes_)
+            {
+                outSnapshot->indexes.push_back(index.def);
+            }
+
+            return SC_OK;
+        }
+
+        ErrorCode SqliteSchema::GetConstraintCount(std::int32_t* outCount)
+        {
+            if (outCount == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+            *outCount = static_cast<std::int32_t>(constraints_.size());
+            return SC_OK;
+        }
+
+        ErrorCode SqliteSchema::GetConstraint(std::int32_t index, SCConstraintDef* outDef)
+        {
+            if (outDef == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+            if (index < 0 || static_cast<std::size_t>(index) >= constraints_.size())
+            {
+                return SC_E_INVALIDARG;
+            }
+
+            *outDef = constraints_[static_cast<std::size_t>(index)].def;
+            return SC_OK;
+        }
+
+        ErrorCode SqliteSchema::FindConstraint(const wchar_t* name, SCConstraintDef* outDef)
+        {
+            if (name == nullptr)
+            {
+                return SC_E_INVALIDARG;
+            }
+            if (outDef == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+
+            const auto it = constraintsByName_.find(name);
+            if (it == constraintsByName_.end())
+            {
+                return SC_E_CONSTRAINT_NOT_FOUND;
+            }
+
+            *outDef = it->second.def;
+            return SC_OK;
+        }
+
+        ErrorCode SqliteSchema::GetIndexCount(std::int32_t* outCount)
+        {
+            if (outCount == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+            *outCount = static_cast<std::int32_t>(indexes_.size());
+            return SC_OK;
+        }
+
+        ErrorCode SqliteSchema::GetIndex(std::int32_t index, SCIndexDef* outDef)
+        {
+            if (outDef == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+            if (index < 0 || static_cast<std::size_t>(index) >= indexes_.size())
+            {
+                return SC_E_INVALIDARG;
+            }
+
+            *outDef = indexes_[static_cast<std::size_t>(index)].def;
+            return SC_OK;
+        }
+
+        ErrorCode SqliteSchema::FindIndex(const wchar_t* name, SCIndexDef* outDef)
+        {
+            if (name == nullptr)
+            {
+                return SC_E_INVALIDARG;
+            }
+            if (outDef == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+
+            const auto it = indexesByName_.find(name);
+            if (it == indexesByName_.end())
+            {
+                return SC_E_INDEX_NOT_FOUND;
+            }
+
+            *outDef = it->second.def;
             return SC_OK;
         }
 
@@ -2606,6 +2991,60 @@ namespace StableCore::Storage
             return db_->PersistRemovedColumn(this, name);
         }
 
+        ErrorCode SqliteSchema::AddConstraint(const SCConstraintDef& def)
+        {
+            const ErrorCode validate = db_->ValidateConstraintDefForSchema(this, def);
+            if (Failed(validate))
+            {
+                return validate;
+            }
+            if (constraintsByName_.contains(def.name))
+            {
+                return SC_E_CONSTRAINT_VIOLATION;
+            }
+            return db_->PersistAddedConstraint(this, def);
+        }
+
+        ErrorCode SqliteSchema::RemoveConstraint(const wchar_t* name)
+        {
+            if (name == nullptr)
+            {
+                return SC_E_INVALIDARG;
+            }
+            if (FindConstraintDef(name) == nullptr)
+            {
+                return SC_E_CONSTRAINT_NOT_FOUND;
+            }
+            return db_->PersistRemovedConstraint(this, name);
+        }
+
+        ErrorCode SqliteSchema::AddIndex(const SCIndexDef& def)
+        {
+            const ErrorCode validate = db_->ValidateIndexDefForSchema(this, def);
+            if (Failed(validate))
+            {
+                return validate;
+            }
+            if (indexesByName_.contains(def.name))
+            {
+                return SC_E_CONSTRAINT_VIOLATION;
+            }
+            return db_->PersistAddedIndex(this, def);
+        }
+
+        ErrorCode SqliteSchema::RemoveIndex(const wchar_t* name)
+        {
+            if (name == nullptr)
+            {
+                return SC_E_INVALIDARG;
+            }
+            if (FindIndexDef(name) == nullptr)
+            {
+                return SC_E_INDEX_NOT_FOUND;
+            }
+            return db_->PersistRemovedIndex(this, name);
+        }
+
         RecordId SqliteRecord::GetId() const noexcept
         {
             return data_->id;
@@ -2621,14 +3060,12 @@ namespace StableCore::Storage
             return data_->lastModifiedVersion;
         }
 
-        ErrorCode SqliteRecord::ReadTypedValue(const wchar_t* name,
-                                               SCValue* outValue)
+        ErrorCode SqliteRecord::ReadTypedValue(const wchar_t* name, SCValue* outValue)
         {
             return GetValue(name, outValue);
         }
 
-        ErrorCode SqliteRecord::ResolveValueStorage(const wchar_t* name,
-                                                    const SCValue** outValue) const
+        ErrorCode SqliteRecord::ResolveValueStorage(const wchar_t* name, const SCValue** outValue) const
         {
             if (name == nullptr)
             {
@@ -2650,8 +3087,7 @@ namespace StableCore::Storage
             }
 
             const auto it = data_->values.find(name);
-            *outValue =
-                (it != data_->values.end()) ? &it->second : &column->defaultValue;
+            *outValue = (it != data_->values.end()) ? &it->second : &column->defaultValue;
             return (*outValue)->IsNull() ? SC_E_VALUE_IS_NULL : SC_OK;
         }
 
@@ -2676,8 +3112,7 @@ namespace StableCore::Storage
             return SC_OK;
         }
 
-        ErrorCode SqliteRecord::SetValue(const wchar_t* name,
-                                         const SCValue& value)
+        ErrorCode SqliteRecord::SetValue(const wchar_t* name, const SCValue& value)
         {
             if (name == nullptr)
             {
@@ -2686,8 +3121,7 @@ namespace StableCore::Storage
             return db_->WriteValue(table_, data_, name, value);
         }
 
-        ErrorCode SqliteRecord::GetInt64(const wchar_t* name,
-                                         std::int64_t* outValue)
+        ErrorCode SqliteRecord::GetInt64(const wchar_t* name, std::int64_t* outValue)
         {
             SCValue value;
             const ErrorCode rc = ReadTypedValue(name, &value);
@@ -2698,8 +3132,7 @@ namespace StableCore::Storage
             return value.AsInt64(outValue);
         }
 
-        ErrorCode SqliteRecord::SetInt64(const wchar_t* name,
-                                         std::int64_t value)
+        ErrorCode SqliteRecord::SetInt64(const wchar_t* name, std::int64_t value)
         {
             return SetValue(name, SCValue::FromInt64(value));
         }
@@ -2736,8 +3169,7 @@ namespace StableCore::Storage
             return SetValue(name, SCValue::FromBool(value));
         }
 
-        ErrorCode SqliteRecord::GetString(const wchar_t* name,
-                                          const wchar_t** outValue)
+        ErrorCode SqliteRecord::GetString(const wchar_t* name, const wchar_t** outValue)
         {
             const SCValue* storage = nullptr;
             const ErrorCode rc = ResolveValueStorage(name, &storage);
@@ -2748,8 +3180,7 @@ namespace StableCore::Storage
             return storage->AsString(outValue);
         }
 
-        ErrorCode SqliteRecord::GetStringCopy(const wchar_t* name,
-                                              std::wstring* outValue)
+        ErrorCode SqliteRecord::GetStringCopy(const wchar_t* name, std::wstring* outValue)
         {
             SCValue value;
             const ErrorCode rc = ReadTypedValue(name, &value);
@@ -2760,17 +3191,12 @@ namespace StableCore::Storage
             return value.AsStringCopy(outValue);
         }
 
-        ErrorCode SqliteRecord::SetString(const wchar_t* name,
-                                          const wchar_t* value)
+        ErrorCode SqliteRecord::SetString(const wchar_t* name, const wchar_t* value)
         {
-            return SetValue(name, value == nullptr
-                                      ? SCValue::Null()
-                                      : SCValue::FromString(value));
+            return SetValue(name, value == nullptr ? SCValue::Null() : SCValue::FromString(value));
         }
 
-        ErrorCode SqliteRecord::GetBinary(const wchar_t* name,
-                                          const std::uint8_t** outValue,
-                                          std::size_t* outSize)
+        ErrorCode SqliteRecord::GetBinary(const wchar_t* name, const std::uint8_t** outValue, std::size_t* outSize)
         {
             const SCValue* storage = nullptr;
             const ErrorCode rc = ResolveValueStorage(name, &storage);
@@ -2781,8 +3207,7 @@ namespace StableCore::Storage
             return storage->AsBinary(outValue, outSize);
         }
 
-        ErrorCode SqliteRecord::GetBinaryCopy(
-            const wchar_t* name, std::vector<std::uint8_t>* outValue)
+        ErrorCode SqliteRecord::GetBinaryCopy(const wchar_t* name, std::vector<std::uint8_t>* outValue)
         {
             SCValue value;
             const ErrorCode rc = ReadTypedValue(name, &value);
@@ -2793,9 +3218,7 @@ namespace StableCore::Storage
             return value.AsBinaryCopy(outValue);
         }
 
-        ErrorCode SqliteRecord::SetBinary(const wchar_t* name,
-                                          const std::uint8_t* value,
-                                          std::size_t size)
+        ErrorCode SqliteRecord::SetBinary(const wchar_t* name, const std::uint8_t* value, std::size_t size)
         {
             if (value == nullptr && size > 0)
             {
@@ -2843,8 +3266,7 @@ namespace StableCore::Storage
                 return SC_E_NO_ACTIVE_EDIT;
             }
 
-            auto data =
-                std::make_shared<SqliteRecordData>(db_->AllocateRecordId());
+            auto data = std::make_shared<SqliteRecordData>(db_->AllocateRecordId());
             records_.emplace(data->id, data);
             db_->RecordCreate(this, data);
             outRecord = MakeRecord(data);
@@ -2875,13 +3297,10 @@ namespace StableCore::Storage
             return SC_OK;
         }
 
-        ErrorCode SqliteTable::FindRecords(const SCQueryCondition& condition,
-                                           SCRecordCursorPtr& outCursor)
+        ErrorCode SqliteTable::FindRecords(const SCQueryCondition& condition, SCRecordCursorPtr& outCursor)
         {
             QueryPlan legacyPlan;
-            const ErrorCode bridgeRc =
-                SCQueryBridge::BuildPlanFromLegacyFindRecords(name_, condition,
-                                                              &legacyPlan);
+            const ErrorCode bridgeRc = SCQueryBridge::BuildPlanFromLegacyFindRecords(name_, condition, &legacyPlan);
             if (Failed(bridgeRc))
             {
                 return bridgeRc;
@@ -2894,11 +3313,14 @@ namespace StableCore::Storage
             }
 
             QueryPlan executablePlan;
-            const ErrorCode planRc = planner->BuildPlan(
-                legacyPlan.target, legacyPlan.conditionGroups,
-                legacyPlan.conditionGroupLogic, legacyPlan.orderBy,
-                legacyPlan.page, legacyPlan.hints, legacyPlan.constraints,
-                &executablePlan);
+            const ErrorCode planRc = planner->BuildPlan(legacyPlan.target,
+                                                        legacyPlan.conditionGroups,
+                                                        legacyPlan.conditionGroupLogic,
+                                                        legacyPlan.orderBy,
+                                                        legacyPlan.page,
+                                                        legacyPlan.hints,
+                                                        legacyPlan.constraints,
+                                                        &executablePlan);
             if (Failed(planRc))
             {
                 return planRc;
@@ -2914,16 +3336,14 @@ namespace StableCore::Storage
             return ExecuteQueryPlan(executablePlan, context, &executionResult);
         }
 
-        SqliteDatabase::SqliteDatabase(const std::wstring& path)
-            : SqliteDatabase(path, false)
+        SqliteDatabase::SqliteDatabase(const std::wstring& path) : SqliteDatabase(path, false)
         {
         }
 
         SqliteDatabase::SqliteDatabase(const std::wstring& path, bool readOnly)
             : path_(path),
               db_(path, readOnly),
-              openMode_(readOnly ? SCDatabaseOpenMode::ReadOnly
-                                 : SCDatabaseOpenMode::Normal),
+              openMode_(readOnly ? SCDatabaseOpenMode::ReadOnly : SCDatabaseOpenMode::Normal),
               readOnly_(readOnly)
         {
             const bool hasMetadataTable = HasTable(L"metadata");
@@ -2931,8 +3351,7 @@ namespace StableCore::Storage
             {
                 if (readOnly_)
                 {
-                    throw std::runtime_error(
-                        "metadata table is missing in read-only open");
+                    throw std::runtime_error("metadata table is missing in read-only open");
                 }
 
                 InitializeSchema();
@@ -2953,8 +3372,7 @@ namespace StableCore::Storage
             LoadJournalStacks();
         }
 
-        SqliteDatabase::SqliteDatabase(const std::wstring& path,
-                                       const SCOpenDatabaseOptions& options)
+        SqliteDatabase::SqliteDatabase(const std::wstring& path, const SCOpenDatabaseOptions& options)
             : path_(path),
               db_(path, options.openMode == SCDatabaseOpenMode::ReadOnly),
               openMode_(options.openMode),
@@ -2965,8 +3383,7 @@ namespace StableCore::Storage
             {
                 if (readOnly_)
                 {
-                    throw std::runtime_error(
-                        "metadata table is missing in read-only open");
+                    throw std::runtime_error("metadata table is missing in read-only open");
                 }
 
                 InitializeSchema();
@@ -3104,13 +3521,11 @@ namespace StableCore::Storage
                     version_ = static_cast<VersionId>(std::stoull(SCValue));
                 } else if (key == L"baseline_version")
                 {
-                    baselineVersion_ =
-                        static_cast<VersionId>(std::stoull(SCValue));
+                    baselineVersion_ = static_cast<VersionId>(std::stoull(SCValue));
                     hasBaselineVersion = true;
                 } else if (key == L"schema_version")
                 {
-                    schemaVersion_ =
-                        static_cast<std::int32_t>(std::stoi(SCValue));
+                    schemaVersion_ = static_cast<std::int32_t>(std::stoi(SCValue));
                 } else if (key == L"clean_shutdown")
                 {
                     cleanShutdown_ = (SCValue == L"1");
@@ -3126,12 +3541,10 @@ namespace StableCore::Storage
             }
         }
 
-        void SqliteDatabase::SaveMetadata(VersionId version,
-                                          VersionId baselineVersion)
+        void SqliteDatabase::SaveMetadata(VersionId version, VersionId baselineVersion)
         {
             SaveMetadataKey(L"version", std::to_wstring(version));
-            SaveMetadataKey(L"baseline_version",
-                            std::to_wstring(baselineVersion));
+            SaveMetadataKey(L"baseline_version", std::to_wstring(baselineVersion));
             SaveMetadataKey(L"next_record_id", std::to_wstring(nextRecordId_));
             SaveMetadataKey(L"schema_version", std::to_wstring(schemaVersion_));
             SaveMetadataKey(L"clean_shutdown", cleanShutdown_ ? L"1" : L"0");
@@ -3147,8 +3560,7 @@ namespace StableCore::Storage
             SaveMetadata(version_);
         }
 
-        void SqliteDatabase::SaveMetadataKey(const wchar_t* key,
-                                             const std::wstring& value)
+        void SqliteDatabase::SaveMetadataKey(const wchar_t* key, const std::wstring& value)
         {
             SqliteStmt stmt = db_.Prepare(
                 "INSERT INTO metadata(key, value) VALUES(?, ?)"
@@ -3173,19 +3585,16 @@ namespace StableCore::Storage
             return stmt.Step(&hasRow) == SC_OK && hasRow;
         }
 
-        bool HasTableColumn(sqlite3* db, const char* tableName,
-                            const char* columnName)
+        bool HasTableColumn(sqlite3* db, const char* tableName, const char* columnName)
         {
             if (db == nullptr || tableName == nullptr || columnName == nullptr)
             {
                 return false;
             }
 
-            std::string sql = std::string("PRAGMA table_info(") + tableName +
-                              ");";
+            std::string sql = std::string("PRAGMA table_info(") + tableName + ");";
             sqlite3_stmt* stmt = nullptr;
-            if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) !=
-                SQLITE_OK)
+            if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK)
             {
                 if (stmt != nullptr)
                 {
@@ -3197,8 +3606,7 @@ namespace StableCore::Storage
             bool hasColumn = false;
             while (sqlite3_step(stmt) == SQLITE_ROW)
             {
-                const auto* name = reinterpret_cast<const char*>(
-                    sqlite3_column_text(stmt, 1));
+                const auto* name = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
                 if (name != nullptr && std::strcmp(name, columnName) == 0)
                 {
                     hasColumn = true;
@@ -3248,34 +3656,31 @@ namespace StableCore::Storage
         void SqliteDatabase::LoadTables()
         {
             const bool supportsBinaryStorage = schemaVersion_ >= 4;
-            SqliteStmt tablesStmt =
-                db_.Prepare("SELECT table_id, name FROM tables ORDER BY name;");
+            SqliteStmt tablesStmt = db_.Prepare("SELECT table_id, name FROM tables ORDER BY name;");
             bool hasRow = false;
             while (tablesStmt.Step(&hasRow) == SC_OK && hasRow)
             {
                 const std::int64_t tableRowId = tablesStmt.ColumnInt64(0);
                 const std::wstring tableName = tablesStmt.ColumnText(1);
-                SCTablePtr table =
-                    SCMakeRef<SqliteTable>(this, tableName, tableRowId);
+                SCTablePtr table = SCMakeRef<SqliteTable>(this, tableName, tableRowId);
                 tables_.emplace(tableName, table);
                 auto* sqliteTable = static_cast<SqliteTable*>(table.Get());
 
-                SqliteStmt columnsStmt = db_.Prepare(
-                    supportsBinaryStorage
-                        ? "SELECT rowid, column_name, display_name, "
-                          "value_kind, column_kind, nullable_flag, "
-                          "editable_flag, user_defined_flag, indexed_flag, "
-                          "participates_in_calc_flag, unit, reference_table, "
-                          "default_kind, default_int64, default_double, "
-                          "default_bool, default_text, default_blob FROM "
-                          "schema_columns WHERE table_id = ? ORDER BY rowid;"
-                        : "SELECT rowid, column_name, display_name, "
-                          "value_kind, column_kind, nullable_flag, "
-                          "editable_flag, user_defined_flag, indexed_flag, "
-                          "participates_in_calc_flag, unit, reference_table, "
-                          "default_kind, default_int64, default_double, "
-                          "default_bool, default_text FROM schema_columns "
-                          "WHERE table_id = ? ORDER BY rowid;");
+                SqliteStmt columnsStmt =
+                    db_.Prepare(supportsBinaryStorage ? "SELECT rowid, column_name, display_name, "
+                                                        "value_kind, column_kind, nullable_flag, "
+                                                        "editable_flag, user_defined_flag, indexed_flag, "
+                                                        "participates_in_calc_flag, unit, reference_table, "
+                                                        "default_kind, default_int64, default_double, "
+                                                        "default_bool, default_text, default_blob FROM "
+                                                        "schema_columns WHERE table_id = ? ORDER BY rowid;"
+                                                      : "SELECT rowid, column_name, display_name, "
+                                                        "value_kind, column_kind, nullable_flag, "
+                                                        "editable_flag, user_defined_flag, indexed_flag, "
+                                                        "participates_in_calc_flag, unit, reference_table, "
+                                                        "default_kind, default_int64, default_double, "
+                                                        "default_bool, default_text FROM schema_columns "
+                                                        "WHERE table_id = ? ORDER BY rowid;");
                 columnsStmt.BindInt64(1, tableRowId);
                 bool hasColumn = false;
                 while (columnsStmt.Step(&hasColumn) == SC_OK && hasColumn)
@@ -3284,10 +3689,8 @@ namespace StableCore::Storage
                     const std::int64_t rowId = columnsStmt.ColumnInt64(0);
                     def.name = columnsStmt.ColumnText(1);
                     def.displayName = columnsStmt.ColumnText(2);
-                    def.valueKind =
-                        FromSqliteValueKind(columnsStmt.ColumnInt(3));
-                    def.columnKind =
-                        FromSqliteColumnKind(columnsStmt.ColumnInt(4));
+                    def.valueKind = FromSqliteValueKind(columnsStmt.ColumnInt(3));
+                    def.columnKind = FromSqliteColumnKind(columnsStmt.ColumnInt(4));
                     def.nullable = columnsStmt.ColumnBool(5);
                     def.editable = columnsStmt.ColumnBool(6);
                     def.userDefined = columnsStmt.ColumnBool(7);
@@ -3296,19 +3699,14 @@ namespace StableCore::Storage
                     def.unit = columnsStmt.ColumnText(10);
                     def.referenceTable = columnsStmt.ColumnText(11);
                     def.defaultValue = supportsBinaryStorage
-                                            ? ReadValueFromStorage(
-                                                  columnsStmt, 12, 13, 14, 15,
-                                                  16, 17)
-                                            : ReadValueFromStorage(
-                                                  columnsStmt, 12, 13, 14, 15,
-                                                  16, 16);
+                                           ? ReadValueFromStorage(columnsStmt, 12, 13, 14, 15, 16, 17)
+                                           : ReadValueFromStorage(columnsStmt, 12, 13, 14, 15, 16, 16);
                     sqliteTable->Schema()->LoadColumn(def, rowId);
                 }
                 const ErrorCode metadataRc = LoadSchemaMetadata(sqliteTable);
                 if (Failed(metadataRc))
                 {
-                    throw std::runtime_error(
-                        "failed to load schema metadata");
+                    throw std::runtime_error("failed to load schema metadata");
                 }
 
                 SqliteStmt recordsStmt = db_.Prepare(
@@ -3318,12 +3716,9 @@ namespace StableCore::Storage
                 bool hasRecord = false;
                 while (recordsStmt.Step(&hasRecord) == SC_OK && hasRecord)
                 {
-                    auto record = std::make_shared<SqliteRecordData>(
-                        recordsStmt.ColumnInt64(0));
-                    record->state =
-                        FromSqliteRecordState(recordsStmt.ColumnInt(1));
-                    record->lastModifiedVersion =
-                        static_cast<VersionId>(recordsStmt.ColumnInt64(2));
+                    auto record = std::make_shared<SqliteRecordData>(recordsStmt.ColumnInt64(0));
+                    record->state = FromSqliteRecordState(recordsStmt.ColumnInt(1));
+                    record->lastModifiedVersion = static_cast<VersionId>(recordsStmt.ColumnInt64(2));
                     sqliteTable->Records().emplace(record->id, record);
                     if (record->id >= nextRecordId_)
                     {
@@ -3331,33 +3726,25 @@ namespace StableCore::Storage
                     }
                 }
 
-                SqliteStmt valuesStmt = db_.Prepare(
-                    supportsBinaryStorage
-                        ? "SELECT record_id, column_name, value_kind, "
-                          "int64_value, double_value, bool_value, text_value, "
-                          "blob_value FROM field_values WHERE table_id = ?;"
-                        : "SELECT record_id, column_name, value_kind, "
-                          "int64_value, double_value, bool_value, text_value "
-                          "FROM field_values WHERE table_id = ?;");
+                SqliteStmt valuesStmt =
+                    db_.Prepare(supportsBinaryStorage ? "SELECT record_id, column_name, value_kind, "
+                                                        "int64_value, double_value, bool_value, text_value, "
+                                                        "blob_value FROM field_values WHERE table_id = ?;"
+                                                      : "SELECT record_id, column_name, value_kind, "
+                                                        "int64_value, double_value, bool_value, text_value "
+                                                        "FROM field_values WHERE table_id = ?;");
                 valuesStmt.BindInt64(1, tableRowId);
                 bool hasValue = false;
                 while (valuesStmt.Step(&hasValue) == SC_OK && hasValue)
                 {
-                    auto record =
-                        sqliteTable->FindRecordData(valuesStmt.ColumnInt64(0));
+                    auto record = sqliteTable->FindRecordData(valuesStmt.ColumnInt64(0));
                     if (!record)
                     {
                         continue;
                     }
                     record->values[valuesStmt.ColumnText(1)] = supportsBinaryStorage
-                                                                  ? ReadValueFromStorage(
-                                                                        valuesStmt,
-                                                                        2, 3, 4,
-                                                                        5, 6, 7)
-                                                                  : ReadValueFromStorage(
-                                                                        valuesStmt,
-                                                                        2, 3, 4,
-                                                                        5, 6, 6);
+                                                                   ? ReadValueFromStorage(valuesStmt, 2, 3, 4, 5, 6, 7)
+                                                                   : ReadValueFromStorage(valuesStmt, 2, 3, 4, 5, 6, 6);
                 }
             }
         }
@@ -3379,8 +3766,7 @@ namespace StableCore::Storage
 
             if (HasTable(L"schema_tables"))
             {
-                SqliteStmt tableMetaStmt = db_.Prepare(
-                    "SELECT description FROM schema_tables WHERE table_id = ?;");
+                SqliteStmt tableMetaStmt = db_.Prepare("SELECT description FROM schema_tables WHERE table_id = ?;");
                 tableMetaStmt.BindInt64(1, tableRowId);
                 bool hasMetaRow = false;
                 if (tableMetaStmt.Step(&hasMetaRow) == SC_OK && hasMetaRow)
@@ -3389,8 +3775,7 @@ namespace StableCore::Storage
                 }
             }
 
-            if (HasTable(L"schema_constraints") &&
-                HasTable(L"schema_constraint_columns"))
+            if (HasTable(L"schema_constraints") && HasTable(L"schema_constraint_columns"))
             {
                 SqliteStmt constraintsStmt = db_.Prepare(
                     "SELECT constraint_id, kind, name, source_kind, "
@@ -3399,21 +3784,15 @@ namespace StableCore::Storage
                     "constraint_id;");
                 constraintsStmt.BindInt64(1, tableRowId);
                 bool hasConstraint = false;
-                while (constraintsStmt.Step(&hasConstraint) == SC_OK &&
-                       hasConstraint)
+                while (constraintsStmt.Step(&hasConstraint) == SC_OK && hasConstraint)
                 {
                     SCConstraintDef constraint;
-                    const std::int64_t constraintId =
-                        constraintsStmt.ColumnInt64(0);
-                    constraint.kind = FromSqliteConstraintKind(
-                        constraintsStmt.ColumnInt(1));
+                    const std::int64_t constraintId = constraintsStmt.ColumnInt64(0);
+                    constraint.kind = FromSqliteConstraintKind(constraintsStmt.ColumnInt(1));
                     constraint.name = constraintsStmt.ColumnText(2);
-                    constraint.sourceKind = FromSqliteSchemaSourceKind(
-                        constraintsStmt.ColumnInt(3));
-                    constraint.referencedTable =
-                        constraintsStmt.ColumnText(4);
-                    constraint.checkExpression =
-                        constraintsStmt.ColumnText(5);
+                    constraint.sourceKind = FromSqliteSchemaSourceKind(constraintsStmt.ColumnInt(3));
+                    constraint.referencedTable = constraintsStmt.ColumnText(4);
+                    constraint.checkExpression = constraintsStmt.ColumnText(5);
 
                     SqliteStmt constraintColumnsStmt = db_.Prepare(
                         "SELECT column_name, referenced_column_name FROM "
@@ -3421,21 +3800,21 @@ namespace StableCore::Storage
                         "ORDER BY column_ordinal;");
                     constraintColumnsStmt.BindInt64(1, constraintId);
                     bool hasConstraintColumn = false;
-                    while (constraintColumnsStmt.Step(&hasConstraintColumn) ==
-                               SC_OK && hasConstraintColumn)
+                    while (constraintColumnsStmt.Step(&hasConstraintColumn) == SC_OK && hasConstraintColumn)
                     {
-                        constraint.columns.push_back(
-                            constraintColumnsStmt.ColumnText(0));
-                        constraint.referencedColumns.push_back(
-                            constraintColumnsStmt.ColumnText(1));
+                        constraint.columns.push_back(constraintColumnsStmt.ColumnText(0));
+                        const std::wstring referencedColumn = constraintColumnsStmt.ColumnText(1);
+                        if (!referencedColumn.empty())
+                        {
+                            constraint.referencedColumns.push_back(referencedColumn);
+                        }
                     }
 
-                    schema->LoadConstraint(constraint);
+                    schema->LoadConstraint(constraint, constraintId);
                 }
             }
 
-            if (HasTable(L"schema_indexes") &&
-                HasTable(L"schema_index_columns"))
+            if (HasTable(L"schema_indexes") && HasTable(L"schema_index_columns"))
             {
                 SqliteStmt indexesStmt = db_.Prepare(
                     "SELECT index_id, name, source_kind FROM schema_indexes "
@@ -3447,8 +3826,7 @@ namespace StableCore::Storage
                     SCIndexDef index;
                     const std::int64_t indexId = indexesStmt.ColumnInt64(0);
                     index.name = indexesStmt.ColumnText(1);
-                    index.sourceKind = FromSqliteSchemaSourceKind(
-                        indexesStmt.ColumnInt(2));
+                    index.sourceKind = FromSqliteSchemaSourceKind(indexesStmt.ColumnInt(2));
 
                     SqliteStmt indexColumnsStmt = db_.Prepare(
                         "SELECT column_name, descending_flag FROM "
@@ -3456,15 +3834,13 @@ namespace StableCore::Storage
                         "column_ordinal;");
                     indexColumnsStmt.BindInt64(1, indexId);
                     bool hasIndexColumn = false;
-                    while (indexColumnsStmt.Step(&hasIndexColumn) == SC_OK &&
-                           hasIndexColumn)
+                    while (indexColumnsStmt.Step(&hasIndexColumn) == SC_OK && hasIndexColumn)
                     {
-                        index.columns.push_back(SCIndexColumnDef{
-                            indexColumnsStmt.ColumnText(0),
-                            indexColumnsStmt.ColumnBool(1)});
+                        index.columns.push_back(
+                            SCIndexColumnDef{indexColumnsStmt.ColumnText(0), indexColumnsStmt.ColumnBool(1)});
                     }
 
-                    schema->LoadIndex(index);
+                    schema->LoadIndex(index, indexId);
                 }
             }
 
@@ -3498,19 +3874,16 @@ namespace StableCore::Storage
                 }
 
                 const auto toUpperCopy = [](std::wstring text) {
-                    std::transform(text.begin(), text.end(), text.begin(),
-                                   [](wchar_t ch) {
-                                       return static_cast<wchar_t>(
-                                           std::towupper(ch));
-                                   });
+                    std::transform(text.begin(), text.end(), text.begin(), [](wchar_t ch) {
+                        return static_cast<wchar_t>(std::towupper(ch));
+                    });
                     return text;
                 };
 
                 if (snapshot.constraints.empty())
                 {
                     const auto idColumn = std::find_if(
-                        snapshot.columns.begin(), snapshot.columns.end(),
-                        [&toUpperCopy](const SCColumnDef& column) {
+                        snapshot.columns.begin(), snapshot.columns.end(), [&toUpperCopy](const SCColumnDef& column) {
                             return toUpperCopy(column.name) == L"ID";
                         });
                     if (idColumn != snapshot.columns.end())
@@ -3519,8 +3892,7 @@ namespace StableCore::Storage
                         constraint.kind = SCConstraintKind::PrimaryKey;
                         constraint.name = L"pk_legacy";
                         constraint.columns.push_back(idColumn->name);
-                        constraint.sourceKind =
-                            SCSchemaSourceKind::MigratedConvention;
+                        constraint.sourceKind = SCSchemaSourceKind::MigratedConvention;
                         snapshot.constraints.push_back(std::move(constraint));
                     }
                 }
@@ -3537,8 +3909,7 @@ namespace StableCore::Storage
                         SCIndexDef index;
                         index.name = L"idx_legacy_" + column.name;
                         index.sourceKind = SCSchemaSourceKind::LegacyHint;
-                        index.columns.push_back(
-                            SCIndexColumnDef{column.name, false});
+                        index.columns.push_back(SCIndexColumnDef{column.name, false});
                         snapshot.indexes.push_back(std::move(index));
                     }
                 }
@@ -3571,8 +3942,7 @@ namespace StableCore::Storage
                 }
 
                 {
-                    SqliteStmt stmt = db_.Prepare(
-                        "DELETE FROM schema_constraints WHERE table_id = ?;");
+                    SqliteStmt stmt = db_.Prepare("DELETE FROM schema_constraints WHERE table_id = ?;");
                     stmt.BindInt64(1, table->TableRowId());
                     const ErrorCode rc = stmt.Step();
                     if (Failed(rc))
@@ -3595,8 +3965,7 @@ namespace StableCore::Storage
                 }
 
                 {
-                    SqliteStmt stmt = db_.Prepare(
-                        "DELETE FROM schema_indexes WHERE table_id = ?;");
+                    SqliteStmt stmt = db_.Prepare("DELETE FROM schema_indexes WHERE table_id = ?;");
                     stmt.BindInt64(1, table->TableRowId());
                     const ErrorCode rc = stmt.Step();
                     if (Failed(rc))
@@ -3605,8 +3974,7 @@ namespace StableCore::Storage
                     }
                 }
 
-                for (const SCConstraintDef& constraint :
-                     snapshot.constraints)
+                for (const SCConstraintDef& constraint : snapshot.constraints)
                 {
                     SqliteStmt stmt = db_.Prepare(
                         "INSERT INTO schema_constraints(table_id, kind, "
@@ -3615,8 +3983,7 @@ namespace StableCore::Storage
                     stmt.BindInt64(1, table->TableRowId());
                     stmt.BindInt(2, ToSqliteConstraintKind(constraint.kind));
                     stmt.BindText(3, constraint.name);
-                    stmt.BindInt(4, ToSqliteSchemaSourceKind(
-                                       constraint.sourceKind));
+                    stmt.BindInt(4, ToSqliteSchemaSourceKind(constraint.sourceKind));
                     stmt.BindText(5, constraint.referencedTable);
                     stmt.BindText(6, constraint.checkExpression);
                     const ErrorCode rc = stmt.Step();
@@ -3625,23 +3992,19 @@ namespace StableCore::Storage
                         return rc;
                     }
 
-                    const std::int64_t constraintId =
-                        db_.LastInsertRowId();
-                    for (std::size_t index = 0;
-                         index < constraint.columns.size(); ++index)
+                    const std::int64_t constraintId = db_.LastInsertRowId();
+                    for (std::size_t index = 0; index < constraint.columns.size(); ++index)
                     {
                         SqliteStmt columnStmt = db_.Prepare(
                             "INSERT INTO schema_constraint_columns("
                             "constraint_id, column_ordinal, column_name, "
                             "referenced_column_name) VALUES(?, ?, ?, ?);");
                         columnStmt.BindInt64(1, constraintId);
-                        columnStmt.BindInt64(
-                            2, static_cast<std::int64_t>(index));
+                        columnStmt.BindInt64(2, static_cast<std::int64_t>(index));
                         columnStmt.BindText(3, constraint.columns[index]);
-                        const std::wstring referencedColumn =
-                            index < constraint.referencedColumns.size()
-                                ? constraint.referencedColumns[index]
-                                : std::wstring{};
+                        const std::wstring referencedColumn = index < constraint.referencedColumns.size()
+                                                                  ? constraint.referencedColumns[index]
+                                                                  : std::wstring{};
                         columnStmt.BindText(4, referencedColumn);
                         const ErrorCode columnRc = columnStmt.Step();
                         if (Failed(columnRc))
@@ -3658,8 +4021,7 @@ namespace StableCore::Storage
                         "source_kind) VALUES(?, ?, ?);");
                     stmt.BindInt64(1, table->TableRowId());
                     stmt.BindText(2, index.name);
-                    stmt.BindInt(3, ToSqliteSchemaSourceKind(
-                                       index.sourceKind));
+                    stmt.BindInt(3, ToSqliteSchemaSourceKind(index.sourceKind));
                     const ErrorCode rc = stmt.Step();
                     if (Failed(rc))
                     {
@@ -3667,20 +4029,16 @@ namespace StableCore::Storage
                     }
 
                     const std::int64_t indexId = db_.LastInsertRowId();
-                    for (std::size_t columnIndex = 0;
-                         columnIndex < index.columns.size(); ++columnIndex)
+                    for (std::size_t columnIndex = 0; columnIndex < index.columns.size(); ++columnIndex)
                     {
                         SqliteStmt columnStmt = db_.Prepare(
                             "INSERT INTO schema_index_columns(index_id, "
                             "column_ordinal, column_name, descending_flag) "
                             "VALUES(?, ?, ?, ?);");
                         columnStmt.BindInt64(1, indexId);
-                        columnStmt.BindInt64(
-                            2, static_cast<std::int64_t>(columnIndex));
-                        columnStmt.BindText(
-                            3, index.columns[columnIndex].columnName);
-                        columnStmt.BindInt(
-                            4, index.columns[columnIndex].descending ? 1 : 0);
+                        columnStmt.BindInt64(2, static_cast<std::int64_t>(columnIndex));
+                        columnStmt.BindText(3, index.columns[columnIndex].columnName);
+                        columnStmt.BindInt(4, index.columns[columnIndex].descending ? 1 : 0);
                         const ErrorCode columnRc = columnStmt.Step();
                         if (Failed(columnRc))
                         {
@@ -3690,12 +4048,9 @@ namespace StableCore::Storage
                 }
 
                 std::wstringstream message;
-                message << L"Backfilled schema metadata for table "
-                        << snapshot.table.name << L" ("
-                        << snapshot.constraints.size() << L" constraints, "
-                        << snapshot.indexes.size() << L" indexes).";
-                LogStartupDiagnostic(SCDiagnosticSeverity::Info, L"upgrade",
-                                     message.str());
+                message << L"Backfilled schema metadata for table " << snapshot.table.name << L" ("
+                        << snapshot.constraints.size() << L" constraints, " << snapshot.indexes.size() << L" indexes).";
+                LogStartupDiagnostic(SCDiagnosticSeverity::Info, L"upgrade", message.str());
             }
 
             return SC_OK;
@@ -3714,25 +4069,23 @@ namespace StableCore::Storage
                 persisted.txId = txStmt.ColumnInt64(0);
                 persisted.tx.actionName = txStmt.ColumnText(1);
                 persisted.tx.commitId = static_cast<CommitId>(persisted.txId);
-                persisted.tx.committedVersion =
-                    static_cast<VersionId>(txStmt.ColumnInt64(2));
+                persisted.tx.committedVersion = static_cast<VersionId>(txStmt.ColumnInt64(2));
                 const int stackKind = txStmt.ColumnInt(3);
 
                 std::vector<SqlitePersistedJournalEntry> entries;
 
-                SqliteStmt entryStmt = db_.Prepare(
-                    supportsBinaryStorage
-                        ? "SELECT sequence_index, op, table_name, record_id, "
-                          "field_name, old_kind, old_int64, old_double, "
-                          "old_bool, old_text, old_blob, new_kind, "
-                          "new_int64, new_double, new_bool, new_text, "
-                          "new_blob, old_deleted, new_deleted FROM "
-                          "journal_entries WHERE tx_id = ?;"
-                        : "SELECT sequence_index, op, table_name, record_id, "
-                          "field_name, old_kind, old_int64, old_double, "
-                          "old_bool, old_text, new_kind, new_int64, "
-                          "new_double, new_bool, new_text, old_deleted, "
-                          "new_deleted FROM journal_entries WHERE tx_id = ?;");
+                SqliteStmt entryStmt =
+                    db_.Prepare(supportsBinaryStorage ? "SELECT sequence_index, op, table_name, record_id, "
+                                                        "field_name, old_kind, old_int64, old_double, "
+                                                        "old_bool, old_text, old_blob, new_kind, "
+                                                        "new_int64, new_double, new_bool, new_text, "
+                                                        "new_blob, old_deleted, new_deleted FROM "
+                                                        "journal_entries WHERE tx_id = ?;"
+                                                      : "SELECT sequence_index, op, table_name, record_id, "
+                                                        "field_name, old_kind, old_int64, old_double, "
+                                                        "old_bool, old_text, new_kind, new_int64, "
+                                                        "new_double, new_bool, new_text, old_deleted, "
+                                                        "new_deleted FROM journal_entries WHERE tx_id = ?;");
                 entryStmt.BindInt64(1, persisted.txId);
                 bool hasEntry = false;
                 while (entryStmt.Step(&hasEntry) == SC_OK && hasEntry)
@@ -3744,62 +4097,105 @@ namespace StableCore::Storage
                     entry.tableName = entryStmt.ColumnText(2);
                     entry.recordId = entryStmt.ColumnInt64(3);
                     entry.fieldName = entryStmt.ColumnText(4);
-                    entry.oldValue = supportsBinaryStorage
-                                         ? ReadValueFromStorage(entryStmt, 5, 6,
-                                                                7, 8, 9, 10)
-                                         : ReadValueFromStorage(entryStmt, 5, 6,
-                                                                7, 8, 9, 9);
-                    entry.newValue = supportsBinaryStorage
-                                         ? ReadValueFromStorage(entryStmt, 11,
-                                                                12, 13, 14, 15,
-                                                                16)
-                                         : ReadValueFromStorage(entryStmt, 10,
-                                                                11, 12, 13, 14,
-                                                                14);
-                    entry.oldDeleted = supportsBinaryStorage
-                                            ? entryStmt.ColumnBool(17)
-                                            : entryStmt.ColumnBool(15);
-                    entry.newDeleted = supportsBinaryStorage
-                                            ? entryStmt.ColumnBool(18)
-                                            : entryStmt.ColumnBool(16);
+                    entry.oldValue = supportsBinaryStorage ? ReadValueFromStorage(entryStmt, 5, 6, 7, 8, 9, 10)
+                                                           : ReadValueFromStorage(entryStmt, 5, 6, 7, 8, 9, 9);
+                    entry.newValue = supportsBinaryStorage ? ReadValueFromStorage(entryStmt, 11, 12, 13, 14, 15, 16)
+                                                           : ReadValueFromStorage(entryStmt, 10, 11, 12, 13, 14, 14);
+                    entry.oldDeleted = supportsBinaryStorage ? entryStmt.ColumnBool(17) : entryStmt.ColumnBool(15);
+                    entry.newDeleted = supportsBinaryStorage ? entryStmt.ColumnBool(18) : entryStmt.ColumnBool(16);
+
+                    switch (entry.op)
+                    {
+                        case JournalOp::AddConstraint:
+                        case JournalOp::RemoveConstraint:
+                            entry.constraintRowId = entry.recordId;
+                            if (!entry.oldValue.IsNull())
+                            {
+                                std::wstring payload;
+                                entry.oldValue.AsStringCopy(&payload);
+                                if (!DeserializeConstraintDef(payload, &entry.oldConstraint))
+                                {
+                                    throw std::runtime_error("failed to deserialize constraint journal entry");
+                                }
+                            }
+                            if (!entry.newValue.IsNull())
+                            {
+                                std::wstring payload;
+                                entry.newValue.AsStringCopy(&payload);
+                                if (!DeserializeConstraintDef(payload, &entry.newConstraint))
+                                {
+                                    throw std::runtime_error("failed to deserialize constraint journal entry");
+                                }
+                            }
+                            entry.oldValue = SCValue::Null();
+                            entry.newValue = SCValue::Null();
+                            entry.recordId = 0;
+                            break;
+                        case JournalOp::AddIndex:
+                        case JournalOp::RemoveIndex:
+                            entry.indexRowId = entry.recordId;
+                            if (!entry.oldValue.IsNull())
+                            {
+                                std::wstring payload;
+                                entry.oldValue.AsStringCopy(&payload);
+                                if (!DeserializeIndexDef(payload, &entry.oldIndex))
+                                {
+                                    throw std::runtime_error("failed to deserialize index journal entry");
+                                }
+                            }
+                            if (!entry.newValue.IsNull())
+                            {
+                                std::wstring payload;
+                                entry.newValue.AsStringCopy(&payload);
+                                if (!DeserializeIndexDef(payload, &entry.newIndex))
+                                {
+                                    throw std::runtime_error("failed to deserialize index journal entry");
+                                }
+                            }
+                            entry.oldValue = SCValue::Null();
+                            entry.newValue = SCValue::Null();
+                            entry.recordId = 0;
+                            break;
+                        default:
+                            break;
+                    }
                     persistedEntry.entry = std::move(entry);
                     entries.push_back(std::move(persistedEntry));
                 }
 
-                SqliteStmt schemaStmt = db_.Prepare(
-                    supportsBinaryStorage
-                        ? "SELECT sequence_index, op, table_name, column_name, "
-                          "column_rowid, old_display_name, old_value_kind, "
-                          "old_column_kind, old_nullable, old_editable, "
-                          "old_user_defined, old_indexed, "
-                          "old_participates_in_calc, old_unit, "
-                          "old_reference_table, old_default_kind, "
-                          "old_default_int64, old_default_double, "
-                          "old_default_bool, old_default_text, "
-                          "old_default_blob, new_display_name, "
-                          "new_value_kind, new_column_kind, new_nullable, "
-                          "new_editable, new_user_defined, new_indexed, "
-                          "new_participates_in_calc, new_unit, "
-                          "new_reference_table, new_default_kind, "
-                          "new_default_int64, new_default_double, "
-                          "new_default_bool, new_default_text, "
-                          "new_default_blob FROM journal_schema_entries "
-                          "WHERE tx_id = ?;"
-                        : "SELECT sequence_index, op, table_name, column_name, "
-                          "column_rowid, old_display_name, old_value_kind, "
-                          "old_column_kind, old_nullable, old_editable, "
-                          "old_user_defined, old_indexed, "
-                          "old_participates_in_calc, old_unit, "
-                          "old_reference_table, old_default_kind, "
-                          "old_default_int64, old_default_double, "
-                          "old_default_bool, old_default_text, "
-                          "new_display_name, new_value_kind, new_column_kind, "
-                          "new_nullable, new_editable, new_user_defined, "
-                          "new_indexed, new_participates_in_calc, new_unit, "
-                          "new_reference_table, new_default_kind, "
-                          "new_default_int64, new_default_double, "
-                          "new_default_bool, new_default_text FROM "
-                          "journal_schema_entries WHERE tx_id = ?;");
+                SqliteStmt schemaStmt =
+                    db_.Prepare(supportsBinaryStorage ? "SELECT sequence_index, op, table_name, column_name, "
+                                                        "column_rowid, old_display_name, old_value_kind, "
+                                                        "old_column_kind, old_nullable, old_editable, "
+                                                        "old_user_defined, old_indexed, "
+                                                        "old_participates_in_calc, old_unit, "
+                                                        "old_reference_table, old_default_kind, "
+                                                        "old_default_int64, old_default_double, "
+                                                        "old_default_bool, old_default_text, "
+                                                        "old_default_blob, new_display_name, "
+                                                        "new_value_kind, new_column_kind, new_nullable, "
+                                                        "new_editable, new_user_defined, new_indexed, "
+                                                        "new_participates_in_calc, new_unit, "
+                                                        "new_reference_table, new_default_kind, "
+                                                        "new_default_int64, new_default_double, "
+                                                        "new_default_bool, new_default_text, "
+                                                        "new_default_blob FROM journal_schema_entries "
+                                                        "WHERE tx_id = ?;"
+                                                      : "SELECT sequence_index, op, table_name, column_name, "
+                                                        "column_rowid, old_display_name, old_value_kind, "
+                                                        "old_column_kind, old_nullable, old_editable, "
+                                                        "old_user_defined, old_indexed, "
+                                                        "old_participates_in_calc, old_unit, "
+                                                        "old_reference_table, old_default_kind, "
+                                                        "old_default_int64, old_default_double, "
+                                                        "old_default_bool, old_default_text, "
+                                                        "new_display_name, new_value_kind, new_column_kind, "
+                                                        "new_nullable, new_editable, new_user_defined, "
+                                                        "new_indexed, new_participates_in_calc, new_unit, "
+                                                        "new_reference_table, new_default_kind, "
+                                                        "new_default_int64, new_default_double, "
+                                                        "new_default_bool, new_default_text FROM "
+                                                        "journal_schema_entries WHERE tx_id = ?;");
                 schemaStmt.BindInt64(1, persisted.txId);
                 hasEntry = false;
                 while (schemaStmt.Step(&hasEntry) == SC_OK && hasEntry)
@@ -3812,30 +4208,23 @@ namespace StableCore::Storage
                     entry.fieldName = schemaStmt.ColumnText(3);
                     entry.columnRowId = schemaStmt.ColumnInt64(4);
                     entry.oldColumn = supportsBinaryStorage
-                                           ? ReadColumnDefFromStorage(
-                                                 schemaStmt, 5, 6, 7, 8, 9,
-                                                 10, 11, 12, 13, 14, 15, 16,
-                                                 17, 18, 19, 20)
-                                           : ReadColumnDefFromStorage(
-                                                 schemaStmt, 5, 6, 7, 8, 9,
-                                                 10, 11, 12, 13, 14, 15, 16,
-                                                 17, 18, 19, 19);
-                    entry.newColumn = supportsBinaryStorage
-                                           ? ReadColumnDefFromStorage(
-                                                 schemaStmt, 21, 22, 23, 24,
-                                                 25, 26, 27, 28, 29, 30, 31,
-                                                 32, 33, 34, 35, 36)
-                                           : ReadColumnDefFromStorage(
-                                                 schemaStmt, 20, 21, 22, 23,
-                                                 24, 25, 26, 27, 28, 29, 30,
-                                                 31, 32, 33, 34, 34);
+                                          ? ReadColumnDefFromStorage(
+                                                schemaStmt, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20)
+                                          : ReadColumnDefFromStorage(
+                                                schemaStmt, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 19);
+                    entry.newColumn =
+                        supportsBinaryStorage
+                            ? ReadColumnDefFromStorage(
+                                  schemaStmt, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36)
+                            : ReadColumnDefFromStorage(
+                                  schemaStmt, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 34);
                     persistedEntry.entry = std::move(entry);
                     entries.push_back(std::move(persistedEntry));
                 }
 
-                std::sort(entries.begin(), entries.end(),
-                          [](const SqlitePersistedJournalEntry& left,
-                             const SqlitePersistedJournalEntry& right) {
+                std::sort(entries.begin(),
+                          entries.end(),
+                          [](const SqlitePersistedJournalEntry& left, const SqlitePersistedJournalEntry& right) {
                               return left.sequenceIndex < right.sequenceIndex;
                           });
                 for (auto& entry : entries)
@@ -3881,40 +4270,35 @@ namespace StableCore::Storage
             if (!cleanShutdown_)
             {
                 result.status = SCUpgradeStatus::Unsupported;
-                result.failureReason =
-                    L"Upgrade is not allowed after an unclean shutdown.";
+                result.failureReason = L"Upgrade is not allowed after an unclean shutdown.";
                 return finish(SC_E_WRITE_CONFLICT);
             }
 
             if (!confirmed)
             {
                 result.status = SCUpgradeStatus::Failed;
-                result.failureReason =
-                    L"Upgrade confirmation was not provided.";
+                result.failureReason = L"Upgrade confirmation was not provided.";
                 return finish(SC_E_INVALIDARG);
             }
 
             if (plan.currentVersion != schemaVersion_)
             {
                 result.status = SCUpgradeStatus::Failed;
-                result.failureReason =
-                    L"Upgrade plan does not match the current schema version.";
+                result.failureReason = L"Upgrade plan does not match the current schema version.";
                 return finish(SC_E_INVALIDARG);
             }
 
             if (plan.targetVersion <= plan.currentVersion)
             {
                 result.status = SCUpgradeStatus::NotRequired;
-                result.failureReason =
-                    L"Upgrade is not required for the current schema version.";
+                result.failureReason = L"Upgrade is not required for the current schema version.";
                 return finish(SC_OK);
             }
 
             if (plan.orderedSteps.empty())
             {
                 result.status = SCUpgradeStatus::Unsupported;
-                result.failureReason =
-                    L"Upgrade plan does not contain executable steps.";
+                result.failureReason = L"Upgrade plan does not contain executable steps.";
                 return finish(SC_E_NOTIMPL);
             }
 
@@ -3963,14 +4347,13 @@ namespace StableCore::Storage
                             result.status = SCUpgradeStatus::RolledBack;
                             result.rolledBack = true;
                             result.failureReason =
-                            L"Failed to create upgrade-required lookup "
-                            L"index.";
+                                L"Failed to create upgrade-required lookup "
+                                L"index.";
                             return finish(indexRc);
                         }
                     } else if (step.fromVersion == 2 && step.toVersion == 3)
                     {
-                        const ErrorCode metadataRc =
-                            BackfillSchemaMetadataV3();
+                        const ErrorCode metadataRc = BackfillSchemaMetadataV3();
                         if (Failed(metadataRc))
                         {
                             schemaVersion_ = originalSchemaVersion;
@@ -3983,8 +4366,7 @@ namespace StableCore::Storage
                         }
                     } else if (step.fromVersion == 3 && step.toVersion == 4)
                     {
-                        if (!HasTableColumn(db_.Raw(), "field_values",
-                                            "blob_value"))
+                        if (!HasTableColumn(db_.Raw(), "field_values", "blob_value"))
                         {
                             const ErrorCode fieldValuesRc = db_.Execute(
                                 "ALTER TABLE field_values ADD COLUMN "
@@ -3994,14 +4376,12 @@ namespace StableCore::Storage
                                 schemaVersion_ = originalSchemaVersion;
                                 result.status = SCUpgradeStatus::RolledBack;
                                 result.rolledBack = true;
-                                result.failureReason =
-                                    L"Failed to add binary field storage.";
+                                result.failureReason = L"Failed to add binary field storage.";
                                 return finish(fieldValuesRc);
                             }
                         }
 
-                        if (!HasTableColumn(db_.Raw(), "schema_columns",
-                                            "default_blob"))
+                        if (!HasTableColumn(db_.Raw(), "schema_columns", "default_blob"))
                         {
                             const ErrorCode schemaColumnsRc = db_.Execute(
                                 "ALTER TABLE schema_columns ADD COLUMN "
@@ -4018,8 +4398,7 @@ namespace StableCore::Storage
                             }
                         }
 
-                        if (!HasTableColumn(db_.Raw(), "journal_entries",
-                                            "old_blob"))
+                        if (!HasTableColumn(db_.Raw(), "journal_entries", "old_blob"))
                         {
                             const ErrorCode journalEntriesRc = db_.Execute(
                                 "ALTER TABLE journal_entries ADD COLUMN "
@@ -4029,14 +4408,12 @@ namespace StableCore::Storage
                                 schemaVersion_ = originalSchemaVersion;
                                 result.status = SCUpgradeStatus::RolledBack;
                                 result.rolledBack = true;
-                                result.failureReason =
-                                    L"Failed to extend journal entry storage.";
+                                result.failureReason = L"Failed to extend journal entry storage.";
                                 return finish(journalEntriesRc);
                             }
                         }
 
-                        if (!HasTableColumn(db_.Raw(), "journal_entries",
-                                            "new_blob"))
+                        if (!HasTableColumn(db_.Raw(), "journal_entries", "new_blob"))
                         {
                             const ErrorCode journalEntriesRc2 = db_.Execute(
                                 "ALTER TABLE journal_entries ADD COLUMN "
@@ -4046,15 +4423,12 @@ namespace StableCore::Storage
                                 schemaVersion_ = originalSchemaVersion;
                                 result.status = SCUpgradeStatus::RolledBack;
                                 result.rolledBack = true;
-                                result.failureReason =
-                                    L"Failed to extend journal entry storage.";
+                                result.failureReason = L"Failed to extend journal entry storage.";
                                 return finish(journalEntriesRc2);
                             }
                         }
 
-                        if (!HasTableColumn(db_.Raw(),
-                                            "journal_schema_entries",
-                                            "old_default_blob"))
+                        if (!HasTableColumn(db_.Raw(), "journal_schema_entries", "old_default_blob"))
                         {
                             const ErrorCode schemaJournalRc = db_.Execute(
                                 "ALTER TABLE journal_schema_entries ADD "
@@ -4071,9 +4445,7 @@ namespace StableCore::Storage
                             }
                         }
 
-                        if (!HasTableColumn(db_.Raw(),
-                                            "journal_schema_entries",
-                                            "new_default_blob"))
+                        if (!HasTableColumn(db_.Raw(), "journal_schema_entries", "new_default_blob"))
                         {
                             const ErrorCode schemaJournalRc2 = db_.Execute(
                                 "ALTER TABLE journal_schema_entries ADD "
@@ -4099,10 +4471,9 @@ namespace StableCore::Storage
 
                     schemaVersion_ = step.toVersion;
                     std::wstringstream message;
-                    message << L"Applied upgrade step " << step.name
-                            << L" to schema version " << schemaVersion_ << L".";
-                    LogStartupDiagnostic(SCDiagnosticSeverity::Info, L"upgrade",
-                                         message.str());
+                    message << L"Applied upgrade step " << step.name << L" to schema version " << schemaVersion_
+                            << L".";
+                    LogStartupDiagnostic(SCDiagnosticSeverity::Info, L"upgrade", message.str());
                 }
 
                 SaveMetadata();
@@ -4112,8 +4483,7 @@ namespace StableCore::Storage
                     schemaVersion_ = originalSchemaVersion;
                     result.status = SCUpgradeStatus::RolledBack;
                     result.rolledBack = true;
-                    result.failureReason =
-                        L"Failed to commit the upgrade transaction.";
+                    result.failureReason = L"Failed to commit the upgrade transaction.";
                     return finish(commitRc);
                 }
             } catch (...)
@@ -4121,8 +4491,7 @@ namespace StableCore::Storage
                 schemaVersion_ = originalSchemaVersion;
                 result.status = SCUpgradeStatus::RolledBack;
                 result.rolledBack = true;
-                result.failureReason =
-                    L"Upgrade transaction failed and was rolled back.";
+                result.failureReason = L"Upgrade transaction failed and was rolled back.";
                 return finish(SC_E_FAIL);
             }
 
@@ -4171,16 +4540,13 @@ namespace StableCore::Storage
             }
         }
 
-        void SqliteDatabase::EnsureColumnIndex(std::int64_t tableRowId,
-                                               const std::wstring& columnName)
+        void SqliteDatabase::EnsureColumnIndex(std::int64_t tableRowId, const std::wstring& columnName)
         {
-            const std::wstring indexName = L"idx_fv_" +
-                                           std::to_wstring(tableRowId) + L"_" +
-                                           SanitizeIdentifier(columnName);
-            const std::string sql =
-                ToUtf8(L"CREATE INDEX IF NOT EXISTS " + indexName +
-                       L" ON field_values(table_id, column_name, int64_value, "
-                       L"double_value, bool_value, text_value);");
+            const std::wstring indexName =
+                L"idx_fv_" + std::to_wstring(tableRowId) + L"_" + SanitizeIdentifier(columnName);
+            const std::string sql = ToUtf8(L"CREATE INDEX IF NOT EXISTS " + indexName +
+                                           L" ON field_values(table_id, column_name, int64_value, "
+                                           L"double_value, bool_value, text_value);");
             db_.Execute(sql.c_str());
         }
 
@@ -4194,24 +4560,21 @@ namespace StableCore::Storage
                 if (result != L"ok")
                 {
                     corruptionDetected_ = true;
-                    LogStartupDiagnostic(
-                        SCDiagnosticSeverity::Error, L"integrity",
-                        std::wstring(L"SQLite integrity check failed: ") +
-                            result);
+                    LogStartupDiagnostic(SCDiagnosticSeverity::Error,
+                                         L"integrity",
+                                         std::wstring(L"SQLite integrity check failed: ") + result);
                     throw std::runtime_error("sqlite integrity check failed");
                 }
             }
 
-            LogStartupDiagnostic(SCDiagnosticSeverity::Info, L"integrity",
-                                 L"SQLite integrity check passed.");
+            LogStartupDiagnostic(SCDiagnosticSeverity::Info, L"integrity", L"SQLite integrity check passed.");
         }
 
         void SqliteDatabase::LogStartupDiagnostic(SCDiagnosticSeverity severity,
                                                   const std::wstring& category,
                                                   const std::wstring& message)
         {
-            startupDiagnostics_.push_back(
-                SCDiagnosticEntry{severity, category, message});
+            startupDiagnostics_.push_back(SCDiagnosticEntry{severity, category, message});
             SqliteStmt stmt = db_.Prepare(
                 "INSERT INTO startup_diagnostics(severity, category, message) "
                 "VALUES(?, ?, ?);");
@@ -4248,27 +4611,23 @@ namespace StableCore::Storage
             return rc;
         }
 
-        std::wstring SqliteDatabase::SerializeImportSession(
-            const SCImportStagingArea& session) const
+        std::wstring SqliteDatabase::SerializeImportSession(const SCImportStagingArea& session) const
         {
             return SerializeImportSessionPayload(session);
         }
 
-        ErrorCode SqliteDatabase::DeserializeImportSession(
-            const std::wstring& payload, SCImportStagingArea* outSession) const
+        ErrorCode SqliteDatabase::DeserializeImportSession(const std::wstring& payload,
+                                                           SCImportStagingArea* outSession) const
         {
             if (outSession == nullptr)
             {
                 return SC_E_POINTER;
             }
-            return DeserializeImportSessionPayload(payload, outSession)
-                       ? SC_OK
-                       : SC_E_FAIL;
+            return DeserializeImportSessionPayload(payload, outSession) ? SC_OK : SC_E_FAIL;
         }
 
-        ErrorCode SqliteDatabase::BeginImportSession(
-            const SCImportSessionOptions& options,
-            SCImportStagingArea* outSession)
+        ErrorCode SqliteDatabase::BeginImportSession(const SCImportSessionOptions& options,
+                                                     SCImportStagingArea* outSession)
         {
             const ErrorCode writableRc = EnsureWritable();
             if (Failed(writableRc))
@@ -4287,8 +4646,7 @@ namespace StableCore::Storage
             }
 
             SCImportStagingArea session;
-            session.sessionName =
-                options.sessionName.empty() ? L"Import" : options.sessionName;
+            session.sessionName = options.sessionName.empty() ? L"Import" : options.sessionName;
             session.baseVersion = version_;
             session.chunkSize = options.chunkSize == 0 ? 1 : options.chunkSize;
             session.state = SCImportSessionState::Staging;
@@ -4311,8 +4669,7 @@ namespace StableCore::Storage
                 return rc;
             }
 
-            session.sessionId =
-                static_cast<SCImportSessionId>(db_.LastInsertRowId());
+            session.sessionId = static_cast<SCImportSessionId>(db_.LastInsertRowId());
             const std::wstring payload = SerializeImportSessionPayload(session);
             SqliteStmt updateStmt = db_.Prepare(
                 "UPDATE import_sessions SET payload = ?, checkpoint_chunk_id = "
@@ -4320,10 +4677,8 @@ namespace StableCore::Storage
             updateStmt.BindText(1, payload);
             updateStmt.BindInt64(2, 0);
             updateStmt.BindInt64(3, 0);
-            updateStmt.BindInt(4,
-                               static_cast<int>(SCImportSessionState::Staging));
-            updateStmt.BindInt64(5,
-                                 static_cast<std::int64_t>(session.sessionId));
+            updateStmt.BindInt(4, static_cast<int>(SCImportSessionState::Staging));
+            updateStmt.BindInt64(5, static_cast<std::int64_t>(session.sessionId));
             const ErrorCode updateRc = updateStmt.Step();
             if (Failed(updateRc))
             {
@@ -4333,9 +4688,9 @@ namespace StableCore::Storage
             return SC_OK;
         }
 
-        ErrorCode SqliteDatabase::AppendImportChunk(
-            SCImportStagingArea* session, const SCImportChunk& chunk,
-            SCImportCheckpoint* outCheckpoint)
+        ErrorCode SqliteDatabase::AppendImportChunk(SCImportStagingArea* session,
+                                                    const SCImportChunk& chunk,
+                                                    SCImportCheckpoint* outCheckpoint)
         {
             const ErrorCode writableRc = EnsureWritable();
             if (Failed(writableRc))
@@ -4356,29 +4711,23 @@ namespace StableCore::Storage
             session->chunks.push_back(chunk);
             session->state = SCImportSessionState::Checkpointed;
 
-            SqliteStmt loadStmt = db_.Prepare(
-                "SELECT session_id FROM import_sessions WHERE session_id = ?;");
-            loadStmt.BindInt64(1,
-                               static_cast<std::int64_t>(session->sessionId));
+            SqliteStmt loadStmt = db_.Prepare("SELECT session_id FROM import_sessions WHERE session_id = ?;");
+            loadStmt.BindInt64(1, static_cast<std::int64_t>(session->sessionId));
             bool hasRow = false;
             if (Failed(loadStmt.Step(&hasRow)) || !hasRow)
             {
                 return SC_E_RECORD_NOT_FOUND;
             }
 
-            const std::wstring payload =
-                SerializeImportSessionPayload(*session);
+            const std::wstring payload = SerializeImportSessionPayload(*session);
             SqliteStmt updateStmt = db_.Prepare(
                 "UPDATE import_sessions SET state = ?, checkpoint_chunk_id = "
                 "?, checkpoint_count = ?, payload = ? WHERE session_id = ?;");
-            updateStmt.BindInt(
-                1, static_cast<int>(SCImportSessionState::Checkpointed));
+            updateStmt.BindInt(1, static_cast<int>(SCImportSessionState::Checkpointed));
             updateStmt.BindInt64(2, static_cast<std::int64_t>(chunk.chunkId));
-            updateStmt.BindInt64(
-                3, static_cast<std::int64_t>(session->chunks.size()));
+            updateStmt.BindInt64(3, static_cast<std::int64_t>(session->chunks.size()));
             updateStmt.BindText(4, payload);
-            updateStmt.BindInt64(5,
-                                 static_cast<std::int64_t>(session->sessionId));
+            updateStmt.BindInt64(5, static_cast<std::int64_t>(session->sessionId));
             const ErrorCode rc = updateStmt.Step();
             if (Failed(rc))
             {
@@ -4396,8 +4745,7 @@ namespace StableCore::Storage
             return SC_OK;
         }
 
-        ErrorCode SqliteDatabase::LoadImportRecoveryState(
-            std::uint64_t sessionId, SCImportRecoveryState* outState)
+        ErrorCode SqliteDatabase::LoadImportRecoveryState(std::uint64_t sessionId, SCImportRecoveryState* outState)
         {
             if (outState == nullptr)
             {
@@ -4431,20 +4779,16 @@ namespace StableCore::Storage
             state.sessionId = sessionId;
             state.state = static_cast<SCImportSessionState>(stmt.ColumnInt(1));
             state.checkpoint.sessionId = sessionId;
-            state.checkpoint.lastChunkId =
-                static_cast<SCImportChunkId>(stmt.ColumnInt64(4));
-            state.checkpoint.chunkCount =
-                static_cast<std::size_t>(stmt.ColumnInt64(5));
-            state.checkpoint.baseVersion =
-                static_cast<VersionId>(stmt.ColumnInt64(2));
+            state.checkpoint.lastChunkId = static_cast<SCImportChunkId>(stmt.ColumnInt64(4));
+            state.checkpoint.chunkCount = static_cast<std::size_t>(stmt.ColumnInt64(5));
+            state.checkpoint.baseVersion = static_cast<VersionId>(stmt.ColumnInt64(2));
             state.checkpoint.persisted = true;
             state.checkpointPersisted = true;
 
             const std::wstring payload = stmt.ColumnText(6);
             if (!payload.empty())
             {
-                if (!DeserializeImportSessionPayload(payload,
-                                                     &state.stagingArea))
+                if (!DeserializeImportSessionPayload(payload, &state.stagingArea))
                 {
                     return SC_E_FAIL;
                 }
@@ -4452,36 +4796,29 @@ namespace StableCore::Storage
             {
                 state.stagingArea.sessionId = sessionId;
                 state.stagingArea.sessionName = stmt.ColumnText(0);
-                state.stagingArea.baseVersion =
-                    static_cast<VersionId>(stmt.ColumnInt64(2));
-                state.stagingArea.chunkSize =
-                    static_cast<std::size_t>(stmt.ColumnInt64(3));
+                state.stagingArea.baseVersion = static_cast<VersionId>(stmt.ColumnInt64(2));
+                state.stagingArea.chunkSize = static_cast<std::size_t>(stmt.ColumnInt64(3));
                 state.stagingArea.state = state.state;
             }
 
             state.stagingArea.sessionId = sessionId;
             state.stagingArea.sessionName = stmt.ColumnText(0);
-            state.stagingArea.baseVersion =
-                static_cast<VersionId>(stmt.ColumnInt64(2));
-            state.stagingArea.chunkSize =
-                static_cast<std::size_t>(stmt.ColumnInt64(3));
+            state.stagingArea.baseVersion = static_cast<VersionId>(stmt.ColumnInt64(2));
+            state.stagingArea.chunkSize = static_cast<std::size_t>(stmt.ColumnInt64(3));
             state.stagingArea.state = state.state;
-            state.canResume = state.state != SCImportSessionState::Finalized &&
-                              state.state != SCImportSessionState::Aborted;
-            state.canFinalize =
-                state.state == SCImportSessionState::Checkpointed ||
-                state.state == SCImportSessionState::ReadyToFinalize;
-            state.reason = state.canResume
-                               ? L"Import session recoverable from checkpoint."
-                               : L"Import session is no longer recoverable.";
+            state.canResume =
+                state.state != SCImportSessionState::Finalized && state.state != SCImportSessionState::Aborted;
+            state.canFinalize = state.state == SCImportSessionState::Checkpointed ||
+                                state.state == SCImportSessionState::ReadyToFinalize;
+            state.reason = state.canResume ? L"Import session recoverable from checkpoint."
+                                           : L"Import session is no longer recoverable.";
 
             *outState = std::move(state);
             return SC_OK;
         }
 
-        ErrorCode SqliteDatabase::FinalizeImportSession(
-            const SCImportFinalizeCommit& commit,
-            SCImportRecoveryState* outState)
+        ErrorCode SqliteDatabase::FinalizeImportSession(const SCImportFinalizeCommit& commit,
+                                                        SCImportRecoveryState* outState)
         {
             const ErrorCode writableRc = EnsureWritable();
             if (Failed(writableRc))
@@ -4500,17 +4837,14 @@ namespace StableCore::Storage
             }
 
             SCImportRecoveryState recoveryState;
-            const ErrorCode loadRc =
-                LoadImportRecoveryState(commit.sessionId, &recoveryState);
+            const ErrorCode loadRc = LoadImportRecoveryState(commit.sessionId, &recoveryState);
             if (Failed(loadRc))
             {
                 return loadRc;
             }
 
-            SqliteStmt deleteStmt = db_.Prepare(
-                "DELETE FROM import_sessions WHERE session_id = ?;");
-            deleteStmt.BindInt64(1,
-                                 static_cast<std::int64_t>(commit.sessionId));
+            SqliteStmt deleteStmt = db_.Prepare("DELETE FROM import_sessions WHERE session_id = ?;");
+            deleteStmt.BindInt64(1, static_cast<std::int64_t>(commit.sessionId));
             const ErrorCode deleteRc = deleteStmt.Step();
             if (Failed(deleteRc))
             {
@@ -4520,8 +4854,7 @@ namespace StableCore::Storage
             recoveryState.state = SCImportSessionState::Finalized;
             recoveryState.canResume = false;
             recoveryState.canFinalize = false;
-            recoveryState.reason =
-                L"Import session finalized and checkpoint cleared.";
+            recoveryState.reason = L"Import session finalized and checkpoint cleared.";
             if (outState != nullptr)
             {
                 *outState = std::move(recoveryState);
@@ -4543,8 +4876,7 @@ namespace StableCore::Storage
                 return storeRc;
             }
 
-            SqliteStmt deleteStmt = db_.Prepare(
-                "DELETE FROM import_sessions WHERE session_id = ?;");
+            SqliteStmt deleteStmt = db_.Prepare("DELETE FROM import_sessions WHERE session_id = ?;");
             deleteStmt.BindInt64(1, static_cast<std::int64_t>(sessionId));
             return deleteStmt.Step();
         }
@@ -4554,17 +4886,15 @@ namespace StableCore::Storage
             return readOnly_ ? SC_E_READ_ONLY_DATABASE : SC_OK;
         }
 
-        ErrorCode SqliteDatabase::CollectDiagnostics(
-            SCStorageHealthReport* outReport) const
+        ErrorCode SqliteDatabase::CollectDiagnostics(SCStorageHealthReport* outReport) const
         {
             if (outReport == nullptr)
             {
                 return SC_E_POINTER;
             }
 
-            outReport->diagnostics.insert(outReport->diagnostics.end(),
-                                          startupDiagnostics_.begin(),
-                                          startupDiagnostics_.end());
+            outReport->diagnostics.insert(
+                outReport->diagnostics.end(), startupDiagnostics_.begin(), startupDiagnostics_.end());
             if (dirtyStartupDetected_)
             {
                 outReport->diagnostics.push_back(SCDiagnosticEntry{
@@ -4584,8 +4914,7 @@ namespace StableCore::Storage
             return SC_OK;
         }
 
-        ErrorCode SqliteDatabase::BeginEdit(const wchar_t* name,
-                                            SCEditPtr& outEdit)
+        ErrorCode SqliteDatabase::BeginEdit(const wchar_t* name, SCEditPtr& outEdit)
         {
             const ErrorCode writableRc = EnsureWritable();
             if (Failed(writableRc))
@@ -4597,10 +4926,8 @@ namespace StableCore::Storage
                 return SC_E_WRITE_CONFLICT;
             }
             activeJournal_ = JournalTransaction{};
-            activeJournal_.actionName =
-                (name != nullptr && *name != L'\0') ? name : L"Edit";
-            activeEdit_ = SCMakeRef<SqliteEditSession>(
-                activeJournal_.actionName, version_);
+            activeJournal_.actionName = (name != nullptr && *name != L'\0') ? name : L"Edit";
+            activeEdit_ = SCMakeRef<SqliteEditSession>(activeJournal_.actionName, version_);
             outEdit = activeEdit_;
             return SC_OK;
         }
@@ -4640,9 +4967,8 @@ namespace StableCore::Storage
                 PersistTouchedRecords(committedJournal, committedVersion);
                 DeleteRedoJournalRows();
                 committedJournal.committedVersion = committedVersion;
-                const std::int64_t txId = InsertJournalTransaction(
-                    committedJournal, kStackUndo,
-                    static_cast<int>(undoStack_.size()));
+                const std::int64_t txId =
+                    InsertJournalTransaction(committedJournal, kStackUndo, static_cast<int>(undoStack_.size()));
                 committedJournal.commitId = static_cast<CommitId>(txId);
                 PersistJournalEntries(txId, committedJournal);
                 SaveMetadata(committedVersion);
@@ -4654,8 +4980,7 @@ namespace StableCore::Storage
 
                 version_ = committedVersion;
                 UpdateTouchedVersions(committedJournal, version_);
-                undoStack_.push_back(
-                    SqlitePersistedJournalTransaction{txId, committedJournal});
+                undoStack_.push_back(SqlitePersistedJournalTransaction{txId, committedJournal});
                 redoStack_.clear();
                 activeEdit_->SetState(EditState::Committed);
                 activeJournal_ = committedJournal;
@@ -4665,8 +4990,7 @@ namespace StableCore::Storage
             }
 
             RefreshReferenceIndexState();
-            const SCChangeSet SCChangeSet = BuildChangeSet(
-                activeJournal_, ChangeSource::UserEdit, version_);
+            const SCChangeSet SCChangeSet = BuildChangeSet(activeJournal_, ChangeSource::UserEdit, version_);
             activeEdit_.Reset();
             activeJournal_ = JournalTransaction{};
             NotifyObservers(SCChangeSet);
@@ -4708,8 +5032,7 @@ namespace StableCore::Storage
                 {
                     RefreshReferenceIndexState();
                 }
-            }
-            catch (...)
+            } catch (...)
             {
                 return SC_E_FAIL;
             }
@@ -4751,8 +5074,7 @@ namespace StableCore::Storage
                 }
                 const VersionId nextVersion = version_ + 1;
                 PersistTouchedRecords(tx.tx, nextVersion);
-                UpdateJournalTransactionStack(
-                    tx.txId, kStackRedo, static_cast<int>(redoStack_.size()));
+                UpdateJournalTransactionStack(tx.txId, kStackRedo, static_cast<int>(redoStack_.size()));
                 SaveMetadata(nextVersion);
                 const ErrorCode commitRc = txn.Commit();
                 if (Failed(commitRc))
@@ -4773,8 +5095,7 @@ namespace StableCore::Storage
             }
 
             RefreshReferenceIndexState();
-            NotifyObservers(
-                BuildChangeSet(tx.tx, ChangeSource::Undo, version_));
+            NotifyObservers(BuildChangeSet(tx.tx, ChangeSource::Undo, version_));
             return SC_OK;
         }
 
@@ -4809,8 +5130,7 @@ namespace StableCore::Storage
                 }
                 const VersionId nextVersion = version_ + 1;
                 PersistTouchedRecords(tx.tx, nextVersion);
-                UpdateJournalTransactionStack(
-                    tx.txId, kStackUndo, static_cast<int>(undoStack_.size()));
+                UpdateJournalTransactionStack(tx.txId, kStackUndo, static_cast<int>(undoStack_.size()));
                 SaveMetadata(nextVersion);
                 const ErrorCode commitRc = txn.Commit();
                 if (Failed(commitRc))
@@ -4831,13 +5151,11 @@ namespace StableCore::Storage
             }
 
             RefreshReferenceIndexState();
-            NotifyObservers(
-                BuildChangeSet(tx.tx, ChangeSource::Redo, version_));
+            NotifyObservers(BuildChangeSet(tx.tx, ChangeSource::Redo, version_));
             return SC_OK;
         }
 
-        ErrorCode SqliteDatabase::GetTable(const wchar_t* name,
-                                           SCTablePtr& outTable)
+        ErrorCode SqliteDatabase::GetTable(const wchar_t* name, SCTablePtr& outTable)
         {
             if (name == nullptr)
             {
@@ -4863,8 +5181,7 @@ namespace StableCore::Storage
             return SC_OK;
         }
 
-        ErrorCode SqliteDatabase::GetTableName(std::int32_t index,
-                                               std::wstring* outName)
+        ErrorCode SqliteDatabase::GetTableName(std::int32_t index, std::wstring* outName)
         {
             if (outName == nullptr)
             {
@@ -4881,8 +5198,7 @@ namespace StableCore::Storage
             return SC_OK;
         }
 
-        ErrorCode SqliteDatabase::CreateTable(const wchar_t* name,
-                                              SCTablePtr& outTable)
+        ErrorCode SqliteDatabase::CreateTable(const wchar_t* name, SCTablePtr& outTable)
         {
             const ErrorCode writableRc = EnsureWritable();
             if (Failed(writableRc))
@@ -4904,8 +5220,7 @@ namespace StableCore::Storage
             try
             {
                 SqliteTxn txn(db_);
-                SqliteStmt stmt =
-                    db_.Prepare("INSERT INTO tables(name) VALUES(?);");
+                SqliteStmt stmt = db_.Prepare("INSERT INTO tables(name) VALUES(?);");
                 stmt.BindText(1, name);
                 const ErrorCode rc = stmt.Step();
                 if (Failed(rc))
@@ -4914,9 +5229,7 @@ namespace StableCore::Storage
                 }
 
                 const std::int64_t tableRowId = db_.LastInsertRowId();
-                SCTablePtr table = SCMakeRef<SqliteTable>(
-                    this, std::wstring{name}, tableRowId);
-                tables_.emplace(name, table);
+                SCTablePtr table = SCMakeRef<SqliteTable>(this, std::wstring{name}, tableRowId);
 
                 SqliteStmt metaStmt = db_.Prepare(
                     "INSERT INTO schema_tables(table_id, description) "
@@ -4936,11 +5249,11 @@ namespace StableCore::Storage
                     return commitRc;
                 }
 
+                tables_.emplace(name, table);
                 MarkReferenceIndexDirty();
                 outTable = std::move(table);
                 return SC_OK;
-            }
-            catch (...)
+            } catch (...)
             {
                 return SC_E_FAIL;
             }
@@ -4993,25 +5306,21 @@ namespace StableCore::Storage
                 }
 
                 std::int32_t columnCount = 0;
-                const ErrorCode columnCountRc =
-                    otherSchema->GetColumnCount(&columnCount);
+                const ErrorCode columnCountRc = otherSchema->GetColumnCount(&columnCount);
                 if (Failed(columnCountRc))
                 {
                     return columnCountRc;
                 }
 
-                for (std::int32_t columnIndex = 0; columnIndex < columnCount;
-                     ++columnIndex)
+                for (std::int32_t columnIndex = 0; columnIndex < columnCount; ++columnIndex)
                 {
                     SCColumnDef column;
-                    const ErrorCode columnRc =
-                        otherSchema->GetColumn(columnIndex, &column);
+                    const ErrorCode columnRc = otherSchema->GetColumn(columnIndex, &column);
                     if (Failed(columnRc))
                     {
                         return columnRc;
                     }
-                    if (column.columnKind == ColumnKind::Relation &&
-                        EqualsIgnoreCase(column.referenceTable, tableName))
+                    if (column.columnKind == ColumnKind::Relation && EqualsIgnoreCase(column.referenceTable, tableName))
                     {
                         return SC_E_CONSTRAINT_VIOLATION;
                     }
@@ -5026,19 +5335,16 @@ namespace StableCore::Storage
 
             std::vector<std::wstring> indexedColumns;
             std::int32_t schemaColumnCount = 0;
-            const ErrorCode schemaCountRc =
-                schema->GetColumnCount(&schemaColumnCount);
+            const ErrorCode schemaCountRc = schema->GetColumnCount(&schemaColumnCount);
             if (Failed(schemaCountRc))
             {
                 return schemaCountRc;
             }
 
-            for (std::int32_t columnIndex = 0; columnIndex < schemaColumnCount;
-                 ++columnIndex)
+            for (std::int32_t columnIndex = 0; columnIndex < schemaColumnCount; ++columnIndex)
             {
                 SCColumnDef column;
-                const ErrorCode columnRc =
-                    schema->GetColumn(columnIndex, &column);
+                const ErrorCode columnRc = schema->GetColumn(columnIndex, &column);
                 if (Failed(columnRc))
                 {
                     return columnRc;
@@ -5069,8 +5375,8 @@ namespace StableCore::Storage
 
                 if (HasTable(L"schema_constraints"))
                 {
-                    SqliteStmt deleteConstraintsStmt = db_.Prepare(
-                        "DELETE FROM schema_constraints WHERE table_id = ?;");
+                    SqliteStmt deleteConstraintsStmt =
+                        db_.Prepare("DELETE FROM schema_constraints WHERE table_id = ?;");
                     deleteConstraintsStmt.BindInt64(1, table->TableRowId());
                     const ErrorCode rc = deleteConstraintsStmt.Step();
                     if (Failed(rc))
@@ -5095,8 +5401,7 @@ namespace StableCore::Storage
 
                 if (HasTable(L"schema_indexes"))
                 {
-                    SqliteStmt deleteIndexesStmt = db_.Prepare(
-                        "DELETE FROM schema_indexes WHERE table_id = ?;");
+                    SqliteStmt deleteIndexesStmt = db_.Prepare("DELETE FROM schema_indexes WHERE table_id = ?;");
                     deleteIndexesStmt.BindInt64(1, table->TableRowId());
                     const ErrorCode rc = deleteIndexesStmt.Step();
                     if (Failed(rc))
@@ -5107,8 +5412,7 @@ namespace StableCore::Storage
 
                 if (HasTable(L"schema_tables"))
                 {
-                    SqliteStmt deleteTableMetaStmt = db_.Prepare(
-                        "DELETE FROM schema_tables WHERE table_id = ?;");
+                    SqliteStmt deleteTableMetaStmt = db_.Prepare("DELETE FROM schema_tables WHERE table_id = ?;");
                     deleteTableMetaStmt.BindInt64(1, table->TableRowId());
                     const ErrorCode rc = deleteTableMetaStmt.Step();
                     if (Failed(rc))
@@ -5120,10 +5424,8 @@ namespace StableCore::Storage
                 for (const std::wstring& columnName : indexedColumns)
                 {
                     const std::wstring indexName =
-                        L"idx_fv_" + std::to_wstring(table->TableRowId()) + L"_" +
-                        SanitizeIdentifier(columnName);
-                    const std::string dropIndexSql =
-                        "DROP INDEX IF EXISTS " + ToUtf8(indexName) + ";";
+                        L"idx_fv_" + std::to_wstring(table->TableRowId()) + L"_" + SanitizeIdentifier(columnName);
+                    const std::string dropIndexSql = "DROP INDEX IF EXISTS " + ToUtf8(indexName) + ";";
                     SqliteStmt dropIndexStmt = db_.Prepare(dropIndexSql.c_str());
                     const ErrorCode rc = dropIndexStmt.Step();
                     if (Failed(rc))
@@ -5132,18 +5434,15 @@ namespace StableCore::Storage
                     }
                 }
 
-                SqliteStmt deleteFieldValuesStmt = db_.Prepare(
-                    "DELETE FROM field_values WHERE table_id = ?;");
+                SqliteStmt deleteFieldValuesStmt = db_.Prepare("DELETE FROM field_values WHERE table_id = ?;");
                 deleteFieldValuesStmt.BindInt64(1, table->TableRowId());
-                const ErrorCode deleteFieldValuesRc =
-                    deleteFieldValuesStmt.Step();
+                const ErrorCode deleteFieldValuesRc = deleteFieldValuesStmt.Step();
                 if (Failed(deleteFieldValuesRc))
                 {
                     return deleteFieldValuesRc;
                 }
 
-                SqliteStmt deleteRecordsStmt = db_.Prepare(
-                    "DELETE FROM records WHERE table_id = ?;");
+                SqliteStmt deleteRecordsStmt = db_.Prepare("DELETE FROM records WHERE table_id = ?;");
                 deleteRecordsStmt.BindInt64(1, table->TableRowId());
                 const ErrorCode deleteRecordsRc = deleteRecordsStmt.Step();
                 if (Failed(deleteRecordsRc))
@@ -5151,8 +5450,7 @@ namespace StableCore::Storage
                     return deleteRecordsRc;
                 }
 
-                SqliteStmt deleteColumnsStmt = db_.Prepare(
-                    "DELETE FROM schema_columns WHERE table_id = ?;");
+                SqliteStmt deleteColumnsStmt = db_.Prepare("DELETE FROM schema_columns WHERE table_id = ?;");
                 deleteColumnsStmt.BindInt64(1, table->TableRowId());
                 const ErrorCode deleteColumnsRc = deleteColumnsStmt.Step();
                 if (Failed(deleteColumnsRc))
@@ -5160,8 +5458,7 @@ namespace StableCore::Storage
                     return deleteColumnsRc;
                 }
 
-                SqliteStmt deleteTableStmt = db_.Prepare(
-                    "DELETE FROM tables WHERE table_id = ?;");
+                SqliteStmt deleteTableStmt = db_.Prepare("DELETE FROM tables WHERE table_id = ?;");
                 deleteTableStmt.BindInt64(1, table->TableRowId());
                 const ErrorCode deleteRc = deleteTableStmt.Step();
                 if (Failed(deleteRc))
@@ -5197,15 +5494,13 @@ namespace StableCore::Storage
 
         ErrorCode SqliteDatabase::RemoveObserver(ISCDatabaseObserver* observer)
         {
-            observers_.erase(
-                std::remove(observers_.begin(), observers_.end(), observer),
-                observers_.end());
+            observers_.erase(std::remove(observers_.begin(), observers_.end(), observer), observers_.end());
             return SC_OK;
         }
 
-        ErrorCode SqliteDatabase::CreateBackupCopy(
-            const wchar_t* targetPath, const SCBackupOptions& options,
-            SCBackupResult* outResult)
+        ErrorCode SqliteDatabase::CreateBackupCopy(const wchar_t* targetPath,
+                                                   const SCBackupOptions& options,
+                                                   SCBackupResult* outResult)
         {
             if (targetPath == nullptr || *targetPath == L'\0')
             {
@@ -5237,11 +5532,10 @@ namespace StableCore::Storage
             const std::string tempUtf8 = ToUtf8(tempFilePath);
 
             sqlite3* targetDb = nullptr;
-            const int openRc =
-                sqlite3_open_v2(tempUtf8.c_str(), &targetDb,
-                                SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE |
-                                    SQLITE_OPEN_FULLMUTEX,
-                                nullptr);
+            const int openRc = sqlite3_open_v2(tempUtf8.c_str(),
+                                               &targetDb,
+                                               SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX,
+                                               nullptr);
             if (openRc != SQLITE_OK)
             {
                 if (targetDb != nullptr)
@@ -5252,8 +5546,7 @@ namespace StableCore::Storage
             }
 
             ErrorCode resultRc = SC_OK;
-            sqlite3_backup* backup =
-                sqlite3_backup_init(targetDb, "main", db_.Raw(), "main");
+            sqlite3_backup* backup = sqlite3_backup_init(targetDb, "main", db_.Raw(), "main");
             if (backup == nullptr)
             {
                 sqlite3_close(targetDb);
@@ -5271,9 +5564,8 @@ namespace StableCore::Storage
             std::size_t removedEntryCount = 0;
             if (resultRc == SC_OK && !options.preserveJournalHistory)
             {
-                resultRc = ClearJournalHistoryForBackup(
-                    targetDb, version_, &removedTransactionCount,
-                    &removedEntryCount);
+                resultRc =
+                    ClearJournalHistoryForBackup(targetDb, version_, &removedTransactionCount, &removedEntryCount);
             }
 
             if (resultRc == SC_OK && options.vacuumTarget)
@@ -5289,8 +5581,7 @@ namespace StableCore::Storage
             std::uint64_t outputFileSizeBytes = 0;
             if (resultRc == SC_OK)
             {
-                const ErrorCode sizeRc =
-                    GetFileSizeBytes(tempFilePath, &outputFileSizeBytes);
+                const ErrorCode sizeRc = GetFileSizeBytes(tempFilePath, &outputFileSizeBytes);
                 if (Failed(sizeRc))
                 {
                     resultRc = sizeRc;
@@ -5301,9 +5592,7 @@ namespace StableCore::Storage
 
             if (resultRc == SC_OK)
             {
-                if (!MoveFileExW(
-                        tempFilePath.c_str(), targetPath,
-                        MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+                if (!MoveFileExW(tempFilePath.c_str(), targetPath, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
                 {
                     return SC_E_IO_ERROR;
                 }
@@ -5311,10 +5600,8 @@ namespace StableCore::Storage
                 cleanup.Release();
                 if (outResult != nullptr)
                 {
-                    outResult->removedJournalTransactionCount =
-                        static_cast<std::uint64_t>(removedTransactionCount);
-                    outResult->removedJournalEntryCount =
-                        static_cast<std::uint64_t>(removedEntryCount);
+                    outResult->removedJournalTransactionCount = static_cast<std::uint64_t>(removedTransactionCount);
+                    outResult->removedJournalEntryCount = static_cast<std::uint64_t>(removedEntryCount);
                     outResult->outputFileSizeBytes = outputFileSizeBytes;
                 }
             }
@@ -5323,8 +5610,7 @@ namespace StableCore::Storage
 #endif
         }
 
-        ErrorCode SqliteDatabase::ResetHistoryBaseline(
-            SCBackupResult* outResult)
+        ErrorCode SqliteDatabase::ResetHistoryBaseline(SCBackupResult* outResult)
         {
             if (readOnly_)
             {
@@ -5341,9 +5627,8 @@ namespace StableCore::Storage
             try
             {
                 SqliteTxn txn(db_);
-                const ErrorCode clearRc = ClearJournalHistoryForBackup(
-                    db_.Raw(), version_, &removedTransactionCount,
-                    &removedEntryCount);
+                const ErrorCode clearRc =
+                    ClearJournalHistoryForBackup(db_.Raw(), version_, &removedTransactionCount, &removedEntryCount);
                 if (Failed(clearRc))
                 {
                     return clearRc;
@@ -5366,17 +5651,14 @@ namespace StableCore::Storage
             if (outResult != nullptr)
             {
                 *outResult = SCBackupResult{};
-                outResult->removedJournalTransactionCount =
-                    static_cast<std::uint64_t>(removedTransactionCount);
-                outResult->removedJournalEntryCount =
-                    static_cast<std::uint64_t>(removedEntryCount);
+                outResult->removedJournalTransactionCount = static_cast<std::uint64_t>(removedTransactionCount);
+                outResult->removedJournalEntryCount = static_cast<std::uint64_t>(removedEntryCount);
             }
 
             return SC_OK;
         }
 
-        ErrorCode SqliteDatabase::GetEditLogState(
-            SCEditLogState* outState) const
+        ErrorCode SqliteDatabase::GetEditLogState(SCEditLogState* outState) const
         {
             if (outState == nullptr)
             {
@@ -5396,23 +5678,20 @@ namespace StableCore::Storage
             for (const auto& tx : undoStack_)
             {
                 outState->undoItems.push_back(SCEditLogEntry{
-                    tx.tx.commitId, tx.tx.committedVersion,
-                    SCEditLogActionKind::Commit, tx.tx.actionName, L"", 0});
+                    tx.tx.commitId, tx.tx.committedVersion, SCEditLogActionKind::Commit, tx.tx.actionName, L"", 0});
             }
 
             outState->redoItems.reserve(redoStack_.size());
             for (const auto& tx : redoStack_)
             {
                 outState->redoItems.push_back(SCEditLogEntry{
-                    tx.tx.commitId, tx.tx.committedVersion,
-                    SCEditLogActionKind::Commit, tx.tx.actionName, L"", 0});
+                    tx.tx.commitId, tx.tx.committedVersion, SCEditLogActionKind::Commit, tx.tx.actionName, L"", 0});
             }
 
             return SC_OK;
         }
 
-        ErrorCode SqliteDatabase::GetEditingState(
-            SCEditingDatabaseState* outState) const
+        ErrorCode SqliteDatabase::GetEditingState(SCEditingDatabaseState* outState) const
         {
             if (outState == nullptr)
             {
@@ -5420,17 +5699,12 @@ namespace StableCore::Storage
             }
 
             outState->open = true;
-            outState->dirty =
-                static_cast<bool>(activeEdit_) || !undoStack_.empty();
+            outState->dirty = static_cast<bool>(activeEdit_) || !undoStack_.empty();
             outState->openMode = openMode_;
             outState->currentVersion = version_;
             outState->baselineVersion = baselineVersion_;
-            outState->undoCount = openMode_ == SCDatabaseOpenMode::NoHistory
-                                      ? 0
-                                      : undoStack_.size();
-            outState->redoCount = openMode_ == SCDatabaseOpenMode::NoHistory
-                                      ? 0
-                                      : redoStack_.size();
+            outState->undoCount = openMode_ == SCDatabaseOpenMode::NoHistory ? 0 : undoStack_.size();
+            outState->redoCount = openMode_ == SCDatabaseOpenMode::NoHistory ? 0 : redoStack_.size();
             return SC_OK;
         }
 
@@ -5455,9 +5729,10 @@ namespace StableCore::Storage
             return SC_OK;
         }
 
-        ErrorCode SqliteDatabase::ValidateWrite(
-            SqliteTable* table, const std::shared_ptr<SqliteRecordData>& data,
-            const std::wstring& fieldName, const SCValue& value)
+        ErrorCode SqliteDatabase::ValidateWrite(SqliteTable* table,
+                                                const std::shared_ptr<SqliteRecordData>& data,
+                                                const std::wstring& fieldName,
+                                                const SCValue& value)
         {
             if (!activeEdit_)
             {
@@ -5468,8 +5743,7 @@ namespace StableCore::Storage
                 return SC_E_RECORD_DELETED;
             }
 
-            const SCColumnDef* column =
-                table->Schema()->FindColumnDef(fieldName);
+            const SCColumnDef* column = table->Schema()->FindColumnDef(fieldName);
             if (column == nullptr)
             {
                 return SC_E_COLUMN_NOT_FOUND;
@@ -5479,8 +5753,7 @@ namespace StableCore::Storage
                 return SC_E_READ_ONLY_COLUMN;
             }
 
-            const ErrorCode validate =
-                ValidateValueKind(column->valueKind, value, column->nullable);
+            const ErrorCode validate = ValidateValueKind(column->valueKind, value, column->nullable);
             if (Failed(validate))
             {
                 return validate;
@@ -5501,9 +5774,7 @@ namespace StableCore::Storage
                     {
                         return SC_E_REFERENCE_INVALID;
                     }
-                    auto target =
-                        static_cast<SqliteTable*>(targetIt->second.Get())
-                            ->FindRecordData(refId);
+                    auto target = static_cast<SqliteTable*>(targetIt->second.Get())->FindRecordData(refId);
                     if (!target || target->state == RecordState::Deleted)
                     {
                         return SC_E_REFERENCE_INVALID;
@@ -5514,8 +5785,7 @@ namespace StableCore::Storage
             return SC_OK;
         }
 
-        ErrorCode SqliteDatabase::ValidateColumnDefForSchema(
-            SqliteSchema* schema, const SCColumnDef& def) const
+        ErrorCode SqliteDatabase::ValidateColumnDefForSchema(SqliteSchema* schema, const SCColumnDef& def) const
         {
             if (schema == nullptr)
             {
@@ -5528,10 +5798,108 @@ namespace StableCore::Storage
                 return shapeRc;
             }
 
-            if (!def.nullable && def.defaultValue.IsNull() &&
-                HasAliveRecords(schema))
+            if (!def.nullable && def.defaultValue.IsNull() && HasAliveRecords(schema))
             {
                 return SC_E_SCHEMA_VIOLATION;
+            }
+
+            return SC_OK;
+        }
+
+        ErrorCode SqliteDatabase::ValidateConstraintDefForSchema(SqliteSchema* schema, const SCConstraintDef& def) const
+        {
+            if (schema == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+
+            const ErrorCode shapeRc = ValidateConstraintDefShape(def);
+            if (Failed(shapeRc))
+            {
+                return shapeRc;
+            }
+
+            std::set<std::wstring> seenColumns;
+            for (const std::wstring& columnName : def.columns)
+            {
+                if (columnName.empty())
+                {
+                    return SC_E_INVALIDARG;
+                }
+                if (schema->FindColumnDef(columnName) == nullptr)
+                {
+                    return SC_E_COLUMN_NOT_FOUND;
+                }
+                if (!seenColumns.insert(columnName).second)
+                {
+                    return SC_E_SCHEMA_VIOLATION;
+                }
+            }
+
+            for (const std::wstring& columnName : def.referencedColumns)
+            {
+                if (columnName.empty())
+                {
+                    return SC_E_INVALIDARG;
+                }
+            }
+
+            if (def.kind == SCConstraintKind::ForeignKey)
+            {
+                const auto tableIt = tables_.find(def.referencedTable);
+                if (tableIt == tables_.end())
+                {
+                    return SC_E_TABLE_NOT_FOUND;
+                }
+
+                if (!def.referencedColumns.empty())
+                {
+                    SCSchemaPtr referencedSchema;
+                    const ErrorCode schemaRc = tableIt->second->GetSchema(referencedSchema);
+                    if (Failed(schemaRc) || !referencedSchema)
+                    {
+                        return Failed(schemaRc) ? schemaRc : SC_E_FAIL;
+                    }
+
+                    for (const std::wstring& columnName : def.referencedColumns)
+                    {
+                        SCColumnDef ignored;
+                        const ErrorCode columnRc = referencedSchema->FindColumn(columnName.c_str(), &ignored);
+                        if (Failed(columnRc))
+                        {
+                            return columnRc;
+                        }
+                    }
+                }
+            }
+
+            return SC_OK;
+        }
+
+        ErrorCode SqliteDatabase::ValidateIndexDefForSchema(SqliteSchema* schema, const SCIndexDef& def) const
+        {
+            if (schema == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+
+            const ErrorCode shapeRc = ValidateIndexDefShape(def);
+            if (Failed(shapeRc))
+            {
+                return shapeRc;
+            }
+
+            std::set<std::wstring> seenColumns;
+            for (const SCIndexColumnDef& column : def.columns)
+            {
+                if (schema->FindColumnDef(column.columnName) == nullptr)
+                {
+                    return SC_E_COLUMN_NOT_FOUND;
+                }
+                if (!seenColumns.insert(column.columnName).second)
+                {
+                    return SC_E_SCHEMA_VIOLATION;
+                }
             }
 
             return SC_OK;
@@ -5545,13 +5913,11 @@ namespace StableCore::Storage
             }
 
             const auto tableIt = std::find_if(
-                tables_.begin(), tables_.end(),
-                [tableRowId = schema->TableRowId()](
-                    const std::pair<const std::wstring, SCTablePtr>& entry) {
-                    const auto* table =
-                        static_cast<SqliteTable*>(entry.second.Get());
-                    return table != nullptr &&
-                           table->TableRowId() == tableRowId;
+                tables_.begin(),
+                tables_.end(),
+                [tableRowId = schema->TableRowId()](const std::pair<const std::wstring, SCTablePtr>& entry) {
+                    const auto* table = static_cast<SqliteTable*>(entry.second.Get());
+                    return table != nullptr && table->TableRowId() == tableRowId;
                 });
             if (tableIt == tables_.end())
             {
@@ -5598,8 +5964,7 @@ namespace StableCore::Storage
                     return countRc;
                 }
 
-                for (std::int32_t columnIndex = 0; columnIndex < columnCount;
-                     ++columnIndex)
+                for (std::int32_t columnIndex = 0; columnIndex < columnCount; ++columnIndex)
                 {
                     SCColumnDef column;
                     const ErrorCode columnRc = schema->GetColumn(columnIndex, &column);
@@ -5622,8 +5987,7 @@ namespace StableCore::Storage
                         }
 
                         const auto valueIt = data->values.find(column.name);
-                        if (valueIt == data->values.end() ||
-                            valueIt->second.IsNull())
+                        if (valueIt == data->values.end() || valueIt->second.IsNull())
                         {
                             return SC_E_SCHEMA_VIOLATION;
                         }
@@ -5634,8 +5998,8 @@ namespace StableCore::Storage
             return SC_OK;
         }
 
-        SqliteDatabase::JournalLookup SqliteDatabase::LookupRecordJournalState(
-            const std::wstring& tableName, RecordId recordId) const
+        SqliteDatabase::JournalLookup SqliteDatabase::LookupRecordJournalState(const std::wstring& tableName,
+                                                                               RecordId recordId) const
         {
             JournalLookup lookup;
             for (const auto& entry : activeJournal_.entries)
@@ -5655,59 +6019,52 @@ namespace StableCore::Storage
             return lookup;
         }
 
-        void SqliteDatabase::RemoveFieldJournalEntries(
-            const std::wstring& tableName, RecordId recordId)
+        void SqliteDatabase::RemoveFieldJournalEntries(const std::wstring& tableName, RecordId recordId)
         {
             activeJournal_.entries.erase(
                 std::remove_if(activeJournal_.entries.begin(),
                                activeJournal_.entries.end(),
                                [&](const JournalEntry& entry) {
-                                   return entry.tableName == tableName &&
-                                          entry.recordId == recordId &&
-                                          (entry.op == JournalOp::SetValue ||
-                                           entry.op == JournalOp::SetRelation);
+                                   return entry.tableName == tableName && entry.recordId == recordId &&
+                                          (entry.op == JournalOp::SetValue || entry.op == JournalOp::SetRelation);
                                }),
                 activeJournal_.entries.end());
         }
 
-        void SqliteDatabase::RemoveAllJournalEntriesForRecord(
-            const std::wstring& tableName, RecordId recordId)
+        void SqliteDatabase::RemoveAllJournalEntriesForRecord(const std::wstring& tableName, RecordId recordId)
         {
-            activeJournal_.entries.erase(
-                std::remove_if(activeJournal_.entries.begin(),
-                               activeJournal_.entries.end(),
-                               [&](const JournalEntry& entry) {
-                                   return entry.tableName == tableName &&
-                                          entry.recordId == recordId;
-                               }),
-                activeJournal_.entries.end());
+            activeJournal_.entries.erase(std::remove_if(activeJournal_.entries.begin(),
+                                                        activeJournal_.entries.end(),
+                                                        [&](const JournalEntry& entry) {
+                                                            return entry.tableName == tableName &&
+                                                                   entry.recordId == recordId;
+                                                        }),
+                                         activeJournal_.entries.end());
         }
 
-        ErrorCode SqliteDatabase::WriteValue(
-            SqliteTable* table, const std::shared_ptr<SqliteRecordData>& data,
-            const std::wstring& fieldName, const SCValue& value)
+        ErrorCode SqliteDatabase::WriteValue(SqliteTable* table,
+                                             const std::shared_ptr<SqliteRecordData>& data,
+                                             const std::wstring& fieldName,
+                                             const SCValue& value)
         {
             const ErrorCode writableRc = EnsureWritable();
             if (Failed(writableRc))
             {
                 return writableRc;
             }
-            const ErrorCode validate =
-                ValidateWrite(table, data, fieldName, value);
+            const ErrorCode validate = ValidateWrite(table, data, fieldName, value);
             if (Failed(validate))
             {
                 return validate;
             }
 
-            const JournalLookup lookup =
-                LookupRecordJournalState(table->Name(), data->id);
+            const JournalLookup lookup = LookupRecordJournalState(table->Name(), data->id);
             if (lookup.deletedInActiveEdit)
             {
                 return SC_E_RECORD_DELETED;
             }
 
-            const SCColumnDef* column =
-                table->Schema()->FindColumnDef(fieldName);
+            const SCColumnDef* column = table->Schema()->FindColumnDef(fieldName);
             SCValue oldValue = column->defaultValue;
             const auto existing = data->values.find(fieldName);
             if (existing != data->values.end())
@@ -5721,18 +6078,15 @@ namespace StableCore::Storage
             }
 
             data->values[fieldName] = value;
-            const JournalOp op = (column != nullptr &&
-                                  column->columnKind == ColumnKind::Relation)
+            const JournalOp op = (column != nullptr && column->columnKind == ColumnKind::Relation)
                                      ? JournalOp::SetRelation
                                      : JournalOp::SetValue;
-            RecordJournal(table->Name(), data->id, fieldName, oldValue, value,
-                          false, false, op);
+            RecordJournal(table->Name(), data->id, fieldName, oldValue, value, false, false, op);
             MarkReferenceIndexDirty();
             return SC_OK;
         }
 
-        ErrorCode SqliteDatabase::DeleteRecord(
-            SqliteTable* table, const std::shared_ptr<SqliteRecordData>& data)
+        ErrorCode SqliteDatabase::DeleteRecord(SqliteTable* table, const std::shared_ptr<SqliteRecordData>& data)
         {
             const ErrorCode writableRc = EnsureWritable();
             if (Failed(writableRc))
@@ -5752,8 +6106,7 @@ namespace StableCore::Storage
                 return SC_E_CONSTRAINT_VIOLATION;
             }
 
-            const JournalLookup lookup =
-                LookupRecordJournalState(table->Name(), data->id);
+            const JournalLookup lookup = LookupRecordJournalState(table->Name(), data->id);
             if (lookup.deletedInActiveEdit)
             {
                 return SC_E_RECORD_DELETED;
@@ -5769,16 +6122,15 @@ namespace StableCore::Storage
             }
 
             RemoveFieldJournalEntries(table->Name(), data->id);
-            RecordJournal(table->Name(), data->id, L"", SCValue::Null(),
-                          SCValue::Null(), false, true,
-                          JournalOp::DeleteRecord);
+            RecordJournal(
+                table->Name(), data->id, L"", SCValue::Null(), SCValue::Null(), false, true, JournalOp::DeleteRecord);
             MarkReferenceIndexDirty();
             return SC_OK;
         }
 
-        ErrorCode SqliteDatabase::GetReferencesBySource(
-            const std::wstring& sourceTable, RecordId sourceRecordId,
-            std::vector<ReferenceRecord>* outRecords) const
+        ErrorCode SqliteDatabase::GetReferencesBySource(const std::wstring& sourceTable,
+                                                        RecordId sourceRecordId,
+                                                        std::vector<ReferenceRecord>* outRecords) const
         {
             if (outRecords == nullptr)
             {
@@ -5799,8 +6151,7 @@ namespace StableCore::Storage
             }
 
             const auto recordIt = table->Records().find(sourceRecordId);
-            if (recordIt == table->Records().end() ||
-                recordIt->second == nullptr ||
+            if (recordIt == table->Records().end() || recordIt->second == nullptr ||
                 recordIt->second->state == RecordState::Deleted)
             {
                 return SC_OK;
@@ -5820,8 +6171,7 @@ namespace StableCore::Storage
                 return countRc;
             }
 
-            for (std::int32_t columnIndex = 0; columnIndex < columnCount;
-                 ++columnIndex)
+            for (std::int32_t columnIndex = 0; columnIndex < columnCount; ++columnIndex)
             {
                 SCColumnDef column;
                 if (Failed(schema->GetColumn(columnIndex, &column)))
@@ -5845,18 +6195,22 @@ namespace StableCore::Storage
                     continue;
                 }
 
-                outRecords->push_back(
-                    ReferenceRecord{sourceTable, sourceRecordId, column.name,
-                                    column.referenceTable, targetRecordId,
-                                    version_, 0, std::nullopt});
+                outRecords->push_back(ReferenceRecord{sourceTable,
+                                                      sourceRecordId,
+                                                      column.name,
+                                                      column.referenceTable,
+                                                      targetRecordId,
+                                                      version_,
+                                                      0,
+                                                      std::nullopt});
             }
 
             return SC_OK;
         }
 
-        ErrorCode SqliteDatabase::GetReferencesByTarget(
-            const std::wstring& targetTable, RecordId targetRecordId,
-            std::vector<ReverseReferenceRecord>* outRecords) const
+        ErrorCode SqliteDatabase::GetReferencesByTarget(const std::wstring& targetTable,
+                                                        RecordId targetRecordId,
+                                                        std::vector<ReverseReferenceRecord>* outRecords) const
         {
             if (outRecords == nullptr)
             {
@@ -5884,45 +6238,42 @@ namespace StableCore::Storage
                     continue;
                 }
 
-                for (std::int32_t columnIndex = 0; columnIndex < columnCount;
-                     ++columnIndex)
+                for (std::int32_t columnIndex = 0; columnIndex < columnCount; ++columnIndex)
                 {
                     SCColumnDef column;
                     if (Failed(schema->GetColumn(columnIndex, &column)))
                     {
                         continue;
                     }
-                    if (column.columnKind != ColumnKind::Relation ||
-                        column.referenceTable != targetTable)
+                    if (column.columnKind != ColumnKind::Relation || column.referenceTable != targetTable)
                     {
                         continue;
                     }
 
-                    for (const auto& [candidateId, candidateData] :
-                         table->Records())
+                    for (const auto& [candidateId, candidateData] : table->Records())
                     {
-                        if (candidateData == nullptr ||
-                            candidateData->state == RecordState::Deleted)
+                        if (candidateData == nullptr || candidateData->state == RecordState::Deleted)
                         {
                             continue;
                         }
 
-                        const auto valueIt =
-                            candidateData->values.find(column.name);
+                        const auto valueIt = candidateData->values.find(column.name);
                         if (valueIt == candidateData->values.end())
                         {
                             continue;
                         }
 
                         RecordId referencedId = 0;
-                        if (Succeeded(
-                                valueIt->second.AsRecordId(&referencedId)) &&
-                            referencedId == targetRecordId)
+                        if (Succeeded(valueIt->second.AsRecordId(&referencedId)) && referencedId == targetRecordId)
                         {
-                            outRecords->push_back(ReverseReferenceRecord{
-                                targetTable, targetRecordId, table->Name(),
-                                candidateId, column.name, version_, 0,
-                                std::nullopt});
+                            outRecords->push_back(ReverseReferenceRecord{targetTable,
+                                                                         targetRecordId,
+                                                                         table->Name(),
+                                                                         candidateId,
+                                                                         column.name,
+                                                                         version_,
+                                                                         0,
+                                                                         std::nullopt});
                         }
                     }
                 }
@@ -5931,8 +6282,7 @@ namespace StableCore::Storage
             return SC_OK;
         }
 
-        ErrorCode SqliteDatabase::CheckReferenceIndex(
-            ReferenceIndexCheckResult* outResult) const
+        ErrorCode SqliteDatabase::CheckReferenceIndex(ReferenceIndexCheckResult* outResult) const
         {
             if (outResult == nullptr)
             {
@@ -5952,14 +6302,12 @@ namespace StableCore::Storage
                 outResult->state = ReferenceIndexHealthState::Healthy;
                 outResult->message = L"reference-index-current";
             }
-            outResult->indexVersion =
-                static_cast<std::int32_t>(referenceIndexVersion_);
+            outResult->indexVersion = static_cast<std::int32_t>(referenceIndexVersion_);
             outResult->expectedVersion = static_cast<std::int32_t>(version_);
             return SC_OK;
         }
 
-        ErrorCode SqliteDatabase::GetAllReferencesDiagnosticOnly(
-            ReferenceIndex* outIndex) const
+        ErrorCode SqliteDatabase::GetAllReferencesDiagnosticOnly(ReferenceIndex* outIndex) const
         {
             if (outIndex == nullptr)
             {
@@ -5989,14 +6337,12 @@ namespace StableCore::Storage
 
                 for (const auto& [recordId, recordData] : table->Records())
                 {
-                    if (recordData == nullptr ||
-                        recordData->state == RecordState::Deleted)
+                    if (recordData == nullptr || recordData->state == RecordState::Deleted)
                     {
                         continue;
                     }
 
-                    for (std::int32_t columnIndex = 0;
-                         columnIndex < columnCount; ++columnIndex)
+                    for (std::int32_t columnIndex = 0; columnIndex < columnCount; ++columnIndex)
                     {
                         SCColumnDef column;
                         if (Failed(schema->GetColumn(columnIndex, &column)))
@@ -6008,8 +6354,7 @@ namespace StableCore::Storage
                             continue;
                         }
 
-                        const auto valueIt =
-                            recordData->values.find(column.name);
+                        const auto valueIt = recordData->values.find(column.name);
                         if (valueIt == recordData->values.end())
                         {
                             continue;
@@ -6021,10 +6366,14 @@ namespace StableCore::Storage
                             continue;
                         }
 
-                        outIndex->records.push_back(ReferenceRecord{
-                            table->Name(), recordId, column.name,
-                            column.referenceTable, targetId, version_, 0,
-                            std::nullopt});
+                        outIndex->records.push_back(ReferenceRecord{table->Name(),
+                                                                    recordId,
+                                                                    column.name,
+                                                                    column.referenceTable,
+                                                                    targetId,
+                                                                    version_,
+                                                                    0,
+                                                                    std::nullopt});
                     }
                 }
             }
@@ -6052,9 +6401,8 @@ namespace StableCore::Storage
             return SC_OK;
         }
 
-        ErrorCode SqliteDatabase::CommitReferenceDelta(
-            const ReferenceIndex& forwardDelta,
-            const ReverseReferenceIndex& reverseDelta)
+        ErrorCode SqliteDatabase::CommitReferenceDelta(const ReferenceIndex& forwardDelta,
+                                                       const ReverseReferenceIndex& reverseDelta)
         {
             if (forwardDelta.records.size() != reverseDelta.records.size())
             {
@@ -6069,8 +6417,9 @@ namespace StableCore::Storage
             referenceIndexDirty_ = true;
         }
 
-        ErrorCode SqliteDatabase::SyncLegacyIndexMetadata(
-            SqliteSchema* schema, const std::wstring& columnName, bool indexed)
+        ErrorCode SqliteDatabase::SyncLegacyIndexMetadata(SqliteSchema* schema,
+                                                          const std::wstring& columnName,
+                                                          bool indexed)
         {
             if (schema == nullptr)
             {
@@ -6117,8 +6466,7 @@ namespace StableCore::Storage
                 "VALUES(?, ?, ?);");
             insertIndexStmt.BindInt64(1, schema->TableRowId());
             insertIndexStmt.BindText(2, indexName);
-            insertIndexStmt.BindInt(
-                3, ToSqliteSchemaSourceKind(SCSchemaSourceKind::LegacyHint));
+            insertIndexStmt.BindInt(3, ToSqliteSchemaSourceKind(SCSchemaSourceKind::LegacyHint));
             const ErrorCode insertRc = insertIndexStmt.Step();
             if (Failed(insertRc))
             {
@@ -6141,8 +6489,7 @@ namespace StableCore::Storage
             return SC_OK;
         }
 
-        ErrorCode SqliteDatabase::RemoveLegacyPrimaryKeyMetadata(
-            SqliteSchema* schema, const std::wstring& columnName)
+        ErrorCode SqliteDatabase::RemoveLegacyPrimaryKeyMetadata(SqliteSchema* schema, const std::wstring& columnName)
         {
             if (schema == nullptr)
             {
@@ -6162,8 +6509,7 @@ namespace StableCore::Storage
                     "IN (SELECT constraint_id FROM schema_constraints WHERE "
                     "table_id = ? AND kind = ? AND name = ?);");
                 deleteColumnsStmt.BindInt64(1, schema->TableRowId());
-                deleteColumnsStmt.BindInt(
-                    2, ToSqliteConstraintKind(SCConstraintKind::PrimaryKey));
+                deleteColumnsStmt.BindInt(2, ToSqliteConstraintKind(SCConstraintKind::PrimaryKey));
                 deleteColumnsStmt.BindText(3, pkName);
                 const ErrorCode rc = deleteColumnsStmt.Step();
                 if (Failed(rc))
@@ -6176,8 +6522,7 @@ namespace StableCore::Storage
                 "DELETE FROM schema_constraints WHERE table_id = ? AND kind = ? "
                 "AND name = ?;");
             deleteConstraintStmt.BindInt64(1, schema->TableRowId());
-            deleteConstraintStmt.BindInt(
-                2, ToSqliteConstraintKind(SCConstraintKind::PrimaryKey));
+            deleteConstraintStmt.BindInt(2, ToSqliteConstraintKind(SCConstraintKind::PrimaryKey));
             deleteConstraintStmt.BindText(3, pkName);
             const ErrorCode deleteRc = deleteConstraintStmt.Step();
             if (Failed(deleteRc))
@@ -6199,16 +6544,13 @@ namespace StableCore::Storage
             }
         }
 
-        bool SqliteDatabase::IsRecordReferenced(const std::wstring& tableName,
-                                                RecordId recordId) const
+        bool SqliteDatabase::IsRecordReferenced(const std::wstring& tableName, RecordId recordId) const
         {
             ReferenceIndexCheckResult check;
-            if (Succeeded(CheckReferenceIndex(&check)) &&
-                check.state == ReferenceIndexHealthState::Healthy)
+            if (Succeeded(CheckReferenceIndex(&check)) && check.state == ReferenceIndexHealthState::Healthy)
             {
                 std::vector<ReverseReferenceRecord> refs;
-                if (Succeeded(
-                        GetReferencesByTarget(tableName, recordId, &refs)))
+                if (Succeeded(GetReferencesByTarget(tableName, recordId, &refs)))
                 {
                     return !refs.empty();
                 }
@@ -6234,40 +6576,33 @@ namespace StableCore::Storage
                     continue;
                 }
 
-                for (std::int32_t columnIndex = 0; columnIndex < columnCount;
-                     ++columnIndex)
+                for (std::int32_t columnIndex = 0; columnIndex < columnCount; ++columnIndex)
                 {
                     SCColumnDef column;
                     if (Failed(schema->GetColumn(columnIndex, &column)))
                     {
                         continue;
                     }
-                    if (column.columnKind != ColumnKind::Relation ||
-                        column.referenceTable != tableName)
+                    if (column.columnKind != ColumnKind::Relation || column.referenceTable != tableName)
                     {
                         continue;
                     }
 
-                    for (const auto& [candidateId, candidateData] :
-                         table->Records())
+                    for (const auto& [candidateId, candidateData] : table->Records())
                     {
-                        if (candidateData == nullptr ||
-                            candidateData->state == RecordState::Deleted)
+                        if (candidateData == nullptr || candidateData->state == RecordState::Deleted)
                         {
                             continue;
                         }
 
-                        const auto valueIt =
-                            candidateData->values.find(column.name);
+                        const auto valueIt = candidateData->values.find(column.name);
                         if (valueIt == candidateData->values.end())
                         {
                             continue;
                         }
 
                         RecordId referencedId = 0;
-                        if (Succeeded(
-                                valueIt->second.AsRecordId(&referencedId)) &&
-                            referencedId == recordId)
+                        if (Succeeded(valueIt->second.AsRecordId(&referencedId)) && referencedId == recordId)
                         {
                             return true;
                         }
@@ -6278,17 +6613,16 @@ namespace StableCore::Storage
             return false;
         }
 
-        void SqliteDatabase::RecordCreate(
-            SqliteTable* table, const std::shared_ptr<SqliteRecordData>& data)
+        void SqliteDatabase::RecordCreate(SqliteTable* table, const std::shared_ptr<SqliteRecordData>& data)
         {
-            RecordJournal(table->Name(), data->id, L"", SCValue::Null(),
-                          SCValue::Null(), true, false,
-                          JournalOp::CreateRecord);
+            RecordJournal(
+                table->Name(), data->id, L"", SCValue::Null(), SCValue::Null(), true, false, JournalOp::CreateRecord);
             MarkReferenceIndexDirty();
         }
 
-        ErrorCode SqliteDatabase::PersistSchemaAddColumn(
-            SqliteSchema* schema, const SCColumnDef& def, std::int64_t rowId)
+        ErrorCode SqliteDatabase::PersistSchemaAddColumn(SqliteSchema* schema,
+                                                         const SCColumnDef& def,
+                                                         std::int64_t rowId)
         {
             if (schema == nullptr)
             {
@@ -6314,8 +6648,7 @@ namespace StableCore::Storage
             }
             stmt.BindInt64(2, schema->TableRowId());
             stmt.BindText(3, def.name);
-            BindColumnDefForStorage(stmt, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13,
-                                    14, 15, 16, 17, 18, 19, def);
+            BindColumnDefForStorage(stmt, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, def);
             const ErrorCode rc = stmt.Step();
             if (Failed(rc))
             {
@@ -6325,14 +6658,12 @@ namespace StableCore::Storage
             if (def.indexed)
             {
                 const std::wstring indexName =
-                    L"idx_fv_" + std::to_wstring(schema->TableRowId()) + L"_" +
-                    SanitizeIdentifier(def.name);
-                SqliteStmt createIndexStmt = db_.Prepare(
-                    (std::string("CREATE INDEX IF NOT EXISTS ") +
-                     ToUtf8(indexName) +
-                     " ON field_values(table_id, column_name, "
-                     "int64_value, double_value, bool_value, text_value);")
-                        .c_str());
+                    L"idx_fv_" + std::to_wstring(schema->TableRowId()) + L"_" + SanitizeIdentifier(def.name);
+                SqliteStmt createIndexStmt =
+                    db_.Prepare((std::string("CREATE INDEX IF NOT EXISTS ") + ToUtf8(indexName) +
+                                 " ON field_values(table_id, column_name, "
+                                 "int64_value, double_value, bool_value, text_value);")
+                                    .c_str());
                 const ErrorCode createIndexRc = createIndexStmt.Step();
                 if (Failed(createIndexRc))
                 {
@@ -6340,10 +6671,8 @@ namespace StableCore::Storage
                 }
             }
 
-            const std::int64_t insertedRowId =
-                rowId > 0 ? rowId : db_.LastInsertRowId();
-            const ErrorCode metadataRc =
-                SyncLegacyIndexMetadata(schema, def.name, def.indexed);
+            const std::int64_t insertedRowId = rowId > 0 ? rowId : db_.LastInsertRowId();
+            const ErrorCode metadataRc = SyncLegacyIndexMetadata(schema, def.name, def.indexed);
             if (Failed(metadataRc))
             {
                 return metadataRc;
@@ -6353,8 +6682,7 @@ namespace StableCore::Storage
             return SC_OK;
         }
 
-        ErrorCode SqliteDatabase::PersistSchemaUpdateColumn(
-            SqliteSchema* schema, const SCColumnDef& def)
+        ErrorCode SqliteDatabase::PersistSchemaUpdateColumn(SqliteSchema* schema, const SCColumnDef& def)
         {
             if (schema == nullptr)
             {
@@ -6386,8 +6714,7 @@ namespace StableCore::Storage
             stmt.BindInt(8, def.participatesInCalc ? 1 : 0);
             stmt.BindText(9, def.unit);
             stmt.BindText(10, def.referenceTable);
-            BindValueForStorage(stmt, 11, 12, 13, 14, 15, 16,
-                                def.defaultValue);
+            BindValueForStorage(stmt, 11, 12, 13, 14, 15, 16, def.defaultValue);
             stmt.BindInt64(17, schema->TableRowId());
             stmt.BindText(18, def.name);
             const ErrorCode rc = stmt.Step();
@@ -6397,30 +6724,25 @@ namespace StableCore::Storage
             }
 
             const std::wstring indexName =
-                L"idx_fv_" + std::to_wstring(schema->TableRowId()) + L"_" +
-                SanitizeIdentifier(def.name);
+                L"idx_fv_" + std::to_wstring(schema->TableRowId()) + L"_" + SanitizeIdentifier(def.name);
             if (previousDef->indexed != def.indexed)
             {
                 if (def.indexed)
                 {
-                    SqliteStmt createIndexStmt = db_.Prepare(
-                        (std::string("CREATE INDEX IF NOT EXISTS ") +
-                         ToUtf8(indexName) +
-                         " ON field_values(table_id, column_name, "
-                         "int64_value, double_value, bool_value, text_value);")
-                            .c_str());
+                    SqliteStmt createIndexStmt =
+                        db_.Prepare((std::string("CREATE INDEX IF NOT EXISTS ") + ToUtf8(indexName) +
+                                     " ON field_values(table_id, column_name, "
+                                     "int64_value, double_value, bool_value, text_value);")
+                                        .c_str());
                     const ErrorCode createIndexRc = createIndexStmt.Step();
                     if (Failed(createIndexRc))
                     {
                         return createIndexRc;
                     }
-                }
-                else
+                } else
                 {
-                    SqliteStmt dropIndexStmt = db_.Prepare(
-                        (std::string("DROP INDEX IF EXISTS ") +
-                         ToUtf8(indexName) + ";")
-                            .c_str());
+                    SqliteStmt dropIndexStmt =
+                        db_.Prepare((std::string("DROP INDEX IF EXISTS ") + ToUtf8(indexName) + ";").c_str());
                     const ErrorCode dropIndexRc = dropIndexStmt.Step();
                     if (Failed(dropIndexRc))
                     {
@@ -6429,8 +6751,7 @@ namespace StableCore::Storage
                 }
             }
 
-            const ErrorCode metadataRc =
-                SyncLegacyIndexMetadata(schema, def.name, def.indexed);
+            const ErrorCode metadataRc = SyncLegacyIndexMetadata(schema, def.name, def.indexed);
             if (Failed(metadataRc))
             {
                 return metadataRc;
@@ -6440,8 +6761,7 @@ namespace StableCore::Storage
             return SC_OK;
         }
 
-        ErrorCode SqliteDatabase::PersistSchemaRemoveColumn(
-            SqliteSchema* schema, const wchar_t* columnName)
+        ErrorCode SqliteDatabase::PersistSchemaRemoveColumn(SqliteSchema* schema, const wchar_t* columnName)
         {
             if (schema == nullptr || columnName == nullptr)
             {
@@ -6455,13 +6775,11 @@ namespace StableCore::Storage
             }
 
             auto tableIt = std::find_if(
-                tables_.begin(), tables_.end(),
-                [tableRowId = schema->TableRowId()](
-                    const std::pair<const std::wstring, SCTablePtr>& entry) {
-                    const auto* table =
-                        static_cast<SqliteTable*>(entry.second.Get());
-                    return table != nullptr &&
-                           table->TableRowId() == tableRowId;
+                tables_.begin(),
+                tables_.end(),
+                [tableRowId = schema->TableRowId()](const std::pair<const std::wstring, SCTablePtr>& entry) {
+                    const auto* table = static_cast<SqliteTable*>(entry.second.Get());
+                    return table != nullptr && table->TableRowId() == tableRowId;
                 });
             if (tableIt == tables_.end())
             {
@@ -6470,10 +6788,8 @@ namespace StableCore::Storage
             auto* sqliteTable = static_cast<SqliteTable*>(tableIt->second.Get());
 
             const std::wstring indexName =
-                L"idx_fv_" + std::to_wstring(schema->TableRowId()) + L"_" +
-                SanitizeIdentifier(columnName);
-            const std::string dropIndexSql =
-                "DROP INDEX IF EXISTS " + ToUtf8(indexName) + ";";
+                L"idx_fv_" + std::to_wstring(schema->TableRowId()) + L"_" + SanitizeIdentifier(columnName);
+            const std::string dropIndexSql = "DROP INDEX IF EXISTS " + ToUtf8(indexName) + ";";
             SqliteStmt dropIndexStmt = db_.Prepare(dropIndexSql.c_str());
             const ErrorCode dropIndexRc = dropIndexStmt.Step();
             if (Failed(dropIndexRc))
@@ -6503,14 +6819,12 @@ namespace StableCore::Storage
                 return rc;
             }
 
-            const ErrorCode metadataRc =
-                SyncLegacyIndexMetadata(schema, columnName, false);
+            const ErrorCode metadataRc = SyncLegacyIndexMetadata(schema, columnName, false);
             if (Failed(metadataRc))
             {
                 return metadataRc;
             }
-            const ErrorCode pkMetadataRc =
-                RemoveLegacyPrimaryKeyMetadata(schema, columnName);
+            const ErrorCode pkMetadataRc = RemoveLegacyPrimaryKeyMetadata(schema, columnName);
             if (Failed(pkMetadataRc))
             {
                 return pkMetadataRc;
@@ -6530,8 +6844,190 @@ namespace StableCore::Storage
             return SC_OK;
         }
 
-        ErrorCode SqliteDatabase::PersistAddedColumn(SqliteSchema* schema,
-                                                     const SCColumnDef& def)
+        ErrorCode SqliteDatabase::PersistSchemaAddConstraint(SqliteSchema* schema,
+                                                             const SCConstraintDef& def,
+                                                             std::int64_t rowId)
+        {
+            if (schema == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+
+            SqliteStmt stmt = db_.Prepare(
+                "INSERT INTO schema_constraints("
+                " constraint_id, table_id, kind, name, source_kind, "
+                "referenced_table, check_expression)"
+                " VALUES(?, ?, ?, ?, ?, ?, ?);");
+            if (rowId > 0)
+            {
+                stmt.BindInt64(1, rowId);
+            } else
+            {
+                stmt.BindNull(1);
+            }
+            stmt.BindInt64(2, schema->TableRowId());
+            stmt.BindInt(3, ToSqliteConstraintKind(def.kind));
+            stmt.BindText(4, def.name);
+            stmt.BindInt(5, ToSqliteSchemaSourceKind(def.sourceKind));
+            stmt.BindText(6, def.referencedTable);
+            stmt.BindText(7, def.checkExpression);
+            const ErrorCode rc = stmt.Step();
+            if (Failed(rc))
+            {
+                return rc;
+            }
+
+            const std::int64_t constraintId = rowId > 0 ? rowId : db_.LastInsertRowId();
+            for (std::size_t index = 0; index < def.columns.size(); ++index)
+            {
+                SqliteStmt columnStmt = db_.Prepare(
+                    "INSERT INTO schema_constraint_columns("
+                    " constraint_id, column_ordinal, column_name, "
+                    "referenced_column_name) VALUES(?, ?, ?, ?);");
+                columnStmt.BindInt64(1, constraintId);
+                columnStmt.BindInt64(2, static_cast<std::int64_t>(index));
+                columnStmt.BindText(3, def.columns[index]);
+                columnStmt.BindText(
+                    4, index < def.referencedColumns.size() ? def.referencedColumns[index] : std::wstring{});
+                const ErrorCode columnRc = columnStmt.Step();
+                if (Failed(columnRc))
+                {
+                    return columnRc;
+                }
+            }
+
+            schema->LoadConstraint(def, constraintId);
+            return SC_OK;
+        }
+
+        ErrorCode SqliteDatabase::PersistSchemaRemoveConstraint(SqliteSchema* schema, const wchar_t* name)
+        {
+            if (schema == nullptr || name == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+
+            if (schema->FindConstraintDef(name) == nullptr)
+            {
+                return SC_E_CONSTRAINT_NOT_FOUND;
+            }
+
+            {
+                SqliteStmt deleteColumnsStmt = db_.Prepare(
+                    "DELETE FROM schema_constraint_columns WHERE constraint_id "
+                    "IN (SELECT constraint_id FROM schema_constraints WHERE "
+                    "table_id = ? AND name = ?);");
+                deleteColumnsStmt.BindInt64(1, schema->TableRowId());
+                deleteColumnsStmt.BindText(2, name);
+                const ErrorCode rc = deleteColumnsStmt.Step();
+                if (Failed(rc))
+                {
+                    return rc;
+                }
+            }
+
+            SqliteStmt deleteConstraintStmt =
+                db_.Prepare("DELETE FROM schema_constraints WHERE table_id = ? AND name = ?;");
+            deleteConstraintStmt.BindInt64(1, schema->TableRowId());
+            deleteConstraintStmt.BindText(2, name);
+            const ErrorCode deleteRc = deleteConstraintStmt.Step();
+            if (Failed(deleteRc))
+            {
+                return deleteRc;
+            }
+
+            schema->UnloadConstraint(name);
+            return SC_OK;
+        }
+
+        ErrorCode SqliteDatabase::PersistSchemaAddIndex(SqliteSchema* schema, const SCIndexDef& def, std::int64_t rowId)
+        {
+            if (schema == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+
+            SqliteStmt stmt = db_.Prepare(
+                "INSERT INTO schema_indexes(index_id, table_id, name, "
+                "source_kind) VALUES(?, ?, ?, ?);");
+            if (rowId > 0)
+            {
+                stmt.BindInt64(1, rowId);
+            } else
+            {
+                stmt.BindNull(1);
+            }
+            stmt.BindInt64(2, schema->TableRowId());
+            stmt.BindText(3, def.name);
+            stmt.BindInt(4, ToSqliteSchemaSourceKind(def.sourceKind));
+            const ErrorCode rc = stmt.Step();
+            if (Failed(rc))
+            {
+                return rc;
+            }
+
+            const std::int64_t indexId = rowId > 0 ? rowId : db_.LastInsertRowId();
+            for (std::size_t columnIndex = 0; columnIndex < def.columns.size(); ++columnIndex)
+            {
+                SqliteStmt columnStmt = db_.Prepare(
+                    "INSERT INTO schema_index_columns(index_id, "
+                    "column_ordinal, column_name, descending_flag) "
+                    "VALUES(?, ?, ?, ?);");
+                columnStmt.BindInt64(1, indexId);
+                columnStmt.BindInt64(2, static_cast<std::int64_t>(columnIndex));
+                columnStmt.BindText(3, def.columns[columnIndex].columnName);
+                columnStmt.BindInt(4, def.columns[columnIndex].descending ? 1 : 0);
+                const ErrorCode columnRc = columnStmt.Step();
+                if (Failed(columnRc))
+                {
+                    return columnRc;
+                }
+            }
+
+            schema->LoadIndex(def, indexId);
+            return SC_OK;
+        }
+
+        ErrorCode SqliteDatabase::PersistSchemaRemoveIndex(SqliteSchema* schema, const wchar_t* name)
+        {
+            if (schema == nullptr || name == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+
+            if (schema->FindIndexDef(name) == nullptr)
+            {
+                return SC_E_INDEX_NOT_FOUND;
+            }
+
+            {
+                SqliteStmt deleteColumnsStmt = db_.Prepare(
+                    "DELETE FROM schema_index_columns WHERE index_id IN "
+                    "(SELECT index_id FROM schema_indexes WHERE table_id = ? "
+                    "AND name = ?);");
+                deleteColumnsStmt.BindInt64(1, schema->TableRowId());
+                deleteColumnsStmt.BindText(2, name);
+                const ErrorCode rc = deleteColumnsStmt.Step();
+                if (Failed(rc))
+                {
+                    return rc;
+                }
+            }
+
+            SqliteStmt deleteIndexStmt = db_.Prepare("DELETE FROM schema_indexes WHERE table_id = ? AND name = ?;");
+            deleteIndexStmt.BindInt64(1, schema->TableRowId());
+            deleteIndexStmt.BindText(2, name);
+            const ErrorCode deleteRc = deleteIndexStmt.Step();
+            if (Failed(deleteRc))
+            {
+                return deleteRc;
+            }
+
+            schema->UnloadIndex(name);
+            return SC_OK;
+        }
+
+        ErrorCode SqliteDatabase::PersistAddedColumn(SqliteSchema* schema, const SCColumnDef& def)
         {
             const ErrorCode writableRc = EnsureWritable();
             if (Failed(writableRc))
@@ -6544,13 +7040,11 @@ namespace StableCore::Storage
             }
 
             auto tableIt = std::find_if(
-                tables_.begin(), tables_.end(),
-                [tableRowId = schema->TableRowId()](
-                    const std::pair<const std::wstring, SCTablePtr>& entry) {
-                    const auto* table =
-                        static_cast<SqliteTable*>(entry.second.Get());
-                    return table != nullptr &&
-                           table->TableRowId() == tableRowId;
+                tables_.begin(),
+                tables_.end(),
+                [tableRowId = schema->TableRowId()](const std::pair<const std::wstring, SCTablePtr>& entry) {
+                    const auto* table = static_cast<SqliteTable*>(entry.second.Get());
+                    return table != nullptr && table->TableRowId() == tableRowId;
                 });
             if (tableIt == tables_.end())
             {
@@ -6579,13 +7073,11 @@ namespace StableCore::Storage
             }
 
             const std::int64_t rowId = schema->FindColumnRowId(def.name.c_str());
-            RecordSchemaJournal(tableName, SCColumnDef{}, def,
-                                JournalOp::AddColumn, rowId);
+            RecordSchemaJournal(tableName, SCColumnDef{}, def, JournalOp::AddColumn, rowId);
             return SC_OK;
         }
 
-        ErrorCode SqliteDatabase::PersistUpdatedColumn(SqliteSchema* schema,
-                                                       const SCColumnDef& def)
+        ErrorCode SqliteDatabase::PersistUpdatedColumn(SqliteSchema* schema, const SCColumnDef& def)
         {
             const ErrorCode writableRc = EnsureWritable();
             if (Failed(writableRc))
@@ -6598,13 +7090,11 @@ namespace StableCore::Storage
             }
 
             auto tableIt = std::find_if(
-                tables_.begin(), tables_.end(),
-                [tableRowId = schema->TableRowId()](
-                    const std::pair<const std::wstring, SCTablePtr>& entry) {
-                    const auto* table =
-                        static_cast<SqliteTable*>(entry.second.Get());
-                    return table != nullptr &&
-                           table->TableRowId() == tableRowId;
+                tables_.begin(),
+                tables_.end(),
+                [tableRowId = schema->TableRowId()](const std::pair<const std::wstring, SCTablePtr>& entry) {
+                    const auto* table = static_cast<SqliteTable*>(entry.second.Get());
+                    return table != nullptr && table->TableRowId() == tableRowId;
                 });
             if (tableIt == tables_.end())
             {
@@ -6644,16 +7134,13 @@ namespace StableCore::Storage
                     }
 
                     SCValue converted;
-                    const ErrorCode convertRc =
-                        ConvertColumnValue(valueIt->second, def.valueKind,
-                                           &converted);
+                    const ErrorCode convertRc = ConvertColumnValue(valueIt->second, def.valueKind, &converted);
                     if (Failed(convertRc))
                     {
                         return convertRc;
                     }
 
-                    updates.push_back(ColumnValueUpdate{
-                        data, std::move(converted), valueIt->second});
+                    updates.push_back(ColumnValueUpdate{data, std::move(converted), valueIt->second});
                 }
             }
 
@@ -6713,9 +7200,7 @@ namespace StableCore::Storage
                             insertValueStmt.BindInt64(1, schema->TableRowId());
                             insertValueStmt.BindInt64(2, update.data->id);
                             insertValueStmt.BindText(3, def.name);
-                            BindValueForStorage(insertValueStmt, 4, 5, 6, 7, 8,
-                                                9,
-                                                update.newValue);
+                            BindValueForStorage(insertValueStmt, 4, 5, 6, 7, 8, 9, update.newValue);
                             const ErrorCode insertRc = insertValueStmt.Step();
                             insertValueStmt.Reset();
                             if (Failed(insertRc))
@@ -6731,11 +7216,14 @@ namespace StableCore::Storage
                         if (HasActiveEdit())
                         {
                             RecordJournal(
-                                sqliteTable->Name(), update.data->id, def.name,
-                                update.oldValue, update.newValue, false, false,
-                                def.columnKind == ColumnKind::Relation
-                                    ? JournalOp::SetRelation
-                                    : JournalOp::SetValue);
+                                sqliteTable->Name(),
+                                update.data->id,
+                                def.name,
+                                update.oldValue,
+                                update.newValue,
+                                false,
+                                false,
+                                def.columnKind == ColumnKind::Relation ? JournalOp::SetRelation : JournalOp::SetValue);
                         }
                     }
                 }
@@ -6753,15 +7241,13 @@ namespace StableCore::Storage
             }
 
             const std::int64_t rowId = schema->FindColumnRowId(def.name.c_str());
-            RecordSchemaJournal(tableIt->first, previousColumn, def,
-                                JournalOp::UpdateColumn, rowId);
+            RecordSchemaJournal(tableIt->first, previousColumn, def, JournalOp::UpdateColumn, rowId);
 
             MarkReferenceIndexDirty();
             return SC_OK;
         }
 
-        ErrorCode SqliteDatabase::ClearColumnValues(ISCTable* table,
-                                                    const wchar_t* name)
+        ErrorCode SqliteDatabase::ClearColumnValues(ISCTable* table, const wchar_t* name)
         {
             if (name == nullptr)
             {
@@ -6807,18 +7293,21 @@ namespace StableCore::Storage
 
                 const SCValue oldValue = valueIt->second;
                 data->values.erase(valueIt);
-                RecordJournal(sqliteTable->Name(), recordId, name, oldValue,
-                              SCValue::Null(), false, false,
-                              relationColumn ? JournalOp::SetRelation
-                                             : JournalOp::SetValue);
+                RecordJournal(sqliteTable->Name(),
+                              recordId,
+                              name,
+                              oldValue,
+                              SCValue::Null(),
+                              false,
+                              false,
+                              relationColumn ? JournalOp::SetRelation : JournalOp::SetValue);
             }
 
             MarkReferenceIndexDirty();
             return SC_OK;
         }
 
-        ErrorCode SqliteDatabase::PersistRemovedColumn(
-            SqliteSchema* schema, const wchar_t* columnName)
+        ErrorCode SqliteDatabase::PersistRemovedColumn(SqliteSchema* schema, const wchar_t* columnName)
         {
             const ErrorCode writableRc = EnsureWritable();
             if (Failed(writableRc))
@@ -6838,21 +7327,18 @@ namespace StableCore::Storage
             const SCColumnDef previousColumn = *previousDef;
             const std::int64_t rowId = schema->FindColumnRowId(columnName);
             auto tableIt = std::find_if(
-                tables_.begin(), tables_.end(),
-                [tableRowId = schema->TableRowId()](
-                    const std::pair<const std::wstring, SCTablePtr>& entry) {
-                    const auto* table =
-                        static_cast<SqliteTable*>(entry.second.Get());
-                    return table != nullptr &&
-                           table->TableRowId() == tableRowId;
+                tables_.begin(),
+                tables_.end(),
+                [tableRowId = schema->TableRowId()](const std::pair<const std::wstring, SCTablePtr>& entry) {
+                    const auto* table = static_cast<SqliteTable*>(entry.second.Get());
+                    return table != nullptr && table->TableRowId() == tableRowId;
                 });
             if (tableIt == tables_.end())
             {
                 return SC_E_FAIL;
             }
             const std::wstring tableName = tableIt->first;
-            auto* sqliteTable =
-                static_cast<SqliteTable*>(tableIt->second.Get());
+            auto* sqliteTable = static_cast<SqliteTable*>(tableIt->second.Get());
             if (sqliteTable == nullptr)
             {
                 return SC_E_FAIL;
@@ -6885,8 +7371,7 @@ namespace StableCore::Storage
             const auto restorePreImage = [&]() {
                 try
                 {
-                    const auto schemaColumn =
-                        schema->FindColumnDef(columnName);
+                    const auto schemaColumn = schema->FindColumnDef(columnName);
                     if (schemaColumn != nullptr)
                     {
                         schema->ReplaceColumn(previousColumn);
@@ -6897,10 +7382,8 @@ namespace StableCore::Storage
 
                     for (const auto& snapshot : valueSnapshots)
                     {
-                        const auto recordIt =
-                            sqliteTable->Records().find(snapshot.recordId);
-                        if (recordIt == sqliteTable->Records().end() ||
-                            recordIt->second == nullptr)
+                        const auto recordIt = sqliteTable->Records().find(snapshot.recordId);
+                        if (recordIt == sqliteTable->Records().end() || recordIt->second == nullptr)
                         {
                             continue;
                         }
@@ -6921,8 +7404,7 @@ namespace StableCore::Storage
             try
             {
                 SqliteTxn txn(db_);
-                const ErrorCode rc =
-                    PersistSchemaRemoveColumn(schema, columnName);
+                const ErrorCode rc = PersistSchemaRemoveColumn(schema, columnName);
                 if (Failed(rc))
                 {
                     restorePreImage();
@@ -6940,13 +7422,242 @@ namespace StableCore::Storage
                 return SC_E_FAIL;
             }
 
-            RecordSchemaJournal(tableName, previousColumn, SCColumnDef{},
-                                JournalOp::RemoveColumn, rowId);
+            RecordSchemaJournal(tableName, previousColumn, SCColumnDef{}, JournalOp::RemoveColumn, rowId);
             return SC_OK;
         }
 
-        void SqliteDatabase::ReloadColumnValuesFromStorage(
-            SqliteTable* table, const wchar_t* columnName)
+        ErrorCode SqliteDatabase::PersistAddedConstraint(SqliteSchema* schema, const SCConstraintDef& def)
+        {
+            const ErrorCode writableRc = EnsureWritable();
+            if (Failed(writableRc))
+            {
+                return writableRc;
+            }
+            if (schema == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+
+            auto tableIt = std::find_if(
+                tables_.begin(),
+                tables_.end(),
+                [tableRowId = schema->TableRowId()](const std::pair<const std::wstring, SCTablePtr>& entry) {
+                    const auto* table = static_cast<SqliteTable*>(entry.second.Get());
+                    return table != nullptr && table->TableRowId() == tableRowId;
+                });
+            if (tableIt == tables_.end())
+            {
+                return SC_E_FAIL;
+            }
+
+            try
+            {
+                SqliteTxn txn(db_);
+                const ErrorCode rc = PersistSchemaAddConstraint(schema, def);
+                if (Failed(rc))
+                {
+                    return rc;
+                }
+                const ErrorCode commitRc = txn.Commit();
+                if (Failed(commitRc))
+                {
+                    schema->UnloadConstraint(def.name.c_str());
+                    return commitRc;
+                }
+            } catch (...)
+            {
+                schema->UnloadConstraint(def.name.c_str());
+                return SC_E_FAIL;
+            }
+
+            const std::int64_t rowId = schema->FindConstraintRowId(def.name.c_str());
+            RecordConstraintJournal(tableIt->first, SCConstraintDef{}, def, JournalOp::AddConstraint, rowId);
+            return SC_OK;
+        }
+
+        ErrorCode SqliteDatabase::PersistRemovedConstraint(SqliteSchema* schema, const wchar_t* name)
+        {
+            const ErrorCode writableRc = EnsureWritable();
+            if (Failed(writableRc))
+            {
+                return writableRc;
+            }
+            if (schema == nullptr || name == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+
+            const SCConstraintDef* previousDef = schema->FindConstraintDef(name);
+            if (previousDef == nullptr)
+            {
+                return SC_E_CONSTRAINT_NOT_FOUND;
+            }
+            const SCConstraintDef previousConstraint = *previousDef;
+            const std::int64_t rowId = schema->FindConstraintRowId(name);
+
+            try
+            {
+                SqliteTxn txn(db_);
+                const ErrorCode rc = PersistSchemaRemoveConstraint(schema, name);
+                if (Failed(rc))
+                {
+                    if (schema->FindConstraintDef(name) == nullptr)
+                    {
+                        schema->LoadConstraint(previousConstraint, rowId);
+                    }
+                    return rc;
+                }
+                const ErrorCode commitRc = txn.Commit();
+                if (Failed(commitRc))
+                {
+                    if (schema->FindConstraintDef(name) == nullptr)
+                    {
+                        schema->LoadConstraint(previousConstraint, rowId);
+                    }
+                    return commitRc;
+                }
+            } catch (...)
+            {
+                if (schema->FindConstraintDef(name) == nullptr)
+                {
+                    schema->LoadConstraint(previousConstraint, rowId);
+                }
+                return SC_E_FAIL;
+            }
+
+            auto tableIt = std::find_if(
+                tables_.begin(),
+                tables_.end(),
+                [tableRowId = schema->TableRowId()](const std::pair<const std::wstring, SCTablePtr>& entry) {
+                    const auto* table = static_cast<SqliteTable*>(entry.second.Get());
+                    return table != nullptr && table->TableRowId() == tableRowId;
+                });
+            if (tableIt == tables_.end())
+            {
+                return SC_E_FAIL;
+            }
+
+            RecordConstraintJournal(
+                tableIt->first, previousConstraint, SCConstraintDef{}, JournalOp::RemoveConstraint, rowId);
+            return SC_OK;
+        }
+
+        ErrorCode SqliteDatabase::PersistAddedIndex(SqliteSchema* schema, const SCIndexDef& def)
+        {
+            const ErrorCode writableRc = EnsureWritable();
+            if (Failed(writableRc))
+            {
+                return writableRc;
+            }
+            if (schema == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+
+            auto tableIt = std::find_if(
+                tables_.begin(),
+                tables_.end(),
+                [tableRowId = schema->TableRowId()](const std::pair<const std::wstring, SCTablePtr>& entry) {
+                    const auto* table = static_cast<SqliteTable*>(entry.second.Get());
+                    return table != nullptr && table->TableRowId() == tableRowId;
+                });
+            if (tableIt == tables_.end())
+            {
+                return SC_E_FAIL;
+            }
+
+            try
+            {
+                SqliteTxn txn(db_);
+                const ErrorCode rc = PersistSchemaAddIndex(schema, def);
+                if (Failed(rc))
+                {
+                    return rc;
+                }
+                const ErrorCode commitRc = txn.Commit();
+                if (Failed(commitRc))
+                {
+                    schema->UnloadIndex(def.name.c_str());
+                    return commitRc;
+                }
+            } catch (...)
+            {
+                schema->UnloadIndex(def.name.c_str());
+                return SC_E_FAIL;
+            }
+
+            const std::int64_t rowId = schema->FindIndexRowId(def.name.c_str());
+            RecordIndexJournal(tableIt->first, SCIndexDef{}, def, JournalOp::AddIndex, rowId);
+            return SC_OK;
+        }
+
+        ErrorCode SqliteDatabase::PersistRemovedIndex(SqliteSchema* schema, const wchar_t* name)
+        {
+            const ErrorCode writableRc = EnsureWritable();
+            if (Failed(writableRc))
+            {
+                return writableRc;
+            }
+            if (schema == nullptr || name == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+
+            const SCIndexDef* previousDef = schema->FindIndexDef(name);
+            if (previousDef == nullptr)
+            {
+                return SC_E_INDEX_NOT_FOUND;
+            }
+            const SCIndexDef previousIndex = *previousDef;
+            const std::int64_t rowId = schema->FindIndexRowId(name);
+
+            try
+            {
+                SqliteTxn txn(db_);
+                const ErrorCode rc = PersistSchemaRemoveIndex(schema, name);
+                if (Failed(rc))
+                {
+                    if (schema->FindIndexDef(name) == nullptr)
+                    {
+                        schema->LoadIndex(previousIndex, rowId);
+                    }
+                    return rc;
+                }
+                const ErrorCode commitRc = txn.Commit();
+                if (Failed(commitRc))
+                {
+                    if (schema->FindIndexDef(name) == nullptr)
+                    {
+                        schema->LoadIndex(previousIndex, rowId);
+                    }
+                    return commitRc;
+                }
+            } catch (...)
+            {
+                if (schema->FindIndexDef(name) == nullptr)
+                {
+                    schema->LoadIndex(previousIndex, rowId);
+                }
+                return SC_E_FAIL;
+            }
+
+            auto tableIt = std::find_if(
+                tables_.begin(),
+                tables_.end(),
+                [tableRowId = schema->TableRowId()](const std::pair<const std::wstring, SCTablePtr>& entry) {
+                    const auto* table = static_cast<SqliteTable*>(entry.second.Get());
+                    return table != nullptr && table->TableRowId() == tableRowId;
+                });
+            if (tableIt == tables_.end())
+            {
+                return SC_E_FAIL;
+            }
+
+            RecordIndexJournal(tableIt->first, previousIndex, SCIndexDef{}, JournalOp::RemoveIndex, rowId);
+            return SC_OK;
+        }
+
+        void SqliteDatabase::ReloadColumnValuesFromStorage(SqliteTable* table, const wchar_t* columnName)
         {
             if (table == nullptr || columnName == nullptr)
             {
@@ -6956,16 +7667,15 @@ namespace StableCore::Storage
             try
             {
                 const bool supportsBinaryStorage = schemaVersion_ >= 4;
-                SqliteStmt valuesStmt = db_.Prepare(
-                    supportsBinaryStorage
-                        ? "SELECT record_id, value_kind, int64_value, "
-                          "double_value, bool_value, text_value, blob_value "
-                          "FROM field_values WHERE table_id = ? AND "
-                          "column_name = ?;"
-                        : "SELECT record_id, value_kind, int64_value, "
-                          "double_value, bool_value, text_value FROM "
-                          "field_values WHERE table_id = ? AND column_name = "
-                          "?;");
+                SqliteStmt valuesStmt =
+                    db_.Prepare(supportsBinaryStorage ? "SELECT record_id, value_kind, int64_value, "
+                                                        "double_value, bool_value, text_value, blob_value "
+                                                        "FROM field_values WHERE table_id = ? AND "
+                                                        "column_name = ?;"
+                                                      : "SELECT record_id, value_kind, int64_value, "
+                                                        "double_value, bool_value, text_value FROM "
+                                                        "field_values WHERE table_id = ? AND column_name = "
+                                                        "?;");
                 valuesStmt.BindInt64(1, table->TableRowId());
                 valuesStmt.BindText(2, columnName);
                 bool hasValue = false;
@@ -6973,16 +7683,14 @@ namespace StableCore::Storage
                 {
                     const RecordId recordId = valuesStmt.ColumnInt64(0);
                     const auto recordIt = table->Records().find(recordId);
-                    if (recordIt == table->Records().end() ||
-                        recordIt->second == nullptr)
+                    if (recordIt == table->Records().end() || recordIt->second == nullptr)
                     {
                         continue;
                     }
 
                     recordIt->second->values[std::wstring(columnName)] =
-                        supportsBinaryStorage
-                            ? ReadValueFromStorage(valuesStmt, 1, 2, 3, 4, 5, 6)
-                            : ReadValueFromStorage(valuesStmt, 1, 2, 3, 4, 5, 5);
+                        supportsBinaryStorage ? ReadValueFromStorage(valuesStmt, 1, 2, 3, 4, 5, 6)
+                                              : ReadValueFromStorage(valuesStmt, 1, 2, 3, 4, 5, 5);
                 }
             } catch (...)
             {
@@ -6994,13 +7702,14 @@ namespace StableCore::Storage
                                            const std::wstring& fieldName,
                                            const SCValue& oldValue,
                                            const SCValue& newValue,
-                                           bool oldDeleted, bool newDeleted,
+                                           bool oldDeleted,
+                                           bool newDeleted,
                                            JournalOp op)
         {
             for (auto& entry : activeJournal_.entries)
             {
-                if (entry.op == op && entry.tableName == tableName &&
-                    entry.recordId == recordId && entry.fieldName == fieldName)
+                if (entry.op == op && entry.tableName == tableName && entry.recordId == recordId &&
+                    entry.fieldName == fieldName)
                 {
                     entry.newValue = newValue;
                     entry.newDeleted = newDeleted;
@@ -7020,22 +7729,21 @@ namespace StableCore::Storage
             });
         }
 
-        void SqliteDatabase::RecordSchemaJournal(
-            const std::wstring& tableName, const SCColumnDef& oldColumn,
-            const SCColumnDef& newColumn, JournalOp op,
-            std::int64_t columnRowId)
+        void SqliteDatabase::RecordSchemaJournal(const std::wstring& tableName,
+                                                 const SCColumnDef& oldColumn,
+                                                 const SCColumnDef& newColumn,
+                                                 JournalOp op,
+                                                 std::int64_t columnRowId)
         {
             if (!HasActiveEdit())
             {
                 return;
             }
 
-            const std::wstring& columnName =
-                !newColumn.name.empty() ? newColumn.name : oldColumn.name;
+            const std::wstring& columnName = !newColumn.name.empty() ? newColumn.name : oldColumn.name;
             for (auto& entry : activeJournal_.entries)
             {
-                if (entry.op == op && entry.tableName == tableName &&
-                    entry.fieldName == columnName)
+                if (entry.op == op && entry.tableName == tableName && entry.fieldName == columnName)
                 {
                     entry.oldColumn = oldColumn;
                     entry.newColumn = newColumn;
@@ -7059,6 +7767,72 @@ namespace StableCore::Storage
             });
         }
 
+        void SqliteDatabase::RecordConstraintJournal(const std::wstring& tableName,
+                                                     const SCConstraintDef& oldConstraint,
+                                                     const SCConstraintDef& newConstraint,
+                                                     JournalOp op,
+                                                     std::int64_t constraintRowId)
+        {
+            if (!HasActiveEdit())
+            {
+                return;
+            }
+
+            const std::wstring& constraintName = !newConstraint.name.empty() ? newConstraint.name : oldConstraint.name;
+            for (auto& entry : activeJournal_.entries)
+            {
+                if (entry.op == op && entry.tableName == tableName && entry.fieldName == constraintName)
+                {
+                    entry.oldConstraint = oldConstraint;
+                    entry.newConstraint = newConstraint;
+                    entry.constraintRowId = constraintRowId;
+                    return;
+                }
+            }
+
+            JournalEntry entry;
+            entry.op = op;
+            entry.tableName = tableName;
+            entry.fieldName = constraintName;
+            entry.oldConstraint = oldConstraint;
+            entry.newConstraint = newConstraint;
+            entry.constraintRowId = constraintRowId;
+            activeJournal_.entries.push_back(std::move(entry));
+        }
+
+        void SqliteDatabase::RecordIndexJournal(const std::wstring& tableName,
+                                                const SCIndexDef& oldIndex,
+                                                const SCIndexDef& newIndex,
+                                                JournalOp op,
+                                                std::int64_t indexRowId)
+        {
+            if (!HasActiveEdit())
+            {
+                return;
+            }
+
+            const std::wstring& indexName = !newIndex.name.empty() ? newIndex.name : oldIndex.name;
+            for (auto& entry : activeJournal_.entries)
+            {
+                if (entry.op == op && entry.tableName == tableName && entry.fieldName == indexName)
+                {
+                    entry.oldIndex = oldIndex;
+                    entry.newIndex = newIndex;
+                    entry.indexRowId = indexRowId;
+                    return;
+                }
+            }
+
+            JournalEntry entry;
+            entry.op = op;
+            entry.tableName = tableName;
+            entry.fieldName = indexName;
+            entry.oldIndex = oldIndex;
+            entry.newIndex = newIndex;
+            entry.indexRowId = indexRowId;
+            activeJournal_.entries.push_back(std::move(entry));
+        }
+
         ErrorCode SqliteDatabase::ApplyJournalReverse(const JournalTransaction& tx)
         {
             for (auto it = tx.entries.rbegin(); it != tx.entries.rend(); ++it)
@@ -7072,8 +7846,7 @@ namespace StableCore::Storage
             return SC_OK;
         }
 
-        ErrorCode SqliteDatabase::ApplyJournalForward(
-            const JournalTransaction& tx)
+        ErrorCode SqliteDatabase::ApplyJournalForward(const JournalTransaction& tx)
         {
             for (const auto& entry : tx.entries)
             {
@@ -7086,8 +7859,7 @@ namespace StableCore::Storage
             return SC_OK;
         }
 
-        ErrorCode SqliteDatabase::ApplyEntry(const JournalEntry& entry,
-                                            bool reverse)
+        ErrorCode SqliteDatabase::ApplyEntry(const JournalEntry& entry, bool reverse)
         {
             const auto tableIt = tables_.find(entry.tableName);
             if (tableIt == tables_.end())
@@ -7101,6 +7873,10 @@ namespace StableCore::Storage
                 case JournalOp::AddColumn:
                 case JournalOp::UpdateColumn:
                 case JournalOp::RemoveColumn:
+                case JournalOp::AddConstraint:
+                case JournalOp::RemoveConstraint:
+                case JournalOp::AddIndex:
+                case JournalOp::RemoveIndex:
                     return ApplySchemaEntry(entry, reverse);
                 case JournalOp::CreateRecord:
                 case JournalOp::DeleteRecord:
@@ -7109,8 +7885,7 @@ namespace StableCore::Storage
                     auto data = table->FindRecordData(entry.recordId);
                     if (!data)
                     {
-                        data = std::make_shared<SqliteRecordData>(
-                            entry.recordId);
+                        data = std::make_shared<SqliteRecordData>(entry.recordId);
                         table->Records().emplace(entry.recordId, data);
                     }
 
@@ -7118,15 +7893,9 @@ namespace StableCore::Storage
                     {
                         case JournalOp::CreateRecord:
                         case JournalOp::DeleteRecord:
-                            data->state = reverse
-                                              ? (entry.oldDeleted
-                                                     ? RecordState::Deleted
-                                                     : RecordState::Alive)
-                                              : (entry.newDeleted
-                                                     ? RecordState::Deleted
-                                                     : RecordState::Alive);
-                            if (reverse &&
-                                entry.op == JournalOp::CreateRecord)
+                            data->state = reverse ? (entry.oldDeleted ? RecordState::Deleted : RecordState::Alive)
+                                                  : (entry.newDeleted ? RecordState::Deleted : RecordState::Alive);
+                            if (reverse && entry.op == JournalOp::CreateRecord)
                             {
                                 data->values.clear();
                             }
@@ -7140,8 +7909,7 @@ namespace StableCore::Storage
                                     data->values.erase(entry.fieldName);
                                 } else
                                 {
-                                    data->values[entry.fieldName] =
-                                        entry.oldValue;
+                                    data->values[entry.fieldName] = entry.oldValue;
                                 }
                             } else if (entry.newValue.IsNull())
                             {
@@ -7162,8 +7930,7 @@ namespace StableCore::Storage
             return SC_OK;
         }
 
-        ErrorCode SqliteDatabase::ApplySchemaEntry(const JournalEntry& entry,
-                                                   bool reverse)
+        ErrorCode SqliteDatabase::ApplySchemaEntry(const JournalEntry& entry, bool reverse)
         {
             const auto tableIt = tables_.find(entry.tableName);
             if (tableIt == tables_.end())
@@ -7198,36 +7965,52 @@ namespace StableCore::Storage
                 case JournalOp::AddColumn:
                     if (reverse)
                     {
-                        return PersistSchemaRemoveColumn(schema,
-                                                         entry.fieldName.c_str());
+                        return PersistSchemaRemoveColumn(schema, entry.fieldName.c_str());
                     } else
                     {
-                        return PersistSchemaAddColumn(schema,
-                                                       makeReplayColumn(),
-                                                       entry.columnRowId);
+                        return PersistSchemaAddColumn(schema, makeReplayColumn(), entry.columnRowId);
                     }
                 case JournalOp::UpdateColumn:
-                    return PersistSchemaUpdateColumn(schema,
-                                                     makeReplayColumn());
+                    return PersistSchemaUpdateColumn(schema, makeReplayColumn());
                 case JournalOp::RemoveColumn:
                     if (reverse)
                     {
-                        return PersistSchemaAddColumn(schema,
-                                                       makeReplayColumn(),
-                                                       entry.columnRowId);
+                        return PersistSchemaAddColumn(schema, makeReplayColumn(), entry.columnRowId);
                     } else
                     {
-                        return PersistSchemaRemoveColumn(schema,
-                                                         entry.fieldName.c_str());
+                        return PersistSchemaRemoveColumn(schema, entry.fieldName.c_str());
                     }
+                case JournalOp::AddConstraint:
+                    if (reverse)
+                    {
+                        return PersistSchemaRemoveConstraint(schema, entry.fieldName.c_str());
+                    }
+                    return PersistSchemaAddConstraint(schema, entry.newConstraint, entry.constraintRowId);
+                case JournalOp::RemoveConstraint:
+                    if (reverse)
+                    {
+                        return PersistSchemaAddConstraint(schema, entry.oldConstraint, entry.constraintRowId);
+                    }
+                    return PersistSchemaRemoveConstraint(schema, entry.fieldName.c_str());
+                case JournalOp::AddIndex:
+                    if (reverse)
+                    {
+                        return PersistSchemaRemoveIndex(schema, entry.fieldName.c_str());
+                    }
+                    return PersistSchemaAddIndex(schema, entry.newIndex, entry.indexRowId);
+                case JournalOp::RemoveIndex:
+                    if (reverse)
+                    {
+                        return PersistSchemaAddIndex(schema, entry.oldIndex, entry.indexRowId);
+                    }
+                    return PersistSchemaRemoveIndex(schema, entry.fieldName.c_str());
                 default:
                     break;
             }
             return SC_OK;
         }
 
-        void SqliteDatabase::UpdateTouchedVersions(const JournalTransaction& tx,
-                                                   VersionId version)
+        void SqliteDatabase::UpdateTouchedVersions(const JournalTransaction& tx, VersionId version)
         {
             for (const auto& [tableName, recordId] : GetTouchedRecordKeys(tx))
             {
@@ -7236,8 +8019,7 @@ namespace StableCore::Storage
                 {
                     continue;
                 }
-                auto record = static_cast<SqliteTable*>(tableIt->second.Get())
-                                  ->FindRecordData(recordId);
+                auto record = static_cast<SqliteTable*>(tableIt->second.Get())->FindRecordData(recordId);
                 if (record)
                 {
                     record->lastModifiedVersion = version;
@@ -7260,31 +8042,25 @@ namespace StableCore::Storage
                 change.tableName = entry.tableName;
                 change.recordId = entry.recordId;
                 change.fieldName = entry.fieldName;
-                change.oldValue = (source == ChangeSource::Undo)
-                                      ? entry.newValue
-                                      : entry.oldValue;
-                change.newValue = (source == ChangeSource::Undo)
-                                      ? entry.oldValue
-                                      : entry.newValue;
+                change.oldValue = (source == ChangeSource::Undo) ? entry.newValue : entry.oldValue;
+                change.newValue = (source == ChangeSource::Undo) ? entry.oldValue : entry.newValue;
                 change.structuralChange =
-                    (entry.op == JournalOp::CreateRecord ||
-                     entry.op == JournalOp::DeleteRecord ||
-                     entry.op == JournalOp::AddColumn ||
-                     entry.op == JournalOp::UpdateColumn ||
-                     entry.op == JournalOp::RemoveColumn);
+                    (entry.op == JournalOp::CreateRecord || entry.op == JournalOp::DeleteRecord ||
+                     entry.op == JournalOp::AddColumn || entry.op == JournalOp::UpdateColumn ||
+                     entry.op == JournalOp::RemoveColumn || entry.op == JournalOp::AddConstraint ||
+                     entry.op == JournalOp::RemoveConstraint || entry.op == JournalOp::AddIndex ||
+                     entry.op == JournalOp::RemoveIndex);
                 change.relationChange = (entry.op == JournalOp::SetRelation);
 
                 switch (entry.op)
                 {
                     case JournalOp::CreateRecord:
-                        change.kind = (source == ChangeSource::Undo)
-                                          ? ChangeKind::RecordDeleted
-                                          : ChangeKind::RecordCreated;
+                        change.kind =
+                            (source == ChangeSource::Undo) ? ChangeKind::RecordDeleted : ChangeKind::RecordCreated;
                         break;
                     case JournalOp::DeleteRecord:
-                        change.kind = (source == ChangeSource::Undo)
-                                          ? ChangeKind::RecordCreated
-                                          : ChangeKind::RecordDeleted;
+                        change.kind =
+                            (source == ChangeSource::Undo) ? ChangeKind::RecordCreated : ChangeKind::RecordDeleted;
                         break;
                     case JournalOp::SetRelation:
                         change.kind = ChangeKind::RelationUpdated;
@@ -7292,6 +8068,10 @@ namespace StableCore::Storage
                     case JournalOp::AddColumn:
                     case JournalOp::UpdateColumn:
                     case JournalOp::RemoveColumn:
+                    case JournalOp::AddConstraint:
+                    case JournalOp::RemoveConstraint:
+                    case JournalOp::AddIndex:
+                    case JournalOp::RemoveIndex:
                     case JournalOp::SetValue:
                     default:
                         change.kind = ChangeKind::FieldUpdated;
@@ -7315,20 +8095,18 @@ namespace StableCore::Storage
             }
         }
 
-        std::vector<std::pair<std::wstring, RecordId>>
-        SqliteDatabase::GetTouchedRecordKeys(const JournalTransaction& tx) const
+        std::vector<std::pair<std::wstring, RecordId>> SqliteDatabase::GetTouchedRecordKeys(
+            const JournalTransaction& tx) const
         {
             std::set<std::pair<std::wstring, RecordId>> unique;
             for (const auto& entry : tx.entries)
             {
                 unique.emplace(entry.tableName, entry.recordId);
             }
-            return std::vector<std::pair<std::wstring, RecordId>>(
-                unique.begin(), unique.end());
+            return std::vector<std::pair<std::wstring, RecordId>>(unique.begin(), unique.end());
         }
 
-        void SqliteDatabase::PersistTouchedRecords(const JournalTransaction& tx,
-                                                   VersionId version)
+        void SqliteDatabase::PersistTouchedRecords(const JournalTransaction& tx, VersionId version)
         {
             SqliteStmt upsertRecord = db_.Prepare(
                 "INSERT INTO records(table_id, record_id, state, "
@@ -7381,16 +8159,16 @@ namespace StableCore::Storage
                     insertValue.BindInt64(1, table->TableRowId());
                     insertValue.BindInt64(2, data->id);
                     insertValue.BindText(3, fieldName);
-                    BindValueForStorage(insertValue, 4, 5, 6, 7, 8, 9,
-                                        SCValue);
+                    BindValueForStorage(insertValue, 4, 5, 6, 7, 8, 9, SCValue);
                     insertValue.Step();
                     insertValue.Reset();
                 }
             }
         }
 
-        std::int64_t SqliteDatabase::InsertJournalTransaction(
-            const JournalTransaction& tx, int stackKind, int stackOrder)
+        std::int64_t SqliteDatabase::InsertJournalTransaction(const JournalTransaction& tx,
+                                                              int stackKind,
+                                                              int stackOrder)
         {
             SqliteStmt stmt = db_.Prepare(
                 "INSERT INTO journal_transactions(action_name, "
@@ -7404,8 +8182,7 @@ namespace StableCore::Storage
             return db_.LastInsertRowId();
         }
 
-        void SqliteDatabase::PersistJournalEntries(std::int64_t txId,
-                                                   const JournalTransaction& tx)
+        void SqliteDatabase::PersistJournalEntries(std::int64_t txId, const JournalTransaction& tx)
         {
             SqliteStmt valueStmt = db_.Prepare(
                 "INSERT INTO journal_entries("
@@ -7419,8 +8196,7 @@ namespace StableCore::Storage
             int sequence = 0;
             for (const auto& entry : tx.entries)
             {
-                if (entry.op == JournalOp::AddColumn ||
-                    entry.op == JournalOp::UpdateColumn ||
+                if (entry.op == JournalOp::AddColumn || entry.op == JournalOp::UpdateColumn ||
                     entry.op == JournalOp::RemoveColumn)
                 {
                     continue;
@@ -7430,12 +8206,30 @@ namespace StableCore::Storage
                 valueStmt.BindInt(2, sequence++);
                 valueStmt.BindInt(3, ToSqliteJournalOp(entry.op));
                 valueStmt.BindText(4, entry.tableName);
-                valueStmt.BindInt64(5, entry.recordId);
+                const bool constraintEntry =
+                    entry.op == JournalOp::AddConstraint || entry.op == JournalOp::RemoveConstraint;
+                const bool indexEntry = entry.op == JournalOp::AddIndex || entry.op == JournalOp::RemoveIndex;
+                valueStmt.BindInt64(
+                    5, constraintEntry ? entry.constraintRowId : (indexEntry ? entry.indexRowId : entry.recordId));
                 valueStmt.BindText(6, entry.fieldName);
-                BindValueForStorage(valueStmt, 7, 8, 9, 10, 11, 12,
-                                    entry.oldValue);
-                BindValueForStorage(valueStmt, 13, 14, 15, 16, 17, 18,
-                                    entry.newValue);
+                const SCValue oldPersistedValue =
+                    constraintEntry ? (entry.oldConstraint.name.empty()
+                                           ? SCValue::Null()
+                                           : SCValue::FromString(SerializeConstraintDef(entry.oldConstraint)))
+                                    : (indexEntry ? (entry.oldIndex.name.empty()
+                                                         ? SCValue::Null()
+                                                         : SCValue::FromString(SerializeIndexDef(entry.oldIndex)))
+                                                  : entry.oldValue);
+                const SCValue newPersistedValue =
+                    constraintEntry ? (entry.newConstraint.name.empty()
+                                           ? SCValue::Null()
+                                           : SCValue::FromString(SerializeConstraintDef(entry.newConstraint)))
+                                    : (indexEntry ? (entry.newIndex.name.empty()
+                                                         ? SCValue::Null()
+                                                         : SCValue::FromString(SerializeIndexDef(entry.newIndex)))
+                                                  : entry.newValue);
+                BindValueForStorage(valueStmt, 7, 8, 9, 10, 11, 12, oldPersistedValue);
+                BindValueForStorage(valueStmt, 13, 14, 15, 16, 17, 18, newPersistedValue);
                 valueStmt.BindInt(19, entry.oldDeleted ? 1 : 0);
                 valueStmt.BindInt(20, entry.newDeleted ? 1 : 0);
                 valueStmt.Step();
@@ -7445,8 +8239,7 @@ namespace StableCore::Storage
             PersistSchemaJournalEntries(txId, tx, &sequence);
         }
 
-        void SqliteDatabase::PersistSchemaJournalEntries(
-            std::int64_t txId, const JournalTransaction& tx, int* sequence)
+        void SqliteDatabase::PersistSchemaJournalEntries(std::int64_t txId, const JournalTransaction& tx, int* sequence)
         {
             if (sequence == nullptr)
             {
@@ -7472,8 +8265,7 @@ namespace StableCore::Storage
 
             for (const auto& entry : tx.entries)
             {
-                if (entry.op != JournalOp::AddColumn &&
-                    entry.op != JournalOp::UpdateColumn &&
+                if (entry.op != JournalOp::AddColumn && entry.op != JournalOp::UpdateColumn &&
                     entry.op != JournalOp::RemoveColumn)
                 {
                     continue;
@@ -7485,10 +8277,10 @@ namespace StableCore::Storage
                 stmt.BindText(4, entry.tableName);
                 stmt.BindText(5, entry.fieldName);
                 stmt.BindInt64(6, entry.columnRowId);
-                BindColumnDefForStorage(stmt, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
-                                        17, 18, 19, 20, 21, 22, entry.oldColumn);
-                BindColumnDefForStorage(stmt, 23, 24, 25, 26, 27, 28, 29, 30, 31,
-                                        32, 33, 34, 35, 36, 37, 38, entry.newColumn);
+                BindColumnDefForStorage(
+                    stmt, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, entry.oldColumn);
+                BindColumnDefForStorage(
+                    stmt, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, entry.newColumn);
                 stmt.Step();
                 stmt.Reset();
             }
@@ -7503,9 +8295,7 @@ namespace StableCore::Storage
             redoStack_.clear();
         }
 
-        void SqliteDatabase::UpdateJournalTransactionStack(std::int64_t txId,
-                                                           int stackKind,
-                                                           int stackOrder)
+        void SqliteDatabase::UpdateJournalTransactionStack(std::int64_t txId, int stackKind, int stackOrder)
         {
             SqliteStmt stmt = db_.Prepare(
                 "UPDATE journal_transactions SET stack_kind = ?, stack_order = "
@@ -7518,27 +8308,22 @@ namespace StableCore::Storage
 
         void SqliteDatabase::DeleteJournalTransaction(std::int64_t txId)
         {
-            SqliteStmt valueStmt =
-                db_.Prepare("DELETE FROM journal_entries WHERE tx_id = ?;");
+            SqliteStmt valueStmt = db_.Prepare("DELETE FROM journal_entries WHERE tx_id = ?;");
             valueStmt.BindInt64(1, txId);
             valueStmt.Step();
 
-            SqliteStmt schemaStmt = db_.Prepare(
-                "DELETE FROM journal_schema_entries WHERE tx_id = ?;");
+            SqliteStmt schemaStmt = db_.Prepare("DELETE FROM journal_schema_entries WHERE tx_id = ?;");
             schemaStmt.BindInt64(1, txId);
             schemaStmt.Step();
 
-            SqliteStmt stmt = db_.Prepare(
-                "DELETE FROM journal_transactions WHERE tx_id = ?;");
+            SqliteStmt stmt = db_.Prepare("DELETE FROM journal_transactions WHERE tx_id = ?;");
             stmt.BindInt64(1, txId);
             stmt.Step();
         }
 
     }  // namespace
 
-    ErrorCode CreateFileDatabase(const wchar_t* path,
-                                 const SCOpenDatabaseOptions& options,
-                                 SCDbPtr& outDatabase)
+    ErrorCode CreateFileDatabase(const wchar_t* path, const SCOpenDatabaseOptions& options, SCDbPtr& outDatabase)
     {
         if (path == nullptr)
         {
@@ -7548,9 +8333,7 @@ namespace StableCore::Storage
         outDatabase.Reset();
         try
         {
-            const auto openDatabase = [path](
-                                          const SCOpenDatabaseOptions& openOptions,
-                                          SCDbPtr* database) -> ErrorCode {
+            const auto openDatabase = [path](const SCOpenDatabaseOptions& openOptions, SCDbPtr* database) -> ErrorCode {
                 if (database == nullptr)
                 {
                     return SC_E_POINTER;
@@ -7558,17 +8341,14 @@ namespace StableCore::Storage
 
                 try
                 {
-                    *database =
-                        SCMakeRef<SqliteDatabase>(std::wstring{path},
-                                                  openOptions);
+                    *database = SCMakeRef<SqliteDatabase>(std::wstring{path}, openOptions);
                     EnsureSqliteQueryDispatchRegistered(database->Get());
                     return SC_OK;
                 } catch (...)
                 {
                     if (database->Get() != nullptr)
                     {
-                        if (auto* sqliteDb = dynamic_cast<SqliteDatabase*>(
-                                database->Get()))
+                        if (auto* sqliteDb = dynamic_cast<SqliteDatabase*>(database->Get()))
                         {
                             sqliteDb->SuppressCleanShutdownOnDestroy();
                         }
@@ -7578,23 +8358,20 @@ namespace StableCore::Storage
                 }
             };
 
-            const auto upgradeDatabaseIfNeeded =
-                [](ISCDatabase* database) -> ErrorCode {
+            const auto upgradeDatabaseIfNeeded = [](ISCDatabase* database) -> ErrorCode {
                 if (database == nullptr)
                 {
                     return SC_E_POINTER;
                 }
 
                 SCVersionGraph versionGraph;
-                const ErrorCode graphRc =
-                    BuildDefaultVersionGraph(&versionGraph);
+                const ErrorCode graphRc = BuildDefaultVersionGraph(&versionGraph);
                 if (Failed(graphRc))
                 {
                     return graphRc;
                 }
 
-                const std::int32_t currentVersion =
-                    database->GetSchemaVersion();
+                const std::int32_t currentVersion = database->GetSchemaVersion();
                 if (currentVersion > versionGraph.latestSupportedVersion)
                 {
                     return SC_E_NOTIMPL;
@@ -7605,18 +8382,15 @@ namespace StableCore::Storage
                 }
 
                 SCUpgradePlan upgradePlan;
-                const ErrorCode planRc = BuildUpgradePlan(
-                    currentVersion, versionGraph.latestSupportedVersion,
-                    versionGraph, &upgradePlan);
+                const ErrorCode planRc =
+                    BuildUpgradePlan(currentVersion, versionGraph.latestSupportedVersion, versionGraph, &upgradePlan);
                 if (Failed(planRc))
                 {
                     return planRc;
                 }
 
                 SCUpgradeResult upgradeResult;
-                const ErrorCode upgradeRc =
-                    database->ExecuteUpgradePlan(upgradePlan, true,
-                                                 &upgradeResult);
+                const ErrorCode upgradeRc = database->ExecuteUpgradePlan(upgradePlan, true, &upgradeResult);
                 if (Failed(upgradeRc))
                 {
                     return upgradeRc;
@@ -7640,20 +8414,17 @@ namespace StableCore::Storage
                 rc = BuildDefaultVersionGraph(&versionGraph);
                 if (Failed(rc))
                 {
-                    if (auto* sqliteDb = dynamic_cast<SqliteDatabase*>(
-                            readOnlyDatabase.Get()))
+                    if (auto* sqliteDb = dynamic_cast<SqliteDatabase*>(readOnlyDatabase.Get()))
                     {
                         sqliteDb->SuppressCleanShutdownOnDestroy();
                     }
                     return rc;
                 }
 
-                const std::int32_t currentVersion =
-                    readOnlyDatabase->GetSchemaVersion();
+                const std::int32_t currentVersion = readOnlyDatabase->GetSchemaVersion();
                 if (currentVersion > versionGraph.latestSupportedVersion)
                 {
-                    if (auto* sqliteDb = dynamic_cast<SqliteDatabase*>(
-                            readOnlyDatabase.Get()))
+                    if (auto* sqliteDb = dynamic_cast<SqliteDatabase*>(readOnlyDatabase.Get()))
                     {
                         sqliteDb->SuppressCleanShutdownOnDestroy();
                     }
@@ -7680,8 +8451,7 @@ namespace StableCore::Storage
                 rc = upgradeDatabaseIfNeeded(writableDatabase.Get());
                 if (Failed(rc))
                 {
-                    if (auto* sqliteDb = dynamic_cast<SqliteDatabase*>(
-                            writableDatabase.Get()))
+                    if (auto* sqliteDb = dynamic_cast<SqliteDatabase*>(writableDatabase.Get()))
                     {
                         sqliteDb->SuppressCleanShutdownOnDestroy();
                     }
@@ -7708,8 +8478,7 @@ namespace StableCore::Storage
             rc = upgradeDatabaseIfNeeded(database.Get());
             if (Failed(rc))
             {
-                if (auto* sqliteDb = dynamic_cast<SqliteDatabase*>(
-                        database.Get()))
+                if (auto* sqliteDb = dynamic_cast<SqliteDatabase*>(database.Get()))
                 {
                     sqliteDb->SuppressCleanShutdownOnDestroy();
                 }

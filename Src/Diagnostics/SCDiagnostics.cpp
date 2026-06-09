@@ -15,12 +15,10 @@ namespace StableCore::Storage
         }
 
         SCStorageHealthReport report;
-        report.backendName =
-            (backendName != nullptr) ? backendName : L"unknown";
+        report.backendName = (backendName != nullptr) ? backendName : L"unknown";
         report.currentVersion = database->GetCurrentVersion();
 
-        if (const auto* provider =
-                dynamic_cast<const ISCDatabaseDiagnosticsProvider*>(database))
+        if (const auto* provider = dynamic_cast<const ISCDatabaseDiagnosticsProvider*>(database))
         {
             const ErrorCode rc = provider->CollectDiagnostics(&report);
             if (Failed(rc))
@@ -46,8 +44,7 @@ namespace StableCore::Storage
         return SC_OK;
     }
 
-    ErrorCode DescribeChangeSet(const SCChangeSet& SCChangeSet,
-                                std::wstring* outText)
+    ErrorCode DescribeChangeSet(const SCChangeSet& SCChangeSet, std::wstring* outText)
     {
         if (outText == nullptr)
         {
@@ -55,8 +52,7 @@ namespace StableCore::Storage
         }
 
         std::wostringstream stream;
-        stream << L"Action=" << SCChangeSet.actionName << L", Version="
-               << SCChangeSet.version << L", Changes="
+        stream << L"Action=" << SCChangeSet.actionName << L", Version=" << SCChangeSet.version << L", Changes="
                << SCChangeSet.changes.size();
 
         for (const auto& change : SCChangeSet.changes)

@@ -86,8 +86,7 @@ namespace StableCore::Storage
         private:
             void SkipWhitespace()
             {
-                while (index_ < source_.size() &&
-                       std::iswspace(source_[index_]) != 0)
+                while (index_ < source_.size() && std::iswspace(source_[index_]) != 0)
                 {
                     ++index_;
                 }
@@ -113,8 +112,7 @@ namespace StableCore::Storage
                     }
                     break;
                 }
-                return Token{Token::Kind::Number,
-                             source_.substr(start, index_ - start)};
+                return Token{Token::Kind::Number, source_.substr(start, index_ - start)};
             }
 
             Token ReadIdentifier()
@@ -130,8 +128,7 @@ namespace StableCore::Storage
                     }
                     break;
                 }
-                return Token{Token::Kind::Identifier,
-                             source_.substr(start, index_ - start)};
+                return Token{Token::Kind::Identifier, source_.substr(start, index_ - start)};
             }
 
             std::wstring source_;
@@ -145,9 +142,7 @@ namespace StableCore::Storage
             bool boolValue{false};
         };
 
-        ErrorCode ReadScalarFromContext(ISCComputedContext* context,
-                                        const std::wstring& fieldName,
-                                        Scalar* outScalar)
+        ErrorCode ReadScalarFromContext(ISCComputedContext* context, const std::wstring& fieldName, Scalar* outScalar)
         {
             if (context == nullptr || outScalar == nullptr)
             {
@@ -166,23 +161,19 @@ namespace StableCore::Storage
                 case ValueKind::Int64: {
                     std::int64_t number = 0;
                     SCValue.AsInt64(&number);
-                    *outScalar =
-                        Scalar{ValueKind::Int64, static_cast<double>(number),
-                               number != 0};
+                    *outScalar = Scalar{ValueKind::Int64, static_cast<double>(number), number != 0};
                     return SC_OK;
                 }
                 case ValueKind::Double: {
                     double number = 0.0;
                     SCValue.AsDouble(&number);
-                    *outScalar =
-                        Scalar{ValueKind::Double, number, number != 0.0};
+                    *outScalar = Scalar{ValueKind::Double, number, number != 0.0};
                     return SC_OK;
                 }
                 case ValueKind::Bool: {
                     bool flag = false;
                     SCValue.AsBool(&flag);
-                    *outScalar =
-                        Scalar{ValueKind::Bool, flag ? 1.0 : 0.0, flag};
+                    *outScalar = Scalar{ValueKind::Bool, flag ? 1.0 : 0.0, flag};
                     return SC_OK;
                 }
                 default:
@@ -199,8 +190,7 @@ namespace StableCore::Storage
             return scalar.numberValue != 0.0;
         }
 
-        Scalar MakeNumeric(double SCValue,
-                           ValueKind kindHint = ValueKind::Double) noexcept
+        Scalar MakeNumeric(double SCValue, ValueKind kindHint = ValueKind::Double) noexcept
         {
             return Scalar{kindHint, SCValue, SCValue != 0.0};
         }
@@ -208,12 +198,8 @@ namespace StableCore::Storage
         class ExpressionParser
         {
         public:
-            ExpressionParser(const SCComputedColumnDef& column,
-                             ISCComputedContext* context)
-                : column_(column),
-                  context_(context),
-                  lexer_(column.expression),
-                  current_(lexer_.Next())
+            ExpressionParser(const SCComputedColumnDef& column, ISCComputedContext* context)
+                : column_(column), context_(context), lexer_(column.expression), current_(lexer_.Next())
             {
             }
 
@@ -251,8 +237,7 @@ namespace StableCore::Storage
                     return rc;
                 }
 
-                while (current_.kind == Token::Kind::Plus ||
-                       current_.kind == Token::Kind::Minus)
+                while (current_.kind == Token::Kind::Plus || current_.kind == Token::Kind::Minus)
                 {
                     const Token::Kind op = current_.kind;
                     Advance();
@@ -264,10 +249,8 @@ namespace StableCore::Storage
                         return rc;
                     }
 
-                    left =
-                        MakeNumeric(op == Token::Kind::Plus
-                                        ? left.numberValue + right.numberValue
-                                        : left.numberValue - right.numberValue);
+                    left = MakeNumeric(op == Token::Kind::Plus ? left.numberValue + right.numberValue
+                                                               : left.numberValue - right.numberValue);
                 }
 
                 *outScalar = left;
@@ -283,8 +266,7 @@ namespace StableCore::Storage
                     return rc;
                 }
 
-                while (current_.kind == Token::Kind::Star ||
-                       current_.kind == Token::Kind::Slash)
+                while (current_.kind == Token::Kind::Star || current_.kind == Token::Kind::Slash)
                 {
                     const Token::Kind op = current_.kind;
                     Advance();
@@ -300,10 +282,8 @@ namespace StableCore::Storage
                         return SC_E_INVALIDARG;
                     }
 
-                    left =
-                        MakeNumeric(op == Token::Kind::Star
-                                        ? left.numberValue * right.numberValue
-                                        : left.numberValue / right.numberValue);
+                    left = MakeNumeric(op == Token::Kind::Star ? left.numberValue * right.numberValue
+                                                               : left.numberValue / right.numberValue);
                 }
 
                 *outScalar = left;
@@ -330,9 +310,7 @@ namespace StableCore::Storage
                     const std::wstring text = current_.text;
                     Advance();
                     *outScalar = MakeNumeric(
-                        std::stod(text), text.find(L'.') == std::wstring::npos
-                                             ? ValueKind::Int64
-                                             : ValueKind::Double);
+                        std::stod(text), text.find(L'.') == std::wstring::npos ? ValueKind::Int64 : ValueKind::Double);
                     return SC_OK;
                 }
 
@@ -344,8 +322,7 @@ namespace StableCore::Storage
                     {
                         return ParseFunctionCall(identifier, outScalar);
                     }
-                    return ReadScalarFromContext(context_, identifier,
-                                                 outScalar);
+                    return ReadScalarFromContext(context_, identifier, outScalar);
                 }
 
                 if (current_.kind == Token::Kind::LParen)
@@ -367,8 +344,7 @@ namespace StableCore::Storage
                 return SC_E_INVALIDARG;
             }
 
-            ErrorCode ParseFunctionCall(const std::wstring& name,
-                                        Scalar* outScalar)
+            ErrorCode ParseFunctionCall(const std::wstring& name, Scalar* outScalar)
             {
                 Advance();  // (
                 std::vector<Scalar> args;
@@ -401,14 +377,12 @@ namespace StableCore::Storage
 
                 if (name == L"min" && args.size() == 2)
                 {
-                    *outScalar = MakeNumeric(
-                        std::min(args[0].numberValue, args[1].numberValue));
+                    *outScalar = MakeNumeric(std::min(args[0].numberValue, args[1].numberValue));
                     return SC_OK;
                 }
                 if (name == L"max" && args.size() == 2)
                 {
-                    *outScalar = MakeNumeric(
-                        std::max(args[0].numberValue, args[1].numberValue));
+                    *outScalar = MakeNumeric(std::max(args[0].numberValue, args[1].numberValue));
                     return SC_OK;
                 }
                 if (name == L"abs" && args.size() == 1)
@@ -425,15 +399,12 @@ namespace StableCore::Storage
                 return SC_E_INVALIDARG;
             }
 
-            ErrorCode ConvertToValue(const Scalar& scalar,
-                                     SCValue* outValue) const
+            ErrorCode ConvertToValue(const Scalar& scalar, SCValue* outValue) const
             {
                 switch (column_.valueKind)
                 {
                     case ValueKind::Int64:
-                        *outValue =
-                            SCValue::FromInt64(static_cast<std::int64_t>(
-                                std::llround(scalar.numberValue)));
+                        *outValue = SCValue::FromInt64(static_cast<std::int64_t>(std::llround(scalar.numberValue)));
                         return SC_OK;
                     case ValueKind::Double:
                         *outValue = SCValue::FromDouble(scalar.numberValue);
@@ -457,8 +428,7 @@ namespace StableCore::Storage
             Token current_;
         };
 
-        class ExpressionEvaluator final : public ISCComputedEvaluator,
-                                          public SCRefCountedObject
+        class ExpressionEvaluator final : public ISCComputedEvaluator, public SCRefCountedObject
         {
         public:
             ErrorCode Evaluate(const SCComputedColumnDef& column,
@@ -470,12 +440,10 @@ namespace StableCore::Storage
             }
         };
 
-        class DefaultRuleRegistry final : public ISCRuleRegistry,
-                                          public SCRefCountedObject
+        class DefaultRuleRegistry final : public ISCRuleRegistry, public SCRefCountedObject
         {
         public:
-            ErrorCode Register(const wchar_t* ruleId,
-                               ISCComputedEvaluator* evaluator) override
+            ErrorCode Register(const wchar_t* ruleId, ISCComputedEvaluator* evaluator) override
             {
                 if (ruleId == nullptr || *ruleId == L'\0')
                 {
@@ -490,8 +458,7 @@ namespace StableCore::Storage
                 return SC_OK;
             }
 
-            ErrorCode Find(const wchar_t* ruleId,
-                           SCComputedEvaluatorPtr& outEvaluator) override
+            ErrorCode Find(const wchar_t* ruleId, SCComputedEvaluatorPtr& outEvaluator) override
             {
                 if (ruleId == nullptr || *ruleId == L'\0')
                 {
@@ -509,33 +476,27 @@ namespace StableCore::Storage
             }
 
         private:
-            std::unordered_map<std::wstring, SCComputedEvaluatorPtr>
-                evaluators_;
+            std::unordered_map<std::wstring, SCComputedEvaluatorPtr> evaluators_;
         };
 
         struct CacheKeyHash
         {
             std::size_t operator()(const SCComputedCacheKey& key) const noexcept
             {
-                return static_cast<std::size_t>(key.recordId) ^
-                       (std::hash<std::wstring>{}(key.columnName) << 1);
+                return static_cast<std::size_t>(key.recordId) ^ (std::hash<std::wstring>{}(key.columnName) << 1);
             }
         };
 
-        bool DependencyMatchesChange(const SCFieldDependency& dependency,
-                                     const SCDataChange& change) noexcept
+        bool DependencyMatchesChange(const SCFieldDependency& dependency, const SCDataChange& change) noexcept
         {
-            return (dependency.tableName.empty() ||
-                    dependency.tableName == change.tableName) &&
+            return (dependency.tableName.empty() || dependency.tableName == change.tableName) &&
                    dependency.fieldName == change.fieldName;
         }
 
-        class ComputedCache final : public ISCComputedCache,
-                                    public SCRefCountedObject
+        class ComputedCache final : public ISCComputedCache, public SCRefCountedObject
         {
         public:
-            ErrorCode TryGet(const SCComputedCacheKey& key,
-                             SCValue* outValue) override
+            ErrorCode TryGet(const SCComputedCacheKey& key, SCValue* outValue) override
             {
                 if (outValue == nullptr)
                 {
@@ -559,8 +520,7 @@ namespace StableCore::Storage
             }
 
             ErrorCode Invalidate(const SCChangeSet& SCChangeSet,
-                                 const std::vector<SCComputedColumnDef>&
-                                     computedColumns) override
+                                 const std::vector<SCComputedColumnDef>& computedColumns) override
             {
                 std::vector<SCComputedCacheKey> removeKeys;
                 for (const auto& [key, entry] : entries_)
@@ -571,8 +531,7 @@ namespace StableCore::Storage
                         {
                             continue;
                         }
-                        if (DoesDependencySetIntersect(entry.dependencies,
-                                                       SCChangeSet))
+                        if (DoesDependencySetIntersect(entry.dependencies, SCChangeSet))
                         {
                             removeKeys.push_back(key);
                             break;
@@ -594,15 +553,12 @@ namespace StableCore::Storage
             }
 
         private:
-            std::unordered_map<SCComputedCacheKey, SCComputedCacheEntry,
-                               CacheKeyHash>
-                entries_;
+            std::unordered_map<SCComputedCacheKey, SCComputedCacheEntry, CacheKeyHash> entries_;
         };
 
     }  // namespace
 
-    ErrorCode CreateDefaultExpressionEvaluator(
-        SCComputedEvaluatorPtr& outEvaluator)
+    ErrorCode CreateDefaultExpressionEvaluator(SCComputedEvaluatorPtr& outEvaluator)
     {
         outEvaluator = SCMakeRef<ExpressionEvaluator>();
         return SC_OK;
@@ -644,8 +600,7 @@ namespace StableCore::Storage
                     return SC_E_POINTER;
                 }
                 SCComputedEvaluatorPtr evaluator;
-                const ErrorCode findRc =
-                    ruleRegistry->Find(column.ruleId.c_str(), evaluator);
+                const ErrorCode findRc = ruleRegistry->Find(column.ruleId.c_str(), evaluator);
                 if (Failed(findRc))
                 {
                     return findRc;
@@ -663,10 +618,9 @@ namespace StableCore::Storage
         for (const auto& change : SCChangeSet.changes)
         {
             const auto factIt = std::find_if(
-                dependencies.factFields.begin(), dependencies.factFields.end(),
-                [&](const SCFieldDependency& dependency) {
-                    return DependencyMatchesChange(dependency, change);
-                });
+                dependencies.factFields.begin(),
+                dependencies.factFields.end(),
+                [&](const SCFieldDependency& dependency) { return DependencyMatchesChange(dependency, change); });
             if (factIt != dependencies.factFields.end())
             {
                 return true;
@@ -680,9 +634,7 @@ namespace StableCore::Storage
             const auto relationIt = std::find_if(
                 dependencies.relationFields.begin(),
                 dependencies.relationFields.end(),
-                [&](const SCFieldDependency& dependency) {
-                    return DependencyMatchesChange(dependency, change);
-                });
+                [&](const SCFieldDependency& dependency) { return DependencyMatchesChange(dependency, change); });
             if (relationIt != dependencies.relationFields.end())
             {
                 return true;

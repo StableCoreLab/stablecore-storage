@@ -33,12 +33,10 @@ namespace
 
 int main()
 {
-    const fs::path dbPath =
-        MakeTempDbPath(L"StableCoreStorage_ProductIntegrationExample.sqlite");
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_ProductIntegrationExample.sqlite");
 
     sc::SCDbPtr db;
-    if (sc::Failed(sc::CreateFileDatabase(dbPath.c_str(),
-                                          sc::SCOpenDatabaseOptions{}, db)))
+    if (sc::Failed(sc::CreateFileDatabase(dbPath.c_str(), sc::SCOpenDatabaseOptions{}, db)))
     {
         return 1;
     }
@@ -53,23 +51,57 @@ int main()
 
     sc::SCSchemaPtr floorSchema;
     floorTable->GetSchema(floorSchema);
-    floorSchema->AddColumn(sc::SCColumnDef{
-        L"Name", L"Name", sc::ValueKind::String, sc::ColumnKind::Fact, false,
-        true, false, false, false, L"", L"", sc::SCValue::FromString(L"")});
+    floorSchema->AddColumn(sc::SCColumnDef{L"Name",
+                                           L"Name",
+                                           sc::ValueKind::String,
+                                           sc::ColumnKind::Fact,
+                                           false,
+                                           true,
+                                           false,
+                                           false,
+                                           false,
+                                           L"",
+                                           L"",
+                                           sc::SCValue::FromString(L"")});
 
     sc::SCSchemaPtr beamSchema;
     beamTable->GetSchema(beamSchema);
-    beamSchema->AddColumn(
-        sc::SCColumnDef{L"Length", L"Length", sc::ValueKind::Double,
-                        sc::ColumnKind::Fact, false, true, false, false, true,
-                        L"mm", L"", sc::SCValue::FromDouble(0.0)});
-    beamSchema->AddColumn(sc::SCColumnDef{
-        L"Width", L"Width", sc::ValueKind::Double, sc::ColumnKind::Fact, false,
-        true, false, false, true, L"mm", L"", sc::SCValue::FromDouble(0.0)});
-    beamSchema->AddColumn(
-        sc::SCColumnDef{L"Height", L"Height", sc::ValueKind::Double,
-                        sc::ColumnKind::Fact, false, true, false, false, true,
-                        L"mm", L"", sc::SCValue::FromDouble(0.0)});
+    beamSchema->AddColumn(sc::SCColumnDef{L"Length",
+                                          L"Length",
+                                          sc::ValueKind::Double,
+                                          sc::ColumnKind::Fact,
+                                          false,
+                                          true,
+                                          false,
+                                          false,
+                                          true,
+                                          L"mm",
+                                          L"",
+                                          sc::SCValue::FromDouble(0.0)});
+    beamSchema->AddColumn(sc::SCColumnDef{L"Width",
+                                          L"Width",
+                                          sc::ValueKind::Double,
+                                          sc::ColumnKind::Fact,
+                                          false,
+                                          true,
+                                          false,
+                                          false,
+                                          true,
+                                          L"mm",
+                                          L"",
+                                          sc::SCValue::FromDouble(0.0)});
+    beamSchema->AddColumn(sc::SCColumnDef{L"Height",
+                                          L"Height",
+                                          sc::ValueKind::Double,
+                                          sc::ColumnKind::Fact,
+                                          false,
+                                          true,
+                                          false,
+                                          false,
+                                          true,
+                                          L"mm",
+                                          L"",
+                                          sc::SCValue::FromDouble(0.0)});
 
     sc::SCColumnDef floorRef;
     floorRef.name = L"FloorRef";
@@ -82,12 +114,10 @@ int main()
     std::vector<sc::SCBatchTableRequest> importRequests;
     sc::SCBatchTableRequest floorImport;
     floorImport.tableName = L"Floor";
-    floorImport.creates.push_back(
-        {{{L"Name", sc::SCValue::FromString(L"2F")}}});
+    floorImport.creates.push_back({{{L"Name", sc::SCValue::FromString(L"2F")}}});
     importRequests.push_back(floorImport);
 
-    sc::ExecuteImport(db.Get(), importRequests,
-                      sc::ISCmportOptions{L"Import Floors"}, nullptr);
+    sc::ExecuteImport(db.Get(), importRequests, sc::ISCmportOptions{L"Import Floors"}, nullptr);
 
     sc::SCRecordCursorPtr floorCursor;
     floorTable->EnumerateRecords(floorCursor);
@@ -109,14 +139,11 @@ int main()
     beamImport.push_back(beamRequest);
 
     sc::SCBatchExecutionResult ISCmportResult;
-    sc::ExecuteImport(db.Get(), beamImport,
-                      sc::ISCmportOptions{L"Import Beams"}, &ISCmportResult);
-    std::wcout << L"Imported beams, version=" << ISCmportResult.committedVersion
-               << L"\n";
+    sc::ExecuteImport(db.Get(), beamImport, sc::ISCmportOptions{L"Import Beams"}, &ISCmportResult);
+    std::wcout << L"Imported beams, version=" << ISCmportResult.committedVersion << L"\n";
 
     sc::SCComputedTableViewPtr beamView;
-    if (sc::Failed(
-            sc::CreateComputedTableView(db.Get(), L"Beam", nullptr, beamView)))
+    if (sc::Failed(sc::CreateComputedTableView(db.Get(), L"Beam", nullptr, beamView)))
     {
         return 1;
     }
@@ -154,7 +181,6 @@ int main()
 
     sc::SCStorageHealthReport report;
     sc::BuildStorageHealthReport(db.Get(), L"SQLite", &report);
-    std::wcout << L"Health report diagnostics = " << report.diagnostics.size()
-               << L"\n";
+    std::wcout << L"Health report diagnostics = " << report.diagnostics.size() << L"\n";
     return 0;
 }

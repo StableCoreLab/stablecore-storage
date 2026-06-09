@@ -268,13 +268,12 @@ namespace StableCore::Storage
     class SCQueryBridge
     {
     public:
-        static ErrorCode BuildPlanFromLegacyFindRecords(
-            const std::wstring& targetName, const SCQueryCondition& condition,
-            QueryPlan* outPlan);
+        static ErrorCode BuildPlanFromLegacyFindRecords(const std::wstring& targetName,
+                                                        const SCQueryCondition& condition,
+                                                        QueryPlan* outPlan);
 
-        static ErrorCode AdaptExecutionResultToLegacyStatus(
-            const QueryExecutionResult& executionResult,
-            ErrorCode* outLegacyRc);
+        static ErrorCode AdaptExecutionResultToLegacyStatus(const QueryExecutionResult& executionResult,
+                                                            ErrorCode* outLegacyRc);
     };
 
     // Default planner factory used by tests and bridge-facing compatibility

@@ -97,7 +97,6 @@ namespace StableCore::Storage
                               const SCPackageSizePolicy& sizePolicy);
 
     std::string Utf8Encode(const std::wstring& text);
-    std::wstring ApplyRedaction(const std::wstring& text,
-                                const SCRedactionPolicy& policy);
+    std::wstring ApplyRedaction(const std::wstring& text, const SCRedactionPolicy& policy);
 
 }  // namespace StableCore::Storage

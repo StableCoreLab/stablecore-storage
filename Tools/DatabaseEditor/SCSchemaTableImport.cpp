@@ -66,7 +66,7 @@ namespace StableCore::Storage::Editor
                 return false;
             }
 
-        const QRegularExpression quotedRegex(
+            const QRegularExpression quotedRegex(
                 QStringLiteral("^\\s*\"((?:\\\\.|[^\"])*)\"\\s*$"));
             const auto match = quotedRegex.match(text);
             if (!match.hasMatch())
@@ -159,8 +159,8 @@ namespace StableCore::Storage::Editor
 
             if (outError != nullptr)
             {
-                *outError = QStringLiteral("Unsupported SCType token: ") +
-                            token;
+                *outError =
+                    QStringLiteral("Unsupported SCType token: ") + token;
             }
             return false;
         }
@@ -187,18 +187,151 @@ namespace StableCore::Storage::Editor
             }
         }
 
+        bool ParseDefaultValueLiteral(const QString& text, sc::ValueKind kind,
+                                      sc::SCValue* outValue, QString* outError)
+        {
+            if (outValue == nullptr)
+            {
+                return false;
+            }
+
+            const QString trimmed = text.trimmed();
+            if (trimmed.isEmpty())
+            {
+                if (outError != nullptr)
+                {
+                    *outError = QStringLiteral("Default value is empty.");
+                }
+                return false;
+            }
+
+            switch (kind)
+            {
+                case sc::ValueKind::Int64: {
+                    bool ok = false;
+                    const qlonglong value = trimmed.toLongLong(&ok);
+                    if (!ok)
+                    {
+                        if (outError != nullptr)
+                        {
+                            *outError = QStringLiteral(
+                                            "Invalid Int64 default value: ") +
+                                        EscapeForMessage(trimmed);
+                        }
+                        return false;
+                    }
+                    *outValue = sc::SCValue::FromInt64(
+                        static_cast<std::int64_t>(value));
+                    return true;
+                }
+                case sc::ValueKind::Double: {
+                    bool ok = false;
+                    const double value = trimmed.toDouble(&ok);
+                    if (!ok)
+                    {
+                        if (outError != nullptr)
+                        {
+                            *outError = QStringLiteral(
+                                            "Invalid Double default value: ") +
+                                        EscapeForMessage(trimmed);
+                        }
+                        return false;
+                    }
+                    *outValue = sc::SCValue::FromDouble(value);
+                    return true;
+                }
+                case sc::ValueKind::Bool: {
+                    if (trimmed.compare(QStringLiteral("true"),
+                                        Qt::CaseInsensitive) == 0 ||
+                        trimmed == QStringLiteral("1"))
+                    {
+                        *outValue = sc::SCValue::FromBool(true);
+                        return true;
+                    }
+                    if (trimmed.compare(QStringLiteral("false"),
+                                        Qt::CaseInsensitive) == 0 ||
+                        trimmed == QStringLiteral("0"))
+                    {
+                        *outValue = sc::SCValue::FromBool(false);
+                        return true;
+                    }
+                    if (outError != nullptr)
+                    {
+                        *outError =
+                            QStringLiteral("Invalid Bool default value: ") +
+                            EscapeForMessage(trimmed);
+                    }
+                    return false;
+                }
+                case sc::ValueKind::String:
+                case sc::ValueKind::Enum: {
+                    QString parsed;
+                    if (!ParseQuotedString(trimmed, &parsed))
+                    {
+                        if (outError != nullptr)
+                        {
+                            *outError =
+                                QStringLiteral(
+                                    "Text defaults must use quoted text.") +
+                                QStringLiteral(" Received: ") +
+                                EscapeForMessage(trimmed);
+                        }
+                        return false;
+                    }
+                    if (kind == sc::ValueKind::String)
+                    {
+                        *outValue =
+                            sc::SCValue::FromString(parsed.toStdWString());
+                    } else
+                    {
+                        *outValue =
+                            sc::SCValue::FromEnum(parsed.toStdWString());
+                    }
+                    return true;
+                }
+                case sc::ValueKind::RecordId: {
+                    bool ok = false;
+                    const qlonglong value = trimmed.toLongLong(&ok);
+                    if (!ok)
+                    {
+                        if (outError != nullptr)
+                        {
+                            *outError =
+                                QStringLiteral(
+                                    "Invalid RecordId default value: ") +
+                                EscapeForMessage(trimmed);
+                        }
+                        return false;
+                    }
+                    *outValue = sc::SCValue::FromRecordId(
+                        static_cast<sc::RecordId>(value));
+                    return true;
+                }
+                case sc::ValueKind::Null:
+                case sc::ValueKind::Binary:
+                default:
+                    if (outError != nullptr)
+                    {
+                        *outError = QStringLiteral(
+                            "Default values are not supported "
+                            "for this column type.");
+                    }
+                    return false;
+            }
+        }
+
         bool ParseColumnDeclaration(const QString& line,
                                     sc::SCColumnDef* outColumn,
-                                    QStringList* outWarnings,
-                                    QString* outError)
+                                    QStringList* outWarnings, QString* outError)
         {
             if (outColumn == nullptr)
             {
                 return false;
             }
 
-            const QRegularExpression regex(QStringLiteral(
-                "^\\s*\\.Column\\(\\s*\"((?:\\\\.|[^\"])*)\"\\s*,\\s*SCType::([A-Za-z0-9_]+)\\s*\\)\\s*$"));
+            const QRegularExpression regex(
+                QStringLiteral("^\\s*\\.Column\\(\\s*\"((?:\\\\.|[^\"])*)\"\\s*"
+                               ",\\s*SCType::([A-Za-z0-9_]+)\\s*\\)\\s*$"));
             const auto match = regex.match(line);
             if (!match.hasMatch())
             {
@@ -231,16 +364,16 @@ namespace StableCore::Storage::Editor
         }
 
         bool ParseIndexDeclaration(const QString& line, QString* outName,
-                                   QStringList* outColumns,
-                                   QString* outError)
+                                   QStringList* outColumns, QString* outError)
         {
             if (outName == nullptr || outColumns == nullptr)
             {
                 return false;
             }
 
-            const QRegularExpression sameLineRegex(QStringLiteral(
-                "^\\s*\\.Index\\(\\s*\"((?:\\\\.|[^\"])*)\"\\s*\\)\\.Columns\\((.*)\\)\\s*;?\\s*$"));
+            const QRegularExpression sameLineRegex(
+                QStringLiteral("^\\s*\\.Index\\(\\s*\"((?:\\\\.|[^\"])*)\"\\s*"
+                               "\\)\\.Columns\\((.*)\\)\\s*;?\\s*$"));
             const auto sameLineMatch = sameLineRegex.match(line);
             if (sameLineMatch.hasMatch())
             {
@@ -298,15 +431,15 @@ namespace StableCore::Storage::Editor
             return false;
         }
 
-        const QRegularExpression macroRegex(
-            QStringLiteral("\\bSC_SCHEMA_TABLE\\(\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*\\)"));
+        const QRegularExpression macroRegex(QStringLiteral(
+            "\\bSC_SCHEMA_TABLE\\(\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*\\)"));
         const auto macroMatch = macroRegex.match(text);
         if (!macroMatch.hasMatch())
         {
             if (outError != nullptr)
             {
-                *outError = QStringLiteral(
-                    "SC_SCHEMA_TABLE(...) macro was not found.");
+                *outError =
+                    QStringLiteral("SC_SCHEMA_TABLE(...) macro was not found.");
             }
             return false;
         }
@@ -315,8 +448,7 @@ namespace StableCore::Storage::Editor
         outResult->tableName = outResult->tableMacroName;
 
         QStringList lines = text.split(
-            QRegularExpression(QStringLiteral("\\r?\\n")),
-            Qt::KeepEmptyParts);
+            QRegularExpression(QStringLiteral("\\r?\\n")), Qt::KeepEmptyParts);
 
         bool inBlock = false;
         bool haveCurrentColumn = false;
@@ -386,17 +518,17 @@ namespace StableCore::Storage::Editor
                 if (tableName.compare(outResult->tableMacroName,
                                       Qt::CaseInsensitive) != 0)
                 {
-                    outResult->warnings.push_back(
-                        QStringLiteral(
-                            "Table(\"...\") name differs from the "
-                            "SC_SCHEMA_TABLE(...) macro name; the macro name "
-                            "will be used as the created table name."));
+                    outResult->warnings.push_back(QStringLiteral(
+                        "Table(\"...\") name differs from the "
+                        "SC_SCHEMA_TABLE(...) macro name; the macro name "
+                        "will be used as the created table name."));
                 }
                 continue;
             }
 
-            const QRegularExpression descriptionRegex(QStringLiteral(
-                "^\\s*\\.Description\\(\\s*\"((?:\\\\.|[^\"])*)\"\\s*\\)\\s*;?\\s*$"));
+            const QRegularExpression descriptionRegex(
+                QStringLiteral("^\\s*\\.Description\\(\\s*\"((?:\\\\.|[^\"])*)"
+                               "\"\\s*\\)\\s*;?\\s*$"));
             const auto descriptionMatch = descriptionRegex.match(line);
             if (descriptionMatch.hasMatch())
             {
@@ -412,8 +544,9 @@ namespace StableCore::Storage::Editor
                 continue;
             }
 
-            const QRegularExpression primaryKeyRegex(QStringLiteral(
-                "^\\s*\\.PrimaryKey\\(\\s*\"((?:\\\\.|[^\"])*)\"\\s*\\)\\s*;?\\s*$"));
+            const QRegularExpression primaryKeyRegex(
+                QStringLiteral("^\\s*\\.PrimaryKey\\(\\s*\"((?:\\\\.|[^\"])*)"
+                               "\"\\s*\\)\\s*;?\\s*$"));
             const auto primaryKeyMatch = primaryKeyRegex.match(line);
             if (primaryKeyMatch.hasMatch())
             {
@@ -437,7 +570,8 @@ namespace StableCore::Storage::Editor
 
             QString indexName;
             QStringList indexColumns;
-            if (ParseIndexDeclaration(line, &indexName, &indexColumns, outError))
+            if (ParseIndexDeclaration(line, &indexName, &indexColumns,
+                                      outError))
             {
                 flushColumn();
                 if (!indexName.isEmpty())
@@ -460,8 +594,24 @@ namespace StableCore::Storage::Editor
 
             if (haveCurrentColumn)
             {
-                const QRegularExpression notNullRegex(QStringLiteral(
-                    "^\\s*\\.NotNull\\(\\)\\s*;?\\s*$"));
+                const QRegularExpression defaultRegex(QStringLiteral(
+                    "^\\s*\\.Default\\(\\s*(.*)\\s*\\)\\s*;?\\s*$"));
+                const auto defaultMatch = defaultRegex.match(line);
+                if (defaultMatch.hasMatch())
+                {
+                    sc::SCValue defaultValue;
+                    if (!ParseDefaultValueLiteral(defaultMatch.captured(1),
+                                                  currentColumn.valueKind,
+                                                  &defaultValue, outError))
+                    {
+                        return false;
+                    }
+                    currentColumn.defaultValue = std::move(defaultValue);
+                    continue;
+                }
+
+                const QRegularExpression notNullRegex(
+                    QStringLiteral("^\\s*\\.NotNull\\(\\)\\s*;?\\s*$"));
                 if (notNullRegex.match(line).hasMatch())
                 {
                     currentColumn.nullable = false;
@@ -469,7 +619,8 @@ namespace StableCore::Storage::Editor
                 }
 
                 const QRegularExpression refRegex(QStringLiteral(
-                    "^\\s*\\.Ref\\(\\s*\"((?:\\\\.|[^\"])*)\"\\s*,\\s*\"((?:\\\\.|[^\"])*)\"\\s*\\)\\s*;?\\s*$"));
+                    "^\\s*\\.Ref\\(\\s*\"((?:\\\\.|[^\"])*)\"\\s*,\\s*\"((?:"
+                    "\\\\.|[^\"])*)\"\\s*\\)\\s*;?\\s*$"));
                 const auto refMatch = refRegex.match(line);
                 if (refMatch.hasMatch())
                 {
@@ -481,10 +632,12 @@ namespace StableCore::Storage::Editor
                 }
             }
 
-            if (haveCurrentIndex && line.startsWith(QStringLiteral(".Columns(")))
+            if (haveCurrentIndex &&
+                line.startsWith(QStringLiteral(".Columns(")))
             {
-                if (!ParseQuotedList(line.mid(QStringLiteral(".Columns").size()),
-                                     &indexColumns, outError))
+                if (!ParseQuotedList(
+                        line.mid(QStringLiteral(".Columns").size()),
+                        &indexColumns, outError))
                 {
                     return false;
                 }
@@ -525,15 +678,14 @@ namespace StableCore::Storage::Editor
         {
             outResult->warnings.push_back(
                 QStringLiteral("No explicit primary key was imported."));
-        }
-        else
+        } else
         {
             const auto columnIt = std::find_if(
                 outResult->columns.begin(), outResult->columns.end(),
                 [&outResult](const sc::SCColumnDef& column) {
                     return QString::fromStdWString(column.name)
-                        .compare(outResult->primaryKeyColumnName,
-                                 Qt::CaseInsensitive) == 0;
+                               .compare(outResult->primaryKeyColumnName,
+                                        Qt::CaseInsensitive) == 0;
                 });
             if (columnIt == outResult->columns.end())
             {
@@ -569,8 +721,9 @@ namespace StableCore::Storage::Editor
                 const auto columnIt = std::find_if(
                     outResult->columns.begin(), outResult->columns.end(),
                     [&columnName](const sc::SCColumnDef& column) {
-                        return QString::fromStdWString(column.name).compare(
-                                   columnName, Qt::CaseInsensitive) == 0;
+                        return QString::fromStdWString(column.name)
+                                   .compare(columnName, Qt::CaseInsensitive) ==
+                               0;
                     });
                 if (columnIt == outResult->columns.end())
                 {
@@ -595,7 +748,8 @@ namespace StableCore::Storage::Editor
         {
             if (outError != nullptr)
             {
-                *outError = QStringLiteral("No column declarations were found.");
+                *outError =
+                    QStringLiteral("No column declarations were found.");
             }
             return false;
         }

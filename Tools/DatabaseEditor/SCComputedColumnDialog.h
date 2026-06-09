@@ -25,8 +25,7 @@ namespace StableCore::Storage::Editor
         SCComputedColumnDialog(
             const QString& currentTableName,
             const StableCore::Storage::SCComputedColumnDef& initialValue,
-            bool lockName,
-            QWidget* parent = nullptr);
+            bool lockName, QWidget* parent = nullptr);
 
         bool BuildDefinition(
             StableCore::Storage::SCComputedColumnDef* outColumn,

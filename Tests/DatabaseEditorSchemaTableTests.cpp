@@ -9,8 +9,7 @@ namespace editor = StableCore::Storage::Editor;
 namespace
 {
 
-    sc::SCColumnDef MakeColumn(const wchar_t* name, sc::ValueKind kind,
-                               bool nullable = false)
+    sc::SCColumnDef MakeColumn(const wchar_t* name, sc::ValueKind kind, bool nullable = false)
     {
         sc::SCColumnDef column;
         column.name = name;
@@ -18,6 +17,22 @@ namespace
         column.valueKind = kind;
         column.nullable = nullable;
         return column;
+    }
+
+    void ExpectStringValue(const sc::SCValue& value, const wchar_t* expected)
+    {
+        ASSERT_EQ(value.GetKind(), sc::ValueKind::String);
+        std::wstring actual;
+        EXPECT_EQ(value.AsStringCopy(&actual), sc::SC_OK);
+        EXPECT_EQ(actual, expected);
+    }
+
+    void ExpectEnumValue(const sc::SCValue& value, const wchar_t* expected)
+    {
+        ASSERT_EQ(value.GetKind(), sc::ValueKind::Enum);
+        std::wstring actual;
+        EXPECT_EQ(value.AsEnumCopy(&actual), sc::SC_OK);
+        EXPECT_EQ(actual, expected);
     }
 
 }  // namespace
@@ -40,22 +55,17 @@ TEST(DatabaseEditorSchemaTable, ParsesSchemaDescriptionForCreateTable)
 
     editor::SCSchemaTableImportResult result;
     QString error;
-    EXPECT_TRUE(editor::ParseSchemaTableDescription(schemaText, &result, &error))
-        << error.toStdString();
+    EXPECT_TRUE(editor::ParseSchemaTableDescription(schemaText, &result, &error)) << error.toStdString();
 
     EXPECT_EQ(result.tableMacroName, QStringLiteral("ProjectInfo"));
     EXPECT_EQ(result.tableName, QStringLiteral("ProjectInfo"));
     EXPECT_EQ(result.columns.size(), 5);
     EXPECT_EQ(result.columns[0].name, L"GUID");
     EXPECT_EQ(result.columns[1].name, L"ProjectName");
-    EXPECT_EQ(QString::fromStdWString(result.columns[1].displayName),
-              QStringLiteral("Project Name"));
-    EXPECT_EQ(QString::fromStdWString(result.columns[2].displayName),
-              QStringLiteral("Project Code"));
-    EXPECT_EQ(QString::fromStdWString(result.columns[3].displayName),
-              QStringLiteral("Owner Unit"));
-    EXPECT_EQ(QString::fromStdWString(result.columns[4].displayName),
-              QStringLiteral("Created At"));
+    EXPECT_EQ(QString::fromStdWString(result.columns[1].displayName), QStringLiteral("Project Name"));
+    EXPECT_EQ(QString::fromStdWString(result.columns[2].displayName), QStringLiteral("Project Code"));
+    EXPECT_EQ(QString::fromStdWString(result.columns[3].displayName), QStringLiteral("Owner Unit"));
+    EXPECT_EQ(QString::fromStdWString(result.columns[4].displayName), QStringLiteral("Created At"));
     EXPECT_TRUE(result.primaryKeyColumnName.isEmpty());
     EXPECT_TRUE(result.indexes.isEmpty());
     EXPECT_FALSE(result.warnings.isEmpty());
@@ -74,18 +84,67 @@ TEST(DatabaseEditorSchemaTable, ParsesNotNullWithTrailingSemicolon)
 
     editor::SCSchemaTableImportResult result;
     QString error;
-    EXPECT_TRUE(editor::ParseSchemaTableDescription(schemaText, &result, &error))
-        << error.toStdString();
+    EXPECT_TRUE(editor::ParseSchemaTableDescription(schemaText, &result, &error)) << error.toStdString();
 
     ASSERT_EQ(result.columns.size(), 2);
     EXPECT_FALSE(result.columns[0].nullable);
     EXPECT_FALSE(result.columns[1].nullable);
     for (const QString& warning : result.warnings)
     {
-        EXPECT_FALSE(warning.startsWith(
-            QStringLiteral("Ignored schema token:")))
-            << warning.toStdString();
+        EXPECT_FALSE(warning.startsWith(QStringLiteral("Ignored schema token:"))) << warning.toStdString();
     }
+}
+
+TEST(DatabaseEditorSchemaTable, ParsesDefaultValues)
+{
+    const QString schemaText = QStringLiteral(R"(SC_SCHEMA_TABLE(Beam)
+{
+    Table("Beam")
+        .Column("Width", SCType::Int64)
+            .Default(300)
+        .Column("Length", SCType::Double)
+            .Default(12.5)
+        .Column("Active", SCType::Bool)
+            .Default(true)
+        .Column("Name", SCType::String)
+            .Default("")
+        .Column("Alias", SCType::String)
+            .Default("Beam \"A\"")
+        .Column("Category", SCType::Enum)
+            .Default("Primary")
+        .Column("FloorRef", SCType::RecordId)
+            .Default(42);
+})");
+
+    editor::SCSchemaTableImportResult result;
+    QString error;
+    EXPECT_TRUE(editor::ParseSchemaTableDescription(schemaText, &result, &error)) << error.toStdString();
+
+    ASSERT_EQ(result.columns.size(), 7);
+
+    EXPECT_EQ(result.columns[0].defaultValue.GetKind(), sc::ValueKind::Int64);
+    std::int64_t widthDefault = 0;
+    EXPECT_EQ(result.columns[0].defaultValue.AsInt64(&widthDefault), sc::SC_OK);
+    EXPECT_EQ(widthDefault, 300);
+
+    EXPECT_EQ(result.columns[1].defaultValue.GetKind(), sc::ValueKind::Double);
+    double lengthDefault = 0.0;
+    EXPECT_EQ(result.columns[1].defaultValue.AsDouble(&lengthDefault), sc::SC_OK);
+    EXPECT_DOUBLE_EQ(lengthDefault, 12.5);
+
+    EXPECT_EQ(result.columns[2].defaultValue.GetKind(), sc::ValueKind::Bool);
+    bool activeDefault = false;
+    EXPECT_EQ(result.columns[2].defaultValue.AsBool(&activeDefault), sc::SC_OK);
+    EXPECT_TRUE(activeDefault);
+
+    ExpectStringValue(result.columns[3].defaultValue, L"");
+    ExpectStringValue(result.columns[4].defaultValue, L"Beam \"A\"");
+    ExpectEnumValue(result.columns[5].defaultValue, L"Primary");
+
+    EXPECT_EQ(result.columns[6].defaultValue.GetKind(), sc::ValueKind::RecordId);
+    sc::RecordId floorRefDefault = 0;
+    EXPECT_EQ(result.columns[6].defaultValue.AsRecordId(&floorRefDefault), sc::SC_OK);
+    EXPECT_EQ(floorRefDefault, 42);
 }
 
 TEST(DatabaseEditorSchemaTable, UsesMacroNameAsCreatedTableName)
@@ -100,8 +159,7 @@ TEST(DatabaseEditorSchemaTable, UsesMacroNameAsCreatedTableName)
 
     editor::SCSchemaTableImportResult result;
     QString error;
-    EXPECT_TRUE(editor::ParseSchemaTableDescription(schemaText, &result, &error))
-        << error.toStdString();
+    EXPECT_TRUE(editor::ParseSchemaTableDescription(schemaText, &result, &error)) << error.toStdString();
 
     EXPECT_EQ(result.tableMacroName, QStringLiteral("Beam"));
     EXPECT_EQ(result.tableName, QStringLiteral("Beam"));
@@ -118,24 +176,45 @@ TEST(DatabaseEditorSchemaTable, BuildsCurrentTableSchemaCode)
     sc::SCColumnDef id = MakeColumn(L"Id", sc::ValueKind::Int64);
     id.displayName = L"Unique element ID";
     id.nullable = false;
+    id.defaultValue = sc::SCValue::FromInt64(7);
     snapshot.columns.push_back(id);
 
-    sc::SCColumnDef floorId = MakeColumn(L"FloorId", sc::ValueKind::Int64);
-    floorId.displayName = L"Belongs to floor";
-    floorId.nullable = false;
-    floorId.referenceTable = L"Floor";
-    snapshot.columns.push_back(floorId);
+    sc::SCColumnDef width = MakeColumn(L"Width", sc::ValueKind::Double);
+    width.displayName = L"Beam width";
+    width.nullable = false;
+    width.defaultValue = sc::SCValue::FromDouble(12.5);
+    snapshot.columns.push_back(width);
 
-    sc::SCColumnDef elementType =
-        MakeColumn(L"ElementType", sc::ValueKind::Int64);
-    elementType.displayName = L"Element type";
-    elementType.nullable = false;
-    snapshot.columns.push_back(elementType);
+    sc::SCColumnDef active = MakeColumn(L"Active", sc::ValueKind::Bool);
+    active.displayName = L"Enabled flag";
+    active.nullable = false;
+    active.defaultValue = sc::SCValue::FromBool(true);
+    snapshot.columns.push_back(active);
 
     sc::SCColumnDef name = MakeColumn(L"Name", sc::ValueKind::String);
     name.displayName = L"Element name";
     name.nullable = false;
+    name.defaultValue = sc::SCValue::FromString(L"");
     snapshot.columns.push_back(name);
+
+    sc::SCColumnDef alias = MakeColumn(L"Alias", sc::ValueKind::String);
+    alias.displayName = L"Display alias";
+    alias.nullable = false;
+    alias.defaultValue = sc::SCValue::FromString(L"Beam \"A\"");
+    snapshot.columns.push_back(alias);
+
+    sc::SCColumnDef category = MakeColumn(L"Category", sc::ValueKind::Enum);
+    category.displayName = L"Category";
+    category.nullable = false;
+    category.defaultValue = sc::SCValue::FromEnum(L"Primary");
+    snapshot.columns.push_back(category);
+
+    sc::SCColumnDef floorId = MakeColumn(L"FloorId", sc::ValueKind::RecordId);
+    floorId.displayName = L"Belongs to floor";
+    floorId.nullable = false;
+    floorId.referenceTable = L"Floor";
+    floorId.defaultValue = sc::SCValue::FromRecordId(42);
+    snapshot.columns.push_back(floorId);
 
     sc::SCConstraintDef primaryKey;
     primaryKey.kind = sc::SCConstraintKind::PrimaryKey;
@@ -157,17 +236,32 @@ TEST(DatabaseEditorSchemaTable, BuildsCurrentTableSchemaCode)
         "        .PrimaryKey(\"Id\")\n"
         "        .Column(\"Id\", SCType::Int64)\n"
         "            .NotNull()\n"
+        "            .Default(7)\n"
         "            .Description(\"Unique element ID\")\n"
-        "        .Column(\"FloorId\", SCType::Int64)\n"
+        "        .Column(\"Width\", SCType::Double)\n"
         "            .NotNull()\n"
-        "            .Ref(\"Floor\", \"Id\")\n"
-        "            .Description(\"Belongs to floor\")\n"
-        "        .Column(\"ElementType\", SCType::Int64)\n"
+        "            .Default(12.5)\n"
+        "            .Description(\"Beam width\")\n"
+        "        .Column(\"Active\", SCType::Bool)\n"
         "            .NotNull()\n"
-        "            .Description(\"Element type\")\n"
+        "            .Default(true)\n"
+        "            .Description(\"Enabled flag\")\n"
         "        .Column(\"Name\", SCType::String)\n"
         "            .NotNull()\n"
+        "            .Default(\"\")\n"
         "            .Description(\"Element name\")\n"
+        "        .Column(\"Alias\", SCType::String)\n"
+        "            .NotNull()\n"
+        "            .Default(\"Beam \\\"A\\\"\")\n"
+        "            .Description(\"Display alias\")\n"
+        "        .Column(\"Category\", SCType::Enum)\n"
+        "            .NotNull()\n"
+        "            .Default(\"Primary\")\n"
+        "        .Column(\"FloorId\", SCType::RecordId)\n"
+        "            .NotNull()\n"
+        "            .Default(42)\n"
+        "            .Ref(\"Floor\", \"Id\")\n"
+        "            .Description(\"Belongs to floor\")\n"
         "        .Index(\"idx_Element_FloorId\").Columns(\"FloorId\");\n"
         "}\n");
 

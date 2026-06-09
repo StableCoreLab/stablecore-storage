@@ -17,10 +17,8 @@ TEST(QueryPlannerBridgeTests, LegacyFindRecordsPlanIsNormalized)
     ASSERT_EQ(plan.conditionGroups.size(), 1u);
     EXPECT_EQ(plan.conditionGroups.front().logic, QueryLogicOperator::And);
     ASSERT_EQ(plan.conditionGroups.front().conditions.size(), 1u);
-    EXPECT_EQ(plan.conditionGroups.front().conditions.front().fieldName,
-              L"Width");
-    EXPECT_EQ(plan.conditionGroups.front().conditions.front().op,
-              QueryConditionOperator::Equal);
+    EXPECT_EQ(plan.conditionGroups.front().conditions.front().fieldName, L"Width");
+    EXPECT_EQ(plan.conditionGroups.front().conditions.front().op, QueryConditionOperator::Equal);
     EXPECT_EQ(plan.state, QueryPlanState::Unsupported);
 }
 
@@ -33,10 +31,13 @@ TEST(QueryPlannerBridgeTests, PlannerClassifiesDirectIndex)
     const ErrorCode rc = planner->BuildPlan(
         QueryTarget{L"Beam", QueryTargetType::Table},
         {QueryConditionGroup{QueryLogicOperator::And,
-                             {QueryCondition{L"Width",
-                                             QueryConditionOperator::Equal,
-                                             {SCValue::FromInt64(300)}}}}},
-        QueryLogicOperator::And, {}, {}, {}, {}, &plan);
+                             {QueryCondition{L"Width", QueryConditionOperator::Equal, {SCValue::FromInt64(300)}}}}},
+        QueryLogicOperator::And,
+        {},
+        {},
+        {},
+        {},
+        &plan);
 
     EXPECT_EQ(rc, SC_OK);
     EXPECT_EQ(plan.state, QueryPlanState::DirectIndex);
@@ -52,11 +53,15 @@ TEST(QueryPlannerBridgeTests, PlannerClassifiesPartialIndex)
     QueryPlan plan;
     const ErrorCode rc = planner->BuildPlan(
         QueryTarget{L"Beam", QueryTargetType::Table},
-        {QueryConditionGroup{QueryLogicOperator::And,
-                             {QueryCondition{L"Name",
-                                             QueryConditionOperator::StartsWith,
-                                             {SCValue::FromString(L"AB")}}}}},
-        QueryLogicOperator::And, {}, {}, {}, {}, &plan);
+        {QueryConditionGroup{
+            QueryLogicOperator::And,
+            {QueryCondition{L"Name", QueryConditionOperator::StartsWith, {SCValue::FromString(L"AB")}}}}},
+        QueryLogicOperator::And,
+        {},
+        {},
+        {},
+        {},
+        &plan);
 
     EXPECT_EQ(rc, SC_OK);
     EXPECT_EQ(plan.state, QueryPlanState::PartialIndex);
@@ -73,20 +78,20 @@ TEST(QueryPlannerBridgeTests, PlannerClassifiesFallbackScanForOrGroups)
         QueryTarget{L"Beam", QueryTargetType::Table},
         {
             QueryConditionGroup{QueryLogicOperator::And,
-                                {QueryCondition{L"Width",
-                                                QueryConditionOperator::Equal,
-                                                {SCValue::FromInt64(300)}}}},
+                                {QueryCondition{L"Width", QueryConditionOperator::Equal, {SCValue::FromInt64(300)}}}},
             QueryConditionGroup{QueryLogicOperator::And,
-                                {QueryCondition{L"Height",
-                                                QueryConditionOperator::Equal,
-                                                {SCValue::FromInt64(200)}}}},
+                                {QueryCondition{L"Height", QueryConditionOperator::Equal, {SCValue::FromInt64(200)}}}},
         },
-        QueryLogicOperator::Or, {}, {}, {}, {}, &plan);
+        QueryLogicOperator::Or,
+        {},
+        {},
+        {},
+        {},
+        &plan);
 
     EXPECT_EQ(rc, SC_OK);
     EXPECT_EQ(plan.state, QueryPlanState::ScanFallback);
-    EXPECT_TRUE(plan.fallbackReason.find(L"multi-group-or") !=
-                std::wstring::npos);
+    EXPECT_TRUE(plan.fallbackReason.find(L"multi-group-or") != std::wstring::npos);
 }
 
 TEST(QueryPlannerBridgeTests, PlannerCombinesMultipleGroupsWithAndAsDirectIndex)
@@ -99,16 +104,17 @@ TEST(QueryPlannerBridgeTests, PlannerCombinesMultipleGroupsWithAndAsDirectIndex)
         QueryTarget{L"Beam", QueryTargetType::Table},
         {
             QueryConditionGroup{QueryLogicOperator::And,
-                                {QueryCondition{L"Width",
-                                                QueryConditionOperator::Equal,
-                                                {SCValue::FromInt64(300)}}}},
+                                {QueryCondition{L"Width", QueryConditionOperator::Equal, {SCValue::FromInt64(300)}}}},
             QueryConditionGroup{
                 QueryLogicOperator::And,
-                {QueryCondition{L"Height",
-                                QueryConditionOperator::GreaterThan,
-                                {SCValue::FromInt64(100)}}}},
+                {QueryCondition{L"Height", QueryConditionOperator::GreaterThan, {SCValue::FromInt64(100)}}}},
         },
-        QueryLogicOperator::And, {}, {}, {}, {}, &plan);
+        QueryLogicOperator::And,
+        {},
+        {},
+        {},
+        {},
+        &plan);
 
     EXPECT_EQ(rc, SC_OK);
     EXPECT_EQ(plan.state, QueryPlanState::DirectIndex);
@@ -127,16 +133,19 @@ TEST(QueryPlannerBridgeTests, PlannerRejectsUnsupportedWhenFallbackDisallowed)
 
     const ErrorCode rc = planner->BuildPlan(
         QueryTarget{L"Beam", QueryTargetType::Table},
-        {QueryConditionGroup{QueryLogicOperator::And,
-                             {QueryCondition{L"Name",
-                                             QueryConditionOperator::Contains,
-                                             {SCValue::FromString(L"AB")}}}}},
-        QueryLogicOperator::And, {}, {}, {}, constraints, &plan);
+        {QueryConditionGroup{
+            QueryLogicOperator::And,
+            {QueryCondition{L"Name", QueryConditionOperator::Contains, {SCValue::FromString(L"AB")}}}}},
+        QueryLogicOperator::And,
+        {},
+        {},
+        {},
+        constraints,
+        &plan);
 
     EXPECT_EQ(rc, SC_OK);
     EXPECT_EQ(plan.state, QueryPlanState::Unsupported);
-    EXPECT_TRUE(plan.fallbackReason.find(L"fallback-disallowed") !=
-                std::wstring::npos);
+    EXPECT_TRUE(plan.fallbackReason.find(L"fallback-disallowed") != std::wstring::npos);
 }
 
 TEST(QueryPlannerBridgeTests, ExecutionResultCanBeAdaptedToLegacyStatus)
@@ -146,8 +155,7 @@ TEST(QueryPlannerBridgeTests, ExecutionResultCanBeAdaptedToLegacyStatus)
     executionResult.mode = QueryExecutionMode::Unsupported;
 
     ErrorCode legacyRc = SC_OK;
-    const ErrorCode rc = SCQueryBridge::AdaptExecutionResultToLegacyStatus(
-        executionResult, &legacyRc);
+    const ErrorCode rc = SCQueryBridge::AdaptExecutionResultToLegacyStatus(executionResult, &legacyRc);
 
     EXPECT_EQ(rc, SC_OK);
     EXPECT_EQ(legacyRc, SC_E_NOTIMPL);

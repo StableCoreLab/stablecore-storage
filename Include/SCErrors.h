@@ -22,6 +22,8 @@ namespace StableCore::Storage
     constexpr ErrorCode SC_E_COLUMN_EXISTS = 0xA0010007L;
     constexpr ErrorCode SC_E_SCHEMA_VIOLATION = 0xA0010008L;
     constexpr ErrorCode SC_E_READ_ONLY_COLUMN = 0xA0010009L;
+    constexpr ErrorCode SC_E_CONSTRAINT_NOT_FOUND = 0xA001000AL;
+    constexpr ErrorCode SC_E_INDEX_NOT_FOUND = 0xA001000BL;
 
     constexpr ErrorCode SC_E_NO_ACTIVE_EDIT = 0xA0010101L;
     constexpr ErrorCode SC_E_EDIT_MISMATCH = 0xA0010102L;

@@ -148,7 +148,6 @@ namespace StableCore::Storage
                                      SCImportSessionId sessionId,
                                      SCImportRecoveryState* outState);
 
-    ErrorCode AbortImportSession(ISCDatabase* database,
-                                 SCImportSessionId sessionId);
+    ErrorCode AbortImportSession(ISCDatabase* database, SCImportSessionId sessionId);
 
 }  // namespace StableCore::Storage
