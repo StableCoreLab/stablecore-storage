@@ -402,3 +402,127 @@ public:
 - 数据表编�?
 - UI 局部刷�?
 - 后续算量引擎的数据底�?
+
+## 18. Composite Index Usage
+
+复合索引通过 `SCIndexDef` 和 `SCIndexColumnDef` 显式声明，`columns` 的顺序就是索引键顺序。
+
+最常见的用法是在建表完成后，通过 schema 添加一个 `(Width, Name)` 这样的复合索引：
+
+```cpp
+#include "SCStorage.h"
+#include "ISCQuery.h"
+
+namespace sc = StableCore::Storage;
+
+sc::SCSchemaPtr schema;
+beamTable->GetSchema(schema);
+
+sc::SCIndexDef compositeIndex;
+compositeIndex.name = L"idx_Beam_Width_Name";
+compositeIndex.columns.push_back(sc::SCIndexColumnDef{L"Width", false});
+compositeIndex.columns.push_back(sc::SCIndexColumnDef{L"Name", false});
+
+EXPECT_EQ(schema->AddIndex(compositeIndex), sc::SC_OK);
+```
+
+如果某一列需要降序排序覆盖，可以把对应列的 `descending` 设为 `true`：
+
+```cpp
+sc::SCIndexDef orderedIndex;
+orderedIndex.name = L"idx_Beam_Width_Name_Desc";
+orderedIndex.columns.push_back(sc::SCIndexColumnDef{L"Width", false});
+orderedIndex.columns.push_back(sc::SCIndexColumnDef{L"Name", true});
+
+EXPECT_EQ(schema->AddIndex(orderedIndex), sc::SC_OK);
+```
+
+查询侧推荐走 `IQueryPlanner` + `ExecuteQueryPlan(...)`。下面这个例子要求查询必须命中索引，不能退化成扫描：
+
+```cpp
+auto planner = sc::CreateDefaultQueryPlanner();
+ASSERT_NE(planner, nullptr);
+
+sc::QueryPlan plan;
+sc::QueryConstraints constraints;
+constraints.requireIndex = true;
+constraints.allowFallbackScan = false;
+
+EXPECT_EQ(
+    planner->BuildPlan(sc::QueryTarget{L"Beam", sc::QueryTargetType::Table},
+                       {sc::QueryConditionGroup{
+                           sc::QueryLogicOperator::And,
+                           {sc::QueryCondition{L"Width",
+                                               sc::QueryConditionOperator::Equal,
+                                               {sc::SCValue::FromInt64(100)}},
+                            sc::QueryCondition{L"Name",
+                                               sc::QueryConditionOperator::Equal,
+                                               {sc::SCValue::FromString(L"Alpha")}}}}},
+                       sc::QueryLogicOperator::And,
+                       {},
+                       {},
+                       {},
+                       constraints,
+                       &plan),
+    sc::SC_OK);
+
+sc::SCRecordCursorPtr cursor;
+sc::QueryExecutionContext context;
+context.backendKind = sc::QueryBackendKind::SQLite;
+context.database = db.Get();
+context.backendHandle = db.Get();
+context.resultCursor = &cursor;
+
+sc::QueryExecutionResult result;
+EXPECT_EQ(sc::ExecuteQueryPlan(plan, context, &result), sc::SC_OK);
+```
+
+使用建议：
+
+- 复合索引按“从左到右”的前缀匹配。索引是 `(Width, Name)` 时，`Width = 100` 或 `Width = 100 AND Name = "Alpha"` 能命中；只有 `Name = "Alpha"` 通常不能单独利用这个索引。
+- 末尾列可以做范围条件，例如 `StartsWith`、`Between`、`GreaterThanOrEqual`。这类路径通常仍会用到复合索引，但执行结果可能表现为 `QueryExecutionMode::PartialIndex`。
+- 纯等值精确命中通常会表现为 `QueryExecutionMode::DirectIndex`。
+- 如果业务要求“未命中索引就直接失败”，请同时设置 `constraints.requireIndex = true` 和 `constraints.allowFallbackScan = false`。
+- 复合索引属于显式 schema 对象，应通过 `schema->AddIndex(...)` / `schema->RemoveIndex(...)` 或 schema patch 维护，不要直接改底层 SQLite 表。
+
+三列复合索引的典型场景是“前两列等值 + 尾列范围”。例如索引 `(Width, Name, Height)`：
+
+```cpp
+sc::SCIndexDef tripleIndex;
+tripleIndex.name = L"idx_Beam_Width_Name_Height";
+tripleIndex.columns.push_back(sc::SCIndexColumnDef{L"Width", false});
+tripleIndex.columns.push_back(sc::SCIndexColumnDef{L"Name", false});
+tripleIndex.columns.push_back(sc::SCIndexColumnDef{L"Height", false});
+
+EXPECT_EQ(schema->AddIndex(tripleIndex), sc::SC_OK);
+```
+
+对应查询可以写成“`Width = 100 AND Name = \"Alpha\" AND Height >= 20`”，这类路径通常会命中复合索引，并因为尾列是范围条件而表现为 `QueryExecutionMode::PartialIndex`：
+
+```cpp
+sc::QueryPlan rangePlan;
+sc::QueryConstraints rangeConstraints;
+rangeConstraints.requireIndex = true;
+rangeConstraints.allowFallbackScan = false;
+
+EXPECT_EQ(
+    planner->BuildPlan(sc::QueryTarget{L"Beam", sc::QueryTargetType::Table},
+                       {sc::QueryConditionGroup{
+                           sc::QueryLogicOperator::And,
+                           {sc::QueryCondition{L"Width",
+                                               sc::QueryConditionOperator::Equal,
+                                               {sc::SCValue::FromInt64(100)}},
+                            sc::QueryCondition{L"Name",
+                                               sc::QueryConditionOperator::Equal,
+                                               {sc::SCValue::FromString(L"Alpha")}},
+                            sc::QueryCondition{L"Height",
+                                               sc::QueryConditionOperator::GreaterThanOrEqual,
+                                               {sc::SCValue::FromInt64(20)}}}}},
+                       sc::QueryLogicOperator::And,
+                       {sc::SortSpec{L"Height", sc::QueryOrderDirection::Ascending, false}},
+                       {},
+                       {},
+                       rangeConstraints,
+                       &rangePlan),
+    sc::SC_OK);
+```
