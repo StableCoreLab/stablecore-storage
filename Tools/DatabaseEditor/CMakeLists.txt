@@ -1,4 +1,4 @@
-add_executable(SCStorageDatabaseEditor
+add_executable(SCStorageDatabaseEditor WIN32
     SCAddColumnDialog.cpp
     SCAddColumnDialog.h
     SCComputedColumnDialog.cpp
@@ -22,6 +22,9 @@ add_executable(SCStorageDatabaseEditor
     SCRelationPickerDialog.cpp
     SCRelationPickerDialog.h
     main.cpp
+)
+set_target_properties(SCStorageDatabaseEditor PROPERTIES
+    MACOSX_BUNDLE TRUE
 )
 SCStorageConfigureOutputDirs(SCStorageDatabaseEditor)
 SCStorageSourceGroupTree("${CMAKE_CURRENT_SOURCE_DIR}"

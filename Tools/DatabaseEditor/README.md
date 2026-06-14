@@ -1,6 +1,6 @@
 # StableCore Database Editor
 
-`StableCore Database Editor` is the Qt Widgets desktop tool for working with `SCStorage` SQLite databases.
+`StableCore Database Editor` is the Qt Widgets desktop application for working with `SCStorage` SQLite databases.
 
 Current capabilities:
 
@@ -29,6 +29,8 @@ cmake -S Storage -B Build\StorageDbEditor `
   -DCMAKE_PREFIX_PATH=C:\Qt\6.8.0\msvc2022_64
 cmake --build Build\StorageDbEditor --config Release --target SCStorageDatabaseEditor
 ```
+
+On Windows, the target is built as a GUI desktop program rather than a console executable.
 
 If CMake cannot find `Qt6Config.cmake`, verify:
 
