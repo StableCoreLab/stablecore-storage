@@ -31,6 +31,8 @@ namespace StableCore::Storage
     {
         QueryBackendKind backendKind{QueryBackendKind::Unknown};
         ISCDatabase* database{nullptr};
+        // Optional backend-private exact handle for internal bridges. Callers
+        // must not assume cross-interface pointer identity.
         void* backendHandle{nullptr};
         void* resultCursor{nullptr};
         QueryExecutionOptions options;
@@ -130,6 +132,23 @@ namespace StableCore::Storage
         Unsupported,
     };
 
+    struct QueryMatchedIndexSpec
+    {
+        std::wstring indexName;
+        std::vector<std::wstring> keyColumns;
+        std::uint32_t matchedPrefixLength{0};
+        std::uint32_t equalityPrefixLength{0};
+        bool hasRangeCondition{false};
+        bool orderCovered{false};
+        bool exactOrderCovered{false};
+    };
+
+    struct QueryPushdownSpec
+    {
+        std::vector<QueryCondition> pushdownConditions;
+        std::vector<QueryCondition> residualConditions;
+    };
+
     struct QueryPlan
     {
         QueryTarget target;
@@ -148,6 +167,8 @@ namespace StableCore::Storage
         std::uint64_t estimatedCost{0};
         std::uint32_t pushdownConditionCount{0};
         std::uint32_t fallbackConditionCount{0};
+        std::optional<QueryMatchedIndexSpec> matchedIndex;
+        QueryPushdownSpec pushdown;
     };
 
     // Query execution result is observability-first: it must expose the path

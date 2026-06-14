@@ -22,6 +22,7 @@
 #include "ISCDiagnostics.h"
 #include "SCBatch.h"
 #include "SCMigration.h"
+#include "SCQuerySqliteIndexAccess.h"
 #include "SCRefCounted.h"
 
 #if defined(_WIN32)
@@ -1638,8 +1639,72 @@ namespace StableCore::Storage
             JournalEntry entry;
         };
 
+        struct CompositeIndexEncodedKey
+        {
+            std::vector<std::uint8_t> prefix1;
+            std::vector<std::uint8_t> prefix2;
+            std::vector<std::uint8_t> prefix3;
+            std::vector<std::uint8_t> full;
+        };
+
+        struct CompositeIndexLookupBounds
+        {
+            std::uint32_t equalityPrefixLength{0};
+            std::vector<std::uint8_t> equalityPrefixKey;
+            std::uint32_t exactPrefixLength{0};
+            std::vector<std::uint8_t> exactPrefixKey;
+            bool exactMatch{false};
+            bool hasLowerBound{false};
+            bool includeLowerBound{true};
+            std::vector<std::uint8_t> lowerBound;
+            bool hasUpperBound{false};
+            bool includeUpperBound{true};
+            std::vector<std::uint8_t> upperBound;
+        };
+
         class SqliteDatabase;
         class SqliteTable;
+
+        constexpr std::size_t kCompositeIndexMaxColumns = 3;
+
+        bool IsCompositeIndexExplicit(const SCIndexDef& def)
+        {
+            return def.sourceKind == SCSchemaSourceKind::Explicit && !def.columns.empty() &&
+                   def.columns.size() <= kCompositeIndexMaxColumns;
+        }
+
+        bool IsEqualityIndexOperator(QueryConditionOperator op)
+        {
+            return op == QueryConditionOperator::Equal;
+        }
+
+        bool IsRangeIndexOperator(QueryConditionOperator op)
+        {
+            switch (op)
+            {
+                case QueryConditionOperator::LessThan:
+                case QueryConditionOperator::LessThanOrEqual:
+                case QueryConditionOperator::GreaterThan:
+                case QueryConditionOperator::GreaterThanOrEqual:
+                case QueryConditionOperator::Between:
+                case QueryConditionOperator::StartsWith:
+                    return true;
+                case QueryConditionOperator::Equal:
+                case QueryConditionOperator::NotEqual:
+                case QueryConditionOperator::In:
+                case QueryConditionOperator::IsNull:
+                case QueryConditionOperator::IsNotNull:
+                case QueryConditionOperator::Contains:
+                case QueryConditionOperator::EndsWith:
+                default:
+                    return false;
+            }
+        }
+
+        std::wstring BuildQueryIndexStorageKey(std::int64_t tableRowId, const std::wstring& indexName)
+        {
+            return std::to_wstring(tableRowId) + L"|" + indexName;
+        }
 
         ErrorCode ValidateValueKind(ValueKind expected, const SCValue& value, bool nullable)
         {
@@ -2561,8 +2626,11 @@ namespace StableCore::Storage
 
         class SqliteDatabase final : public ISCDatabase,
                                      public ISCDatabaseDiagnosticsProvider,
+                                     public IQueryIndexProvider,
+                                     public IQueryIndexMaintainer,
                                      public IReferenceIndexProvider,
                                      public IReferenceIndexMaintainer,
+                                     public ISqliteQueryIndexAccess,
                                      public SCRefCountedObject
         {
         public:
@@ -2611,6 +2679,8 @@ namespace StableCore::Storage
                 return schemaVersion_;
             }
             ErrorCode CollectDiagnostics(SCStorageHealthReport* outReport) const override;
+            ErrorCode CheckQueryIndex(QueryIndexCheckResult* outResult) const override;
+            ErrorCode RebuildQueryIndex() override;
             ErrorCode GetReferencesBySource(const std::wstring& sourceTable,
                                             RecordId sourceRecordId,
                                             std::vector<ReferenceRecord>* outRecords) const override;
@@ -2622,6 +2692,10 @@ namespace StableCore::Storage
             ErrorCode RebuildReferenceIndexes() override;
             ErrorCode CommitReferenceDelta(const ReferenceIndex& forwardDelta,
                                            const ReverseReferenceIndex& reverseDelta) override;
+            ErrorCode AnalyzeCompositeIndexPlan(const QueryPlan& inputPlan, QueryPlan* outPlan) override;
+            ErrorCode CollectCompositeIndexRecordIds(const QueryPlan& analyzedPlan,
+                                                     std::vector<RecordId>* outRecordIds,
+                                                     std::uint64_t* outScannedEntries) override;
 
             friend class SqliteSchema;
 
@@ -2671,7 +2745,11 @@ namespace StableCore::Storage
             ErrorCode LoadSchemaMetadata(SqliteTable* table);
             ErrorCode BackfillSchemaMetadataV3();
             void LoadJournalStacks();
-            void MaterializeIndexes();
+            // Explicit writable setup/repair path only. Must not be called from load/open.
+            ErrorCode EnsureLegacyColumnIndexes();
+            // Explicit repair/write path only. Must not be called from load/open.
+            ErrorCode RebuildCompositeQueryIndexes();
+            void InitializeQueryIndexStorage();
             ErrorCode EnsureImportSessionStore();
             void EnsureColumnIndex(std::int64_t tableRowId, const std::wstring& columnName);
             void RunStartupIntegrityCheck();
@@ -2688,6 +2766,24 @@ namespace StableCore::Storage
             ErrorCode ValidateColumnDefForSchema(SqliteSchema* schema, const SCColumnDef& def) const;
             ErrorCode ValidateConstraintDefForSchema(SqliteSchema* schema, const SCConstraintDef& def) const;
             ErrorCode ValidateIndexDefForSchema(SqliteSchema* schema, const SCIndexDef& def) const;
+            ErrorCode EncodeIndexColumnValue(const SCValue& value,
+                                             ValueKind valueKind,
+                                             bool descending,
+                                             std::vector<std::uint8_t>* outBytes) const;
+            ErrorCode EncodeIndexColumnPrefixValue(const SCValue& value,
+                                                   ValueKind valueKind,
+                                                   bool descending,
+                                                   std::vector<std::uint8_t>* outBytes) const;
+            ErrorCode BuildCompositeIndexKey(const SqliteSchema* schema,
+                                             const SCIndexDef& indexDef,
+                                             const SqliteRecordData& recordData,
+                                             CompositeIndexEncodedKey* outKey) const;
+            ErrorCode BuildCompositeLookupBounds(const SqliteSchema* schema,
+                                                 const QueryPlan& analyzedPlan,
+                                                 CompositeIndexLookupBounds* outBounds) const;
+            ErrorCode BuildCompositeEqualityPrefixBounds(const SqliteSchema* schema,
+                                                         const QueryPlan& analyzedPlan,
+                                                         CompositeIndexLookupBounds* outBounds) const;
             ErrorCode ValidateRequiredValuesForCommit() const;
             bool HasAliveRecords(SqliteSchema* schema) const;
             bool IsRecordReferenced(const std::wstring& tableName, RecordId recordId) const;
@@ -2728,6 +2824,22 @@ namespace StableCore::Storage
             ErrorCode PersistSchemaRemoveConstraint(SqliteSchema* schema, const wchar_t* name);
             ErrorCode PersistSchemaAddIndex(SqliteSchema* schema, const SCIndexDef& def, std::int64_t rowId = -1);
             ErrorCode PersistSchemaRemoveIndex(SqliteSchema* schema, const wchar_t* name);
+            ErrorCode PersistQueryIndexDefinition(SqliteSchema* schema,
+                                                  const SCIndexDef& def,
+                                                  std::int64_t schemaIndexRowId,
+                                                  bool updateCache = true);
+            ErrorCode RemoveQueryIndexDefinition(SqliteSchema* schema, const wchar_t* name, bool updateCache = true);
+            ErrorCode RebuildCompositeIndexEntriesForTable(SqliteTable* table,
+                                                           const SCIndexDef& indexDef,
+                                                           std::int64_t schemaIndexRowId = -1);
+            ErrorCode RebuildCompositeIndexEntriesForRecord(SqliteTable* table,
+                                                            const SCIndexDef& indexDef,
+                                                            const SqliteRecordData& recordData,
+                                                            std::int64_t schemaIndexRowId = -1);
+            ErrorCode RebuildCompositeIndexEntriesForRecord(SqliteTable* table, const SqliteRecordData& recordData);
+            ErrorCode RebuildCompositeIndexesForTable(SqliteTable* table);
+            std::int64_t FindQueryIndexStorageRowId(std::int64_t tableRowId, const std::wstring& indexName) const;
+            ErrorCode CheckCompositeQueryIndexConsistency(QueryIndexCheckResult* outResult) const;
             ErrorCode SyncLegacyIndexMetadata(SqliteSchema* schema, const std::wstring& columnName, bool indexed);
             ErrorCode RemoveLegacyPrimaryKeyMetadata(SqliteSchema* schema, const std::wstring& columnName);
             ErrorCode PersistAddedConstraint(SqliteSchema* schema, const SCConstraintDef& def);
@@ -2776,6 +2888,7 @@ namespace StableCore::Storage
             JournalTransaction activeJournal_;
             std::vector<SqlitePersistedJournalTransaction> undoStack_;
             std::vector<SqlitePersistedJournalTransaction> redoStack_;
+            std::unordered_map<std::wstring, std::int64_t> queryIndexRowIdsByTableAndName_;
         };
 
         ErrorCode SqliteSchema::GetColumnCount(std::int32_t* outCount)
@@ -3651,6 +3764,7 @@ namespace StableCore::Storage
                 "index_id INTEGER NOT NULL, column_ordinal INTEGER NOT NULL, "
                 "column_name TEXT NOT NULL, descending_flag INTEGER NOT NULL, "
                 "PRIMARY KEY(index_id, column_ordinal));");
+            InitializeQueryIndexStorage();
         }
 
         void SqliteDatabase::LoadTables()
@@ -3841,6 +3955,10 @@ namespace StableCore::Storage
                     }
 
                     schema->LoadIndex(index, indexId);
+                    if (HasTable(L"query_indexes") && IsCompositeIndexExplicit(index))
+                    {
+                        queryIndexRowIdsByTableAndName_[BuildQueryIndexStorageKey(tableRowId, index.name)] = indexId;
+                    }
                 }
             }
 
@@ -4461,6 +4579,9 @@ namespace StableCore::Storage
                                 return finish(schemaJournalRc2);
                             }
                         }
+                    } else if (step.fromVersion == 4 && step.toVersion == 5)
+                    {
+                        InitializeQueryIndexStorage();
                     } else
                     {
                         schemaVersion_ = originalSchemaVersion;
@@ -4503,8 +4624,45 @@ namespace StableCore::Storage
             return finish(SC_OK);
         }
 
-        void SqliteDatabase::MaterializeIndexes()
+        void SqliteDatabase::InitializeQueryIndexStorage()
         {
+            db_.Execute(
+                "CREATE TABLE IF NOT EXISTS query_indexes ("
+                "schema_index_id INTEGER PRIMARY KEY, table_id INTEGER NOT "
+                "NULL, index_name TEXT NOT NULL, key_arity INTEGER NOT NULL, "
+                "UNIQUE(table_id, index_name));");
+            db_.Execute(
+                "CREATE TABLE IF NOT EXISTS query_index_entries ("
+                "schema_index_id INTEGER NOT NULL, record_id INTEGER NOT "
+                "NULL, alive_flag INTEGER NOT NULL, key_prefix_1 BLOB, "
+                "key_prefix_2 BLOB, key_prefix_3 BLOB, full_key BLOB NOT "
+                "NULL, PRIMARY KEY(schema_index_id, record_id));");
+            db_.Execute(
+                "CREATE INDEX IF NOT EXISTS idx_query_index_entries_prefix1 "
+                "ON query_index_entries(schema_index_id, alive_flag, "
+                "key_prefix_1, record_id);");
+            db_.Execute(
+                "CREATE INDEX IF NOT EXISTS idx_query_index_entries_prefix2 "
+                "ON query_index_entries(schema_index_id, alive_flag, "
+                "key_prefix_2, record_id);");
+            db_.Execute(
+                "CREATE INDEX IF NOT EXISTS idx_query_index_entries_prefix3 "
+                "ON query_index_entries(schema_index_id, alive_flag, "
+                "key_prefix_3, record_id);");
+            db_.Execute(
+                "CREATE INDEX IF NOT EXISTS idx_query_index_entries_full ON "
+                "query_index_entries(schema_index_id, alive_flag, full_key, "
+                "record_id);");
+        }
+
+        ErrorCode SqliteDatabase::EnsureLegacyColumnIndexes()
+        {
+            const ErrorCode writableRc = EnsureWritable();
+            if (Failed(writableRc))
+            {
+                return writableRc;
+            }
+
             for (const auto& [_, tableRef] : tables_)
             {
                 const auto* table = static_cast<SqliteTable*>(tableRef.Get());
@@ -4538,6 +4696,35 @@ namespace StableCore::Storage
                     }
                 }
             }
+
+            return SC_OK;
+        }
+
+        ErrorCode SqliteDatabase::RebuildCompositeQueryIndexes()
+        {
+            const ErrorCode writableRc = EnsureWritable();
+            if (Failed(writableRc))
+            {
+                return writableRc;
+            }
+
+            queryIndexRowIdsByTableAndName_.clear();
+            for (const auto& [_, tableRef] : tables_)
+            {
+                auto* sqliteTable = static_cast<SqliteTable*>(tableRef.Get());
+                if (sqliteTable == nullptr)
+                {
+                    continue;
+                }
+
+                const ErrorCode rebuildRc = RebuildCompositeIndexesForTable(sqliteTable);
+                if (Failed(rebuildRc))
+                {
+                    return rebuildRc;
+                }
+            }
+
+            return SC_OK;
         }
 
         void SqliteDatabase::EnsureColumnIndex(std::int64_t tableRowId, const std::wstring& columnName)
@@ -4911,7 +5098,54 @@ namespace StableCore::Storage
                     L"Corruption was detected during startup integrity checks.",
                 });
             }
+
+            QueryIndexCheckResult queryIndexCheck;
+            if (Succeeded(CheckQueryIndex(&queryIndexCheck)))
+            {
+                if (queryIndexCheck.state == QueryIndexHealthState::Missing ||
+                    queryIndexCheck.state == QueryIndexHealthState::OutOfDate)
+                {
+                    outReport->diagnostics.push_back(SCDiagnosticEntry{
+                        SCDiagnosticSeverity::Warning,
+                        L"query-index",
+                        queryIndexCheck.message,
+                    });
+                } else if (queryIndexCheck.state == QueryIndexHealthState::Corrupted)
+                {
+                    outReport->diagnostics.push_back(SCDiagnosticEntry{
+                        SCDiagnosticSeverity::Error,
+                        L"query-index",
+                        queryIndexCheck.message,
+                    });
+                }
+            }
             return SC_OK;
+        }
+
+        ErrorCode SqliteDatabase::CheckQueryIndex(QueryIndexCheckResult* outResult) const
+        {
+            if (outResult == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+
+            return CheckCompositeQueryIndexConsistency(outResult);
+        }
+
+        ErrorCode SqliteDatabase::RebuildQueryIndex()
+        {
+            if (activeEdit_)
+            {
+                return SC_E_WRITE_CONFLICT;
+            }
+
+            const ErrorCode legacyRc = EnsureLegacyColumnIndexes();
+            if (Failed(legacyRc))
+            {
+                return legacyRc;
+            }
+
+            return RebuildCompositeQueryIndexes();
         }
 
         ErrorCode SqliteDatabase::BeginEdit(const wchar_t* name, SCEditPtr& outEdit)
@@ -5889,6 +6123,11 @@ namespace StableCore::Storage
                 return shapeRc;
             }
 
+            if (def.columns.size() > kCompositeIndexMaxColumns)
+            {
+                return SC_E_NOTIMPL;
+            }
+
             std::set<std::wstring> seenColumns;
             for (const SCIndexColumnDef& column : def.columns)
             {
@@ -5902,6 +6141,1319 @@ namespace StableCore::Storage
                 }
             }
 
+            return SC_OK;
+        }
+
+        ErrorCode SqliteDatabase::EncodeIndexColumnValue(const SCValue& value,
+                                                         ValueKind valueKind,
+                                                         bool descending,
+                                                         std::vector<std::uint8_t>* outBytes) const
+        {
+            if (outBytes == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+
+            outBytes->clear();
+            auto appendByte = [outBytes](std::uint8_t byte) { outBytes->push_back(byte); };
+            auto appendU64 = [outBytes](std::uint64_t value) {
+                for (int shift = 56; shift >= 0; shift -= 8)
+                {
+                    outBytes->push_back(static_cast<std::uint8_t>((value >> shift) & 0xffu));
+                }
+            };
+
+            if (value.IsNull())
+            {
+                appendByte(0x00);
+            } else
+            {
+                appendByte(0x01);
+                switch (valueKind)
+                {
+                    case ValueKind::Int64:
+                    case ValueKind::RecordId: {
+                        std::int64_t typed = 0;
+                        ErrorCode rc = SC_OK;
+                        if (valueKind == ValueKind::RecordId)
+                        {
+                            RecordId recordId = 0;
+                            rc = value.AsRecordId(&recordId);
+                            typed = static_cast<std::int64_t>(recordId);
+                        } else
+                        {
+                            rc = value.AsInt64(&typed);
+                        }
+                        if (Failed(rc))
+                        {
+                            return rc;
+                        }
+                        appendByte(valueKind == ValueKind::RecordId ? 0x14 : 0x11);
+                        appendU64(static_cast<std::uint64_t>(typed) ^ 0x8000000000000000ull);
+                        break;
+                    }
+                    case ValueKind::Double: {
+                        double typed = 0.0;
+                        const ErrorCode rc = value.AsDouble(&typed);
+                        if (Failed(rc))
+                        {
+                            return rc;
+                        }
+                        appendByte(0x12);
+                        std::uint64_t bits = 0;
+                        static_assert(sizeof(bits) == sizeof(typed));
+                        std::memcpy(&bits, &typed, sizeof(bits));
+                        bits = (bits & 0x8000000000000000ull) != 0 ? ~bits : (bits ^ 0x8000000000000000ull);
+                        appendU64(bits);
+                        break;
+                    }
+                    case ValueKind::Bool: {
+                        bool typed = false;
+                        const ErrorCode rc = value.AsBool(&typed);
+                        if (Failed(rc))
+                        {
+                            return rc;
+                        }
+                        appendByte(0x13);
+                        appendByte(typed ? 1 : 0);
+                        break;
+                    }
+                    case ValueKind::String:
+                    case ValueKind::Enum: {
+                        std::wstring text;
+                        const ErrorCode rc = value.AsStringCopy(&text);
+                        if (Failed(rc))
+                        {
+                            return rc;
+                        }
+                        appendByte(valueKind == ValueKind::Enum ? 0x16 : 0x15);
+                        const std::string utf8 = ToUtf8(text);
+                        for (unsigned char byte : utf8)
+                        {
+                            if (byte == 0x00u)
+                            {
+                                outBytes->push_back(0x00u);
+                                outBytes->push_back(0xffu);
+                            } else
+                            {
+                                outBytes->push_back(static_cast<std::uint8_t>(byte));
+                            }
+                        }
+                        outBytes->push_back(0x00u);
+                        outBytes->push_back(0x00u);
+                        break;
+                    }
+                    case ValueKind::Binary: {
+                        const auto* bytes = value.TryGet<std::vector<std::uint8_t>>();
+                        if (bytes == nullptr)
+                        {
+                            return SC_E_TYPE_MISMATCH;
+                        }
+                        appendByte(0x17);
+                        appendU64(static_cast<std::uint64_t>(bytes->size()));
+                        outBytes->insert(outBytes->end(), bytes->begin(), bytes->end());
+                        break;
+                    }
+                    case ValueKind::Null:
+                    default:
+                        appendByte(0x10);
+                        break;
+                }
+            }
+
+            if (descending)
+            {
+                for (std::uint8_t& byte : *outBytes)
+                {
+                    byte = static_cast<std::uint8_t>(0xffu - byte);
+                }
+            }
+
+            return SC_OK;
+        }
+
+        ErrorCode SqliteDatabase::EncodeIndexColumnPrefixValue(const SCValue& value,
+                                                               ValueKind valueKind,
+                                                               bool descending,
+                                                               std::vector<std::uint8_t>* outBytes) const
+        {
+            if (outBytes == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+            outBytes->clear();
+
+            if (valueKind != ValueKind::String && valueKind != ValueKind::Enum)
+            {
+                return EncodeIndexColumnValue(value, valueKind, descending, outBytes);
+            }
+
+            std::wstring text;
+            const ErrorCode rc = value.AsStringCopy(&text);
+            if (Failed(rc))
+            {
+                return rc;
+            }
+
+            // Keep the prefix shape aligned with EncodeIndexColumnValue() for
+            // non-null strings, but omit the trailing terminator so the caller
+            // can build a prefix range over the composite full key.
+            outBytes->push_back(0x01u);
+            outBytes->push_back(valueKind == ValueKind::Enum ? 0x16 : 0x15);
+            const std::string utf8 = ToUtf8(text);
+            for (unsigned char byte : utf8)
+            {
+                if (byte == 0x00u)
+                {
+                    outBytes->push_back(0x00u);
+                    outBytes->push_back(0xffu);
+                } else
+                {
+                    outBytes->push_back(static_cast<std::uint8_t>(byte));
+                }
+            }
+
+            if (descending)
+            {
+                for (std::uint8_t& byte : *outBytes)
+                {
+                    byte = static_cast<std::uint8_t>(0xffu - byte);
+                }
+            }
+
+            return SC_OK;
+        }
+
+        ErrorCode SqliteDatabase::BuildCompositeIndexKey(const SqliteSchema* schema,
+                                                         const SCIndexDef& indexDef,
+                                                         const SqliteRecordData& recordData,
+                                                         CompositeIndexEncodedKey* outKey) const
+        {
+            if (schema == nullptr || outKey == nullptr)
+            {
+                return schema == nullptr ? SC_E_POINTER : SC_E_POINTER;
+            }
+
+            outKey->prefix1.clear();
+            outKey->prefix2.clear();
+            outKey->prefix3.clear();
+            outKey->full.clear();
+
+            std::vector<std::uint8_t> encoded;
+            for (std::size_t index = 0; index < indexDef.columns.size(); ++index)
+            {
+                const SCIndexColumnDef& indexColumn = indexDef.columns[index];
+                const SCColumnDef* columnDef = schema->FindColumnDef(indexColumn.columnName);
+                if (columnDef == nullptr)
+                {
+                    return SC_E_COLUMN_NOT_FOUND;
+                }
+
+                const auto valueIt = recordData.values.find(indexColumn.columnName);
+                const SCValue& value = valueIt != recordData.values.end() ? valueIt->second : columnDef->defaultValue;
+                const ErrorCode encodeRc =
+                    EncodeIndexColumnValue(value, columnDef->valueKind, indexColumn.descending, &encoded);
+                if (Failed(encodeRc))
+                {
+                    return encodeRc;
+                }
+
+                outKey->full.push_back(0xfeu);
+                outKey->full.insert(outKey->full.end(), encoded.begin(), encoded.end());
+                if (index == 0)
+                {
+                    outKey->prefix1 = outKey->full;
+                } else if (index == 1)
+                {
+                    outKey->prefix2 = outKey->full;
+                } else if (index == 2)
+                {
+                    outKey->prefix3 = outKey->full;
+                }
+            }
+
+            return SC_OK;
+        }
+
+        ErrorCode SqliteDatabase::BuildCompositeLookupBounds(const SqliteSchema* schema,
+                                                             const QueryPlan& analyzedPlan,
+                                                             CompositeIndexLookupBounds* outBounds) const
+        {
+            if (schema == nullptr || outBounds == nullptr || !analyzedPlan.matchedIndex.has_value())
+            {
+                return SC_E_POINTER;
+            }
+
+            *outBounds = CompositeIndexLookupBounds{};
+
+            const QueryMatchedIndexSpec& matchedIndex = analyzedPlan.matchedIndex.value();
+            const SCIndexDef* indexDef = schema->FindIndexDef(matchedIndex.indexName);
+            if (indexDef == nullptr)
+            {
+                return SC_E_INDEX_NOT_FOUND;
+            }
+
+            auto appendExactSegment =
+                [this](const SCValue& value,
+                       const SCColumnDef& column,
+                       bool descending,
+                       std::vector<std::uint8_t>* outBytes) -> ErrorCode {
+                std::vector<std::uint8_t> encoded;
+                const ErrorCode encodeRc = EncodeIndexColumnValue(value, column.valueKind, descending, &encoded);
+                if (Failed(encodeRc))
+                {
+                    return encodeRc;
+                }
+                outBytes->push_back(0xfeu);
+                outBytes->insert(outBytes->end(), encoded.begin(), encoded.end());
+                return SC_OK;
+            };
+
+            for (std::size_t index = 0; index < matchedIndex.equalityPrefixLength; ++index)
+            {
+                const std::wstring& columnName = matchedIndex.keyColumns[index];
+                const auto it =
+                    std::find_if(analyzedPlan.pushdown.pushdownConditions.begin(),
+                                 analyzedPlan.pushdown.pushdownConditions.end(),
+                                 [&columnName](const QueryCondition& condition) {
+                                     return condition.fieldName == columnName &&
+                                            IsEqualityIndexOperator(condition.op) && condition.values.size() == 1;
+                                 });
+                if (it == analyzedPlan.pushdown.pushdownConditions.end())
+                {
+                    break;
+                }
+
+                SCColumnDef column;
+                const ErrorCode columnRc = const_cast<SqliteSchema*>(schema)->FindColumn(columnName.c_str(), &column);
+                if (Failed(columnRc))
+                {
+                    return columnRc;
+                }
+                const ErrorCode appendRc = appendExactSegment(
+                    it->values.front(), column, (*indexDef).columns[index].descending, &outBounds->equalityPrefixKey);
+                if (Failed(appendRc))
+                {
+                    return appendRc;
+                }
+                outBounds->equalityPrefixLength = static_cast<std::uint32_t>(index + 1);
+            }
+
+            if (!matchedIndex.hasRangeCondition)
+            {
+                outBounds->exactMatch = true;
+                outBounds->exactPrefixLength = matchedIndex.equalityPrefixLength;
+                outBounds->exactPrefixKey = outBounds->equalityPrefixKey;
+                return SC_OK;
+            }
+
+            const std::size_t rangeColumnIndex = matchedIndex.equalityPrefixLength;
+            if (rangeColumnIndex >= matchedIndex.keyColumns.size())
+            {
+                return SC_E_INVALIDARG;
+            }
+
+            const std::wstring& rangeColumnName = matchedIndex.keyColumns[rangeColumnIndex];
+            const auto rangeIt =
+                std::find_if(analyzedPlan.pushdown.pushdownConditions.begin(),
+                             analyzedPlan.pushdown.pushdownConditions.end(),
+                             [&rangeColumnName](const QueryCondition& condition) {
+                                 return condition.fieldName == rangeColumnName && IsRangeIndexOperator(condition.op);
+                             });
+            if (rangeIt == analyzedPlan.pushdown.pushdownConditions.end())
+            {
+                return SC_E_INVALIDARG;
+            }
+
+            SCColumnDef rangeColumn;
+            const ErrorCode rangeColumnRc =
+                const_cast<SqliteSchema*>(schema)->FindColumn(rangeColumnName.c_str(), &rangeColumn);
+            if (Failed(rangeColumnRc))
+            {
+                return rangeColumnRc;
+            }
+
+            const bool descending = (*indexDef).columns[rangeColumnIndex].descending;
+            std::vector<std::uint8_t> baseKey = outBounds->equalityPrefixKey;
+            switch (rangeIt->op)
+            {
+                case QueryConditionOperator::GreaterThan:
+                case QueryConditionOperator::GreaterThanOrEqual: {
+                    if (rangeIt->values.size() != 1)
+                    {
+                        return SC_E_INVALIDARG;
+                    }
+                    std::vector<std::uint8_t> bound = baseKey;
+                    const ErrorCode appendRc =
+                        appendExactSegment(rangeIt->values.front(), rangeColumn, descending, &bound);
+                    if (Failed(appendRc))
+                    {
+                        return appendRc;
+                    }
+                    if (descending)
+                    {
+                        outBounds->hasUpperBound = true;
+                        outBounds->includeUpperBound = rangeIt->op == QueryConditionOperator::GreaterThanOrEqual;
+                        outBounds->upperBound = std::move(bound);
+                        if (outBounds->includeUpperBound)
+                        {
+                            outBounds->upperBound.push_back(0xffu);
+                        }
+                    } else
+                    {
+                        outBounds->hasLowerBound = true;
+                        outBounds->includeLowerBound = rangeIt->op == QueryConditionOperator::GreaterThanOrEqual;
+                        outBounds->lowerBound = std::move(bound);
+                        if (!outBounds->includeLowerBound)
+                        {
+                            outBounds->lowerBound.push_back(0xffu);
+                        }
+                    }
+                    break;
+                }
+                case QueryConditionOperator::LessThan:
+                case QueryConditionOperator::LessThanOrEqual: {
+                    if (rangeIt->values.size() != 1)
+                    {
+                        return SC_E_INVALIDARG;
+                    }
+                    std::vector<std::uint8_t> bound = baseKey;
+                    const ErrorCode appendRc =
+                        appendExactSegment(rangeIt->values.front(), rangeColumn, descending, &bound);
+                    if (Failed(appendRc))
+                    {
+                        return appendRc;
+                    }
+                    if (descending)
+                    {
+                        outBounds->hasLowerBound = true;
+                        outBounds->includeLowerBound = rangeIt->op == QueryConditionOperator::LessThanOrEqual;
+                        outBounds->lowerBound = std::move(bound);
+                        if (!outBounds->includeLowerBound)
+                        {
+                            outBounds->lowerBound.push_back(0xffu);
+                        }
+                    } else
+                    {
+                        outBounds->hasUpperBound = true;
+                        outBounds->includeUpperBound = rangeIt->op == QueryConditionOperator::LessThanOrEqual;
+                        outBounds->upperBound = std::move(bound);
+                        if (outBounds->includeUpperBound)
+                        {
+                            outBounds->upperBound.push_back(0xffu);
+                        }
+                    }
+                    break;
+                }
+                case QueryConditionOperator::Between: {
+                    if (rangeIt->values.size() != 2)
+                    {
+                        return SC_E_INVALIDARG;
+                    }
+                    std::vector<std::uint8_t> firstBound = baseKey;
+                    {
+                        const ErrorCode appendRc =
+                            appendExactSegment(rangeIt->values[0], rangeColumn, descending, &firstBound);
+                        if (Failed(appendRc))
+                        {
+                            return appendRc;
+                        }
+                    }
+                    std::vector<std::uint8_t> secondBound = baseKey;
+                    {
+                        const ErrorCode appendRc =
+                            appendExactSegment(rangeIt->values[1], rangeColumn, descending, &secondBound);
+                        if (Failed(appendRc))
+                        {
+                            return appendRc;
+                        }
+                    }
+                    if (descending)
+                    {
+                        outBounds->hasLowerBound = true;
+                        outBounds->includeLowerBound = true;
+                        outBounds->lowerBound = std::move(secondBound);
+                        outBounds->hasUpperBound = true;
+                        outBounds->includeUpperBound = true;
+                        outBounds->upperBound = std::move(firstBound);
+                        outBounds->upperBound.push_back(0xffu);
+                    } else
+                    {
+                        outBounds->hasLowerBound = true;
+                        outBounds->includeLowerBound = true;
+                        outBounds->lowerBound = std::move(firstBound);
+                        outBounds->hasUpperBound = true;
+                        outBounds->includeUpperBound = true;
+                        outBounds->upperBound = std::move(secondBound);
+                        outBounds->upperBound.push_back(0xffu);
+                    }
+                    break;
+                }
+                case QueryConditionOperator::StartsWith: {
+                    if (rangeIt->values.size() != 1)
+                    {
+                        return SC_E_INVALIDARG;
+                    }
+                    if (rangeColumn.valueKind != ValueKind::String && rangeColumn.valueKind != ValueKind::Enum)
+                    {
+                        return SC_E_NOTIMPL;
+                    }
+
+                    std::vector<std::uint8_t> encodedPrefix;
+                    const ErrorCode encodePrefixRc = EncodeIndexColumnPrefixValue(
+                        rangeIt->values.front(), rangeColumn.valueKind, descending, &encodedPrefix);
+                    if (Failed(encodePrefixRc))
+                    {
+                        return encodePrefixRc;
+                    }
+
+                    outBounds->hasLowerBound = true;
+                    outBounds->includeLowerBound = true;
+                    outBounds->lowerBound = baseKey;
+                    outBounds->lowerBound.push_back(0xfeu);
+                    outBounds->lowerBound.insert(
+                        outBounds->lowerBound.end(), encodedPrefix.begin(), encodedPrefix.end());
+
+                    outBounds->hasUpperBound = true;
+                    outBounds->includeUpperBound = false;
+                    outBounds->upperBound = outBounds->lowerBound;
+                    outBounds->upperBound.push_back(0xffu);
+                    break;
+                }
+                default:
+                    return SC_E_NOTIMPL;
+            }
+
+            return SC_OK;
+        }
+
+        ErrorCode SqliteDatabase::BuildCompositeEqualityPrefixBounds(const SqliteSchema* schema,
+                                                                     const QueryPlan& analyzedPlan,
+                                                                     CompositeIndexLookupBounds* outBounds) const
+        {
+            if (schema == nullptr || outBounds == nullptr || !analyzedPlan.matchedIndex.has_value())
+            {
+                return SC_E_POINTER;
+            }
+
+            *outBounds = CompositeIndexLookupBounds{};
+
+            const QueryMatchedIndexSpec& matchedIndex = analyzedPlan.matchedIndex.value();
+            const SCIndexDef* indexDef = schema->FindIndexDef(matchedIndex.indexName);
+            if (indexDef == nullptr)
+            {
+                return SC_E_INDEX_NOT_FOUND;
+            }
+
+            auto appendExactSegment =
+                [this](const SCValue& value,
+                       const SCColumnDef& column,
+                       bool descending,
+                       std::vector<std::uint8_t>* outBytes) -> ErrorCode {
+                std::vector<std::uint8_t> encoded;
+                const ErrorCode encodeRc = EncodeIndexColumnValue(value, column.valueKind, descending, &encoded);
+                if (Failed(encodeRc))
+                {
+                    return encodeRc;
+                }
+                outBytes->push_back(0xfeu);
+                outBytes->insert(outBytes->end(), encoded.begin(), encoded.end());
+                return SC_OK;
+            };
+
+            for (std::size_t index = 0; index < matchedIndex.equalityPrefixLength; ++index)
+            {
+                const std::wstring& columnName = matchedIndex.keyColumns[index];
+                const auto it =
+                    std::find_if(analyzedPlan.pushdown.pushdownConditions.begin(),
+                                 analyzedPlan.pushdown.pushdownConditions.end(),
+                                 [&columnName](const QueryCondition& condition) {
+                                     return condition.fieldName == columnName &&
+                                            IsEqualityIndexOperator(condition.op) && condition.values.size() == 1;
+                                 });
+                if (it == analyzedPlan.pushdown.pushdownConditions.end())
+                {
+                    break;
+                }
+
+                SCColumnDef column;
+                const ErrorCode columnRc = const_cast<SqliteSchema*>(schema)->FindColumn(columnName.c_str(), &column);
+                if (Failed(columnRc))
+                {
+                    return columnRc;
+                }
+                const ErrorCode appendRc = appendExactSegment(
+                    it->values.front(), column, indexDef->columns[index].descending, &outBounds->equalityPrefixKey);
+                if (Failed(appendRc))
+                {
+                    return appendRc;
+                }
+                outBounds->equalityPrefixLength = static_cast<std::uint32_t>(index + 1);
+            }
+
+            if (outBounds->equalityPrefixLength == 0)
+            {
+                return SC_E_INVALIDARG;
+            }
+
+            outBounds->exactMatch = true;
+            outBounds->exactPrefixLength = outBounds->equalityPrefixLength;
+            outBounds->exactPrefixKey = outBounds->equalityPrefixKey;
+            return SC_OK;
+        }
+
+        std::int64_t SqliteDatabase::FindQueryIndexStorageRowId(std::int64_t tableRowId,
+                                                                const std::wstring& indexName) const
+        {
+            const auto it = queryIndexRowIdsByTableAndName_.find(BuildQueryIndexStorageKey(tableRowId, indexName));
+            return it == queryIndexRowIdsByTableAndName_.end() ? -1 : it->second;
+        }
+
+        ErrorCode SqliteDatabase::CheckCompositeQueryIndexConsistency(QueryIndexCheckResult* outResult) const
+        {
+            if (outResult == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+
+            outResult->state = QueryIndexHealthState::Healthy;
+            outResult->indexVersion = static_cast<std::int32_t>(version_);
+            outResult->expectedVersion = static_cast<std::int32_t>(version_);
+            outResult->message = L"query-index-current";
+
+            if (activeEdit_ && !activeJournal_.entries.empty())
+            {
+                outResult->state = QueryIndexHealthState::OutOfDate;
+                outResult->message = L"query-index-rebuild-required";
+                return SC_OK;
+            }
+
+            auto countEntriesForIndex = [this](std::int64_t schemaIndexRowId, std::int64_t* outCount) -> ErrorCode {
+                if (outCount == nullptr)
+                {
+                    return SC_E_POINTER;
+                }
+
+                sqlite3_stmt* stmt = nullptr;
+                const int prepareRc = sqlite3_prepare_v2(
+                    db_.Raw(),
+                    "SELECT COUNT(*) FROM query_index_entries WHERE schema_index_id = ? AND alive_flag = 1;",
+                    -1,
+                    &stmt,
+                    nullptr);
+                if (prepareRc != SQLITE_OK)
+                {
+                    if (stmt != nullptr)
+                    {
+                        sqlite3_finalize(stmt);
+                    }
+                    return MapSqliteError(prepareRc);
+                }
+
+                sqlite3_bind_int64(stmt, 1, schemaIndexRowId);
+                const int stepRc = sqlite3_step(stmt);
+                if (stepRc != SQLITE_ROW)
+                {
+                    sqlite3_finalize(stmt);
+                    return MapSqliteError(stepRc);
+                }
+
+                *outCount = sqlite3_column_int64(stmt, 0);
+                sqlite3_finalize(stmt);
+                return SC_OK;
+            };
+
+            auto hasExactEntry = [this](std::int64_t schemaIndexRowId,
+                                        RecordId recordId,
+                                        const CompositeIndexEncodedKey& key,
+                                        bool* outFound) -> ErrorCode {
+                if (outFound == nullptr)
+                {
+                    return SC_E_POINTER;
+                }
+
+                sqlite3_stmt* stmt = nullptr;
+                const int prepareRc = sqlite3_prepare_v2(
+                    db_.Raw(),
+                    "SELECT 1 FROM query_index_entries WHERE schema_index_id = ? AND record_id = ? AND alive_flag = 1 "
+                    "AND full_key = ? LIMIT 1;",
+                    -1,
+                    &stmt,
+                    nullptr);
+                if (prepareRc != SQLITE_OK)
+                {
+                    if (stmt != nullptr)
+                    {
+                        sqlite3_finalize(stmt);
+                    }
+                    return MapSqliteError(prepareRc);
+                }
+
+                sqlite3_bind_int64(stmt, 1, schemaIndexRowId);
+                sqlite3_bind_int64(stmt, 2, recordId);
+                sqlite3_bind_blob(stmt,
+                                  3,
+                                  key.full.data(),
+                                  static_cast<int>(key.full.size()),
+                                  SQLITE_TRANSIENT);
+                const int stepRc = sqlite3_step(stmt);
+                *outFound = stepRc == SQLITE_ROW;
+                sqlite3_finalize(stmt);
+                return (stepRc == SQLITE_ROW || stepRc == SQLITE_DONE) ? SC_OK : MapSqliteError(stepRc);
+            };
+
+            for (const auto& [_, tableRef] : tables_)
+            {
+                auto* table = static_cast<SqliteTable*>(tableRef.Get());
+                if (table == nullptr)
+                {
+                    continue;
+                }
+
+                SCTableSchemaSnapshot snapshot;
+                const ErrorCode snapshotRc = table->Schema()->GetSchemaSnapshot(&snapshot);
+                if (Failed(snapshotRc))
+                {
+                    return snapshotRc;
+                }
+
+                for (const SCIndexDef& indexDef : snapshot.indexes)
+                {
+                    if (!IsCompositeIndexExplicit(indexDef))
+                    {
+                        continue;
+                    }
+
+                    const std::int64_t schemaIndexRowId = FindQueryIndexStorageRowId(table->TableRowId(), indexDef.name);
+                    if (schemaIndexRowId <= 0)
+                    {
+                        outResult->state = QueryIndexHealthState::Missing;
+                        outResult->message = L"query-index-definition-missing:" + indexDef.name;
+                        return SC_OK;
+                    }
+
+                    std::int64_t expectedAliveCount = 0;
+                    for (const auto& [recordId, recordData] : table->Records())
+                    {
+                        (void)recordId;
+                        if (recordData == nullptr || recordData->state != RecordState::Alive)
+                        {
+                            continue;
+                        }
+
+                        ++expectedAliveCount;
+                        CompositeIndexEncodedKey key;
+                        const ErrorCode keyRc = BuildCompositeIndexKey(table->Schema(), indexDef, *recordData, &key);
+                        if (Failed(keyRc))
+                        {
+                            outResult->state = QueryIndexHealthState::Corrupted;
+                            outResult->message = L"query-index-key-build-failed:" + indexDef.name;
+                            return SC_OK;
+                        }
+
+                        bool found = false;
+                        const ErrorCode entryRc = hasExactEntry(schemaIndexRowId, recordData->id, key, &found);
+                        if (Failed(entryRc))
+                        {
+                            return entryRc;
+                        }
+                        if (!found)
+                        {
+                            outResult->state = QueryIndexHealthState::Corrupted;
+                            outResult->message = L"query-index-entry-missing:" + indexDef.name;
+                            return SC_OK;
+                        }
+                    }
+
+                    std::int64_t actualAliveCount = 0;
+                    const ErrorCode countRc = countEntriesForIndex(schemaIndexRowId, &actualAliveCount);
+                    if (Failed(countRc))
+                    {
+                        return countRc;
+                    }
+
+                    if (actualAliveCount != expectedAliveCount)
+                    {
+                        outResult->state = QueryIndexHealthState::Corrupted;
+                        outResult->message = L"query-index-entry-count-mismatch:" + indexDef.name;
+                        return SC_OK;
+                    }
+                }
+            }
+
+            return SC_OK;
+        }
+
+        ErrorCode SqliteDatabase::PersistQueryIndexDefinition(SqliteSchema* schema,
+                                                              const SCIndexDef& def,
+                                                              std::int64_t schemaIndexRowId,
+                                                              bool updateCache)
+        {
+            if (schema == nullptr || schemaIndexRowId <= 0)
+            {
+                return SC_E_INVALIDARG;
+            }
+            if (!IsCompositeIndexExplicit(def))
+            {
+                return SC_OK;
+            }
+
+            SqliteStmt stmt = db_.Prepare(
+                "INSERT OR REPLACE INTO query_indexes(schema_index_id, table_id, index_name, key_arity) "
+                "VALUES(?, ?, ?, ?);");
+            stmt.BindInt64(1, schemaIndexRowId);
+            stmt.BindInt64(2, schema->TableRowId());
+            stmt.BindText(3, def.name);
+            stmt.BindInt64(4, static_cast<std::int64_t>(def.columns.size()));
+            const ErrorCode rc = stmt.Step();
+            if (Failed(rc))
+            {
+                return rc;
+            }
+
+            if (updateCache)
+            {
+                queryIndexRowIdsByTableAndName_[BuildQueryIndexStorageKey(schema->TableRowId(), def.name)] =
+                    schemaIndexRowId;
+            }
+            return SC_OK;
+        }
+
+        ErrorCode SqliteDatabase::RemoveQueryIndexDefinition(SqliteSchema* schema, const wchar_t* name, bool updateCache)
+        {
+            if (schema == nullptr || name == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+
+            {
+                SqliteStmt deleteEntries = db_.Prepare("DELETE FROM query_index_entries WHERE schema_index_id = ?;");
+                deleteEntries.BindInt64(1, schema->FindIndexRowId(name));
+                const ErrorCode rc = deleteEntries.Step();
+                if (Failed(rc))
+                {
+                    return rc;
+                }
+            }
+
+            SqliteStmt deleteDef = db_.Prepare("DELETE FROM query_indexes WHERE schema_index_id = ?;");
+            deleteDef.BindInt64(1, schema->FindIndexRowId(name));
+            const ErrorCode rc = deleteDef.Step();
+            if (Failed(rc))
+            {
+                return rc;
+            }
+
+            if (updateCache)
+            {
+                queryIndexRowIdsByTableAndName_.erase(BuildQueryIndexStorageKey(schema->TableRowId(), name));
+            }
+            return SC_OK;
+        }
+
+        ErrorCode SqliteDatabase::RebuildCompositeIndexEntriesForRecord(SqliteTable* table,
+                                                                        const SCIndexDef& indexDef,
+                                                                        const SqliteRecordData& recordData,
+                                                                        std::int64_t schemaIndexRowId)
+        {
+            if (table == nullptr || !IsCompositeIndexExplicit(indexDef))
+            {
+                return table == nullptr ? SC_E_POINTER : SC_OK;
+            }
+
+            const std::int64_t effectiveSchemaIndexRowId =
+                schemaIndexRowId > 0 ? schemaIndexRowId : table->Schema()->FindIndexRowId(indexDef.name.c_str());
+            if (effectiveSchemaIndexRowId <= 0)
+            {
+                return SC_E_INDEX_NOT_FOUND;
+            }
+
+            {
+                SqliteStmt deleteStmt =
+                    db_.Prepare("DELETE FROM query_index_entries WHERE schema_index_id = ? AND record_id = ?;");
+                deleteStmt.BindInt64(1, effectiveSchemaIndexRowId);
+                deleteStmt.BindInt64(2, recordData.id);
+                const ErrorCode deleteRc = deleteStmt.Step();
+                if (Failed(deleteRc))
+                {
+                    return deleteRc;
+                }
+            }
+
+            if (recordData.state != RecordState::Alive)
+            {
+                return SC_OK;
+            }
+
+            CompositeIndexEncodedKey key;
+            const ErrorCode keyRc = BuildCompositeIndexKey(table->Schema(), indexDef, recordData, &key);
+            if (Failed(keyRc))
+            {
+                return keyRc;
+            }
+
+            SqliteStmt insertStmt = db_.Prepare(
+                "INSERT INTO query_index_entries(schema_index_id, record_id, alive_flag, key_prefix_1, "
+                "key_prefix_2, key_prefix_3, full_key) VALUES(?, ?, 1, ?, ?, ?, ?);");
+            insertStmt.BindInt64(1, effectiveSchemaIndexRowId);
+            insertStmt.BindInt64(2, recordData.id);
+            key.prefix1.empty() ? insertStmt.BindNull(3) : insertStmt.BindBlob(3, key.prefix1);
+            key.prefix2.empty() ? insertStmt.BindNull(4) : insertStmt.BindBlob(4, key.prefix2);
+            key.prefix3.empty() ? insertStmt.BindNull(5) : insertStmt.BindBlob(5, key.prefix3);
+            insertStmt.BindBlob(6, key.full);
+            return insertStmt.Step();
+        }
+
+        ErrorCode SqliteDatabase::RebuildCompositeIndexEntriesForRecord(SqliteTable* table,
+                                                                        const SqliteRecordData& recordData)
+        {
+            if (table == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+
+            SCTableSchemaSnapshot snapshot;
+            const ErrorCode snapshotRc = table->Schema()->GetSchemaSnapshot(&snapshot);
+            if (Failed(snapshotRc))
+            {
+                return snapshotRc;
+            }
+
+            for (const SCIndexDef& indexDef : snapshot.indexes)
+            {
+                const ErrorCode rc = RebuildCompositeIndexEntriesForRecord(table, indexDef, recordData);
+                if (Failed(rc))
+                {
+                    return rc;
+                }
+            }
+            return SC_OK;
+        }
+
+        ErrorCode SqliteDatabase::RebuildCompositeIndexEntriesForTable(SqliteTable* table,
+                                                                       const SCIndexDef& indexDef,
+                                                                       std::int64_t schemaIndexRowId)
+        {
+            if (table == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+            if (!IsCompositeIndexExplicit(indexDef))
+            {
+                return SC_OK;
+            }
+
+            const std::int64_t effectiveSchemaIndexRowId =
+                schemaIndexRowId > 0 ? schemaIndexRowId : table->Schema()->FindIndexRowId(indexDef.name.c_str());
+            if (effectiveSchemaIndexRowId <= 0)
+            {
+                return SC_E_INDEX_NOT_FOUND;
+            }
+
+            {
+                SqliteStmt deleteStmt = db_.Prepare("DELETE FROM query_index_entries WHERE schema_index_id = ?;");
+                deleteStmt.BindInt64(1, effectiveSchemaIndexRowId);
+                const ErrorCode deleteRc = deleteStmt.Step();
+                if (Failed(deleteRc))
+                {
+                    return deleteRc;
+                }
+            }
+
+            for (const auto& [_, recordData] : table->Records())
+            {
+                if (!recordData)
+                {
+                    continue;
+                }
+                const ErrorCode rc =
+                    RebuildCompositeIndexEntriesForRecord(table, indexDef, *recordData, effectiveSchemaIndexRowId);
+                if (Failed(rc))
+                {
+                    return rc;
+                }
+            }
+            return SC_OK;
+        }
+
+        ErrorCode SqliteDatabase::RebuildCompositeIndexesForTable(SqliteTable* table)
+        {
+            if (table == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+
+            SCTableSchemaSnapshot snapshot;
+            const ErrorCode snapshotRc = table->Schema()->GetSchemaSnapshot(&snapshot);
+            if (Failed(snapshotRc))
+            {
+                return snapshotRc;
+            }
+
+            for (const SCIndexDef& indexDef : snapshot.indexes)
+            {
+                const std::int64_t schemaIndexRowId = table->Schema()->FindIndexRowId(indexDef.name.c_str());
+                const ErrorCode persistRc = PersistQueryIndexDefinition(table->Schema(), indexDef, schemaIndexRowId);
+                if (Failed(persistRc))
+                {
+                    return persistRc;
+                }
+
+                const ErrorCode rebuildRc = RebuildCompositeIndexEntriesForTable(table, indexDef);
+                if (Failed(rebuildRc))
+                {
+                    return rebuildRc;
+                }
+            }
+
+            return SC_OK;
+        }
+
+        ErrorCode SqliteDatabase::AnalyzeCompositeIndexPlan(const QueryPlan& inputPlan, QueryPlan* outPlan)
+        {
+            if (outPlan == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+
+            QueryPlan analyzed = inputPlan;
+            analyzed.matchedIndex.reset();
+            analyzed.pushdown.pushdownConditions.clear();
+            analyzed.pushdown.residualConditions.clear();
+
+            if (inputPlan.target.type != QueryTargetType::Table || inputPlan.conditionGroups.size() != 1 ||
+                inputPlan.conditionGroupLogic != QueryLogicOperator::And || inputPlan.conditionGroups.front().logic != QueryLogicOperator::And)
+            {
+                *outPlan = std::move(analyzed);
+                return SC_OK;
+            }
+
+            const auto tableIt = tables_.find(inputPlan.target.name);
+            if (tableIt == tables_.end())
+            {
+                return SC_E_TABLE_NOT_FOUND;
+            }
+            auto* table = static_cast<SqliteTable*>(tableIt->second.Get());
+            auto* schema = table->Schema();
+
+            SCTableSchemaSnapshot snapshot;
+            const ErrorCode snapshotRc = schema->GetSchemaSnapshot(&snapshot);
+            if (Failed(snapshotRc))
+            {
+                return snapshotRc;
+            }
+
+            const QueryConditionGroup& group = inputPlan.conditionGroups.front();
+            std::optional<QueryMatchedIndexSpec> bestMatch;
+            std::vector<QueryCondition> bestPushdown;
+            std::vector<QueryCondition> bestResidual;
+            auto isConditionConsumedByPushdown = [](const QueryCondition& condition,
+                                                    const std::vector<QueryCondition>& usedPushdown) {
+                return std::find_if(usedPushdown.begin(),
+                                    usedPushdown.end(),
+                                    [&condition](const QueryCondition& used) {
+                                        return used.fieldName == condition.fieldName && used.op == condition.op &&
+                                               used.values == condition.values;
+                                    }) != usedPushdown.end();
+            };
+            auto isConditionImpliedByPushdown = [](const QueryCondition& condition,
+                                                   const std::vector<QueryCondition>& usedPushdown) {
+                if (condition.op != QueryConditionOperator::IsNotNull)
+                {
+                    return false;
+                }
+
+                return std::find_if(
+                           usedPushdown.begin(),
+                           usedPushdown.end(),
+                           [&condition](const QueryCondition& used) {
+                               return used.fieldName == condition.fieldName &&
+                                      used.op == QueryConditionOperator::Equal && used.values.size() == 1 &&
+                                      !used.values.front().IsNull();
+                           }) != usedPushdown.end();
+            };
+            auto isBetterCandidate = [](const QueryMatchedIndexSpec& candidate,
+                                        const std::vector<QueryCondition>& candidateResidual,
+                                        const QueryMatchedIndexSpec& best,
+                                        const std::vector<QueryCondition>& bestResidual) {
+                if (candidate.matchedPrefixLength != best.matchedPrefixLength)
+                {
+                    return candidate.matchedPrefixLength > best.matchedPrefixLength;
+                }
+                if (candidate.equalityPrefixLength != best.equalityPrefixLength)
+                {
+                    return candidate.equalityPrefixLength > best.equalityPrefixLength;
+                }
+                if (candidate.exactOrderCovered != best.exactOrderCovered)
+                {
+                    return candidate.exactOrderCovered && !best.exactOrderCovered;
+                }
+                if (candidate.orderCovered != best.orderCovered)
+                {
+                    return candidate.orderCovered && !best.orderCovered;
+                }
+                if (candidateResidual.size() != bestResidual.size())
+                {
+                    return candidateResidual.size() < bestResidual.size();
+                }
+                if (candidate.hasRangeCondition != best.hasRangeCondition)
+                {
+                    return !candidate.hasRangeCondition && best.hasRangeCondition;
+                }
+                return candidate.indexName < best.indexName;
+            };
+
+            for (const SCIndexDef& indexDef : snapshot.indexes)
+            {
+                if (!IsCompositeIndexExplicit(indexDef))
+                {
+                    continue;
+                }
+
+                QueryMatchedIndexSpec candidate;
+                candidate.indexName = indexDef.name;
+                for (const SCIndexColumnDef& column : indexDef.columns)
+                {
+                    candidate.keyColumns.push_back(column.columnName);
+                }
+
+                std::vector<QueryCondition> usedPushdown;
+                std::vector<QueryCondition> residual = group.conditions;
+                bool encounteredRange = false;
+                for (const SCIndexColumnDef& column : indexDef.columns)
+                {
+                    if (encounteredRange)
+                    {
+                        break;
+                    }
+
+                    const auto equalityIt =
+                        std::find_if(group.conditions.begin(), group.conditions.end(), [&column](const QueryCondition& condition) {
+                            return condition.fieldName == column.columnName && IsEqualityIndexOperator(condition.op) &&
+                                   condition.values.size() == 1;
+                        });
+                    if (equalityIt != group.conditions.end())
+                    {
+                        ++candidate.matchedPrefixLength;
+                        ++candidate.equalityPrefixLength;
+                        usedPushdown.push_back(*equalityIt);
+                        continue;
+                    }
+
+                    const auto rangeIt =
+                        std::find_if(group.conditions.begin(), group.conditions.end(), [&column](const QueryCondition& condition) {
+                            return condition.fieldName == column.columnName && IsRangeIndexOperator(condition.op);
+                        });
+                    if (rangeIt == group.conditions.end())
+                    {
+                        break;
+                    }
+
+                    ++candidate.matchedPrefixLength;
+                    candidate.hasRangeCondition = true;
+                    usedPushdown.push_back(*rangeIt);
+                    encounteredRange = true;
+                    break;
+                }
+
+                if (candidate.matchedPrefixLength == 0)
+                {
+                    continue;
+                }
+
+                residual.erase(std::remove_if(residual.begin(),
+                                              residual.end(),
+                                              [&usedPushdown, &isConditionConsumedByPushdown, &isConditionImpliedByPushdown](
+                                                  const QueryCondition& condition) {
+                                                  return isConditionConsumedByPushdown(condition, usedPushdown) ||
+                                                         isConditionImpliedByPushdown(condition, usedPushdown);
+                                              }),
+                               residual.end());
+
+                candidate.orderCovered = !inputPlan.orderBy.empty() && !candidate.hasRangeCondition;
+                candidate.exactOrderCovered = candidate.orderCovered;
+                if (candidate.orderCovered)
+                {
+                    std::size_t orderColumnIndex = candidate.equalityPrefixLength;
+                    for (const SortSpec& sort : inputPlan.orderBy)
+                    {
+                        if (orderColumnIndex >= indexDef.columns.size() ||
+                            indexDef.columns[orderColumnIndex].columnName != sort.fieldName)
+                        {
+                            candidate.orderCovered = false;
+                            candidate.exactOrderCovered = false;
+                            break;
+                        }
+
+                        const bool indexDescending = indexDef.columns[orderColumnIndex].descending;
+                        const bool sortDescending = sort.direction == QueryOrderDirection::Descending;
+                        if (indexDescending != sortDescending)
+                        {
+                            candidate.orderCovered = false;
+                            candidate.exactOrderCovered = false;
+                            break;
+                        }
+                        ++orderColumnIndex;
+                    }
+                }
+
+                if (!bestMatch.has_value() || isBetterCandidate(candidate, residual, *bestMatch, bestResidual))
+                {
+                    bestMatch = candidate;
+                    bestPushdown = std::move(usedPushdown);
+                    bestResidual = std::move(residual);
+                }
+            }
+
+            if (bestMatch.has_value())
+            {
+                analyzed.matchedIndex = bestMatch;
+                analyzed.pushdown.pushdownConditions = std::move(bestPushdown);
+                analyzed.pushdown.residualConditions = std::move(bestResidual);
+                analyzed.pushdownConditionCount =
+                    static_cast<std::uint32_t>(analyzed.pushdown.pushdownConditions.size());
+                analyzed.fallbackConditionCount =
+                    static_cast<std::uint32_t>(analyzed.pushdown.residualConditions.size());
+                analyzed.state =
+                    analyzed.pushdown.residualConditions.empty() ? QueryPlanState::DirectIndex : QueryPlanState::PartialIndex;
+                analyzed.fallbackReason.clear();
+            } else if (analyzed.constraints.requireIndex)
+            {
+                analyzed.state = QueryPlanState::Unsupported;
+                analyzed.fallbackReason = L"index-required";
+            }
+
+            *outPlan = std::move(analyzed);
+            return SC_OK;
+        }
+
+        ErrorCode SqliteDatabase::CollectCompositeIndexRecordIds(const QueryPlan& analyzedPlan,
+                                                                 std::vector<RecordId>* outRecordIds,
+                                                                 std::uint64_t* outScannedEntries)
+        {
+            if (outRecordIds == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+            outRecordIds->clear();
+            if (outScannedEntries != nullptr)
+            {
+                *outScannedEntries = 0;
+            }
+            if (!analyzedPlan.matchedIndex.has_value())
+            {
+                return SC_E_INVALIDARG;
+            }
+
+            const auto tableIt = tables_.find(analyzedPlan.target.name);
+            if (tableIt == tables_.end())
+            {
+                return SC_E_TABLE_NOT_FOUND;
+            }
+
+            auto* table = static_cast<SqliteTable*>(tableIt->second.Get());
+            const std::int64_t schemaIndexRowId =
+                FindQueryIndexStorageRowId(table->TableRowId(), analyzedPlan.matchedIndex->indexName);
+            if (schemaIndexRowId <= 0)
+            {
+                return SC_E_INDEX_NOT_FOUND;
+            }
+
+            std::string sql = "SELECT record_id FROM query_index_entries WHERE schema_index_id = ? AND alive_flag = 1";
+            CompositeIndexLookupBounds bounds;
+            bool useRangeFullVerificationScan = analyzedPlan.matchedIndex->hasRangeCondition;
+            if (!useRangeFullVerificationScan)
+            {
+                const ErrorCode boundsRc = BuildCompositeLookupBounds(table->Schema(), analyzedPlan, &bounds);
+                if (Failed(boundsRc))
+                {
+                    return boundsRc;
+                }
+                if (bounds.exactMatch && bounds.exactPrefixLength == 0)
+                {
+                    return SC_E_INVALIDARG;
+                }
+                if (!bounds.exactMatch && !bounds.hasLowerBound && !bounds.hasUpperBound)
+                {
+                    return SC_E_INVALIDARG;
+                }
+
+                if (bounds.exactMatch)
+                {
+                    const char* keyColumn = bounds.exactPrefixLength == 1
+                                                ? "key_prefix_1"
+                                                : (bounds.exactPrefixLength == 2 ? "key_prefix_2" : "key_prefix_3");
+                    sql += " AND ";
+                    sql += keyColumn;
+                    sql += " = ?";
+                } else
+                {
+                    if (bounds.equalityPrefixLength > 0)
+                    {
+                        const char* keyColumn = bounds.equalityPrefixLength == 1
+                                                    ? "key_prefix_1"
+                                                    : (bounds.equalityPrefixLength == 2 ? "key_prefix_2" : "key_prefix_3");
+                        sql += " AND ";
+                        sql += keyColumn;
+                        sql += " = ?";
+                    }
+                    if (bounds.hasLowerBound)
+                    {
+                        sql += bounds.includeLowerBound ? " AND full_key >= ?" : " AND full_key > ?";
+                    }
+                    if (bounds.hasUpperBound)
+                    {
+                        sql += bounds.includeUpperBound ? " AND full_key <= ?" : " AND full_key < ?";
+                    }
+                }
+            }
+            else if (analyzedPlan.matchedIndex->equalityPrefixLength > 0)
+            {
+                const ErrorCode boundsRc = BuildCompositeEqualityPrefixBounds(table->Schema(), analyzedPlan, &bounds);
+                if (Succeeded(boundsRc) && bounds.exactPrefixLength > 0)
+                {
+                    const char* keyColumn = bounds.exactPrefixLength == 1
+                                                ? "key_prefix_1"
+                                                : (bounds.exactPrefixLength == 2 ? "key_prefix_2" : "key_prefix_3");
+                    sql += " AND ";
+                    sql += keyColumn;
+                    sql += " = ?";
+                }
+            }
+            sql += " ORDER BY full_key, record_id;";
+            SqliteStmt stmt = db_.Prepare(sql.c_str());
+            stmt.BindInt64(1, schemaIndexRowId);
+            int bindIndex = 2;
+            if (!useRangeFullVerificationScan && bounds.exactMatch)
+            {
+                stmt.BindBlob(bindIndex++, bounds.exactPrefixKey);
+            } else if (!useRangeFullVerificationScan)
+            {
+                if (bounds.equalityPrefixLength > 0)
+                {
+                    stmt.BindBlob(bindIndex++, bounds.equalityPrefixKey);
+                }
+                if (bounds.hasLowerBound)
+                {
+                    stmt.BindBlob(bindIndex++, bounds.lowerBound);
+                }
+                if (bounds.hasUpperBound)
+                {
+                    stmt.BindBlob(bindIndex++, bounds.upperBound);
+                }
+            } else if (bounds.exactPrefixLength > 0)
+            {
+                stmt.BindBlob(bindIndex++, bounds.exactPrefixKey);
+            }
+            bool hasRow = false;
+            while (stmt.Step(&hasRow) == SC_OK && hasRow)
+            {
+                outRecordIds->push_back(stmt.ColumnInt64(0));
+                if (outScannedEntries != nullptr)
+                {
+                    ++(*outScannedEntries);
+                }
+            }
             return SC_OK;
         }
 
@@ -6967,6 +8519,12 @@ namespace StableCore::Storage
             }
 
             const std::int64_t indexId = rowId > 0 ? rowId : db_.LastInsertRowId();
+            const ErrorCode queryIndexDefRc = PersistQueryIndexDefinition(schema, def, indexId, false);
+            if (Failed(queryIndexDefRc))
+            {
+                return queryIndexDefRc;
+            }
+
             for (std::size_t columnIndex = 0; columnIndex < def.columns.size(); ++columnIndex)
             {
                 SqliteStmt columnStmt = db_.Prepare(
@@ -6984,7 +8542,29 @@ namespace StableCore::Storage
                 }
             }
 
+            const bool compositeIndex = IsCompositeIndexExplicit(def);
+            const auto tableIt = std::find_if(
+                tables_.begin(),
+                tables_.end(),
+                [tableRowId = schema->TableRowId()](const std::pair<const std::wstring, SCTablePtr>& entry) {
+                    const auto* table = static_cast<const SqliteTable*>(entry.second.Get());
+                    return table != nullptr && table->TableRowId() == tableRowId;
+                });
+            if (tableIt != tables_.end())
+            {
+                auto* table = static_cast<SqliteTable*>(tableIt->second.Get());
+                const ErrorCode rebuildRc = RebuildCompositeIndexEntriesForTable(table, def, indexId);
+                if (Failed(rebuildRc))
+                {
+                    return rebuildRc;
+                }
+            }
+
             schema->LoadIndex(def, indexId);
+            if (compositeIndex)
+            {
+                queryIndexRowIdsByTableAndName_[BuildQueryIndexStorageKey(schema->TableRowId(), def.name)] = indexId;
+            }
             return SC_OK;
         }
 
@@ -6998,6 +8578,17 @@ namespace StableCore::Storage
             if (schema->FindIndexDef(name) == nullptr)
             {
                 return SC_E_INDEX_NOT_FOUND;
+            }
+
+            const SCIndexDef* previousDef = schema->FindIndexDef(name);
+            const bool compositeIndex = previousDef != nullptr && IsCompositeIndexExplicit(*previousDef);
+            if (compositeIndex)
+            {
+                const ErrorCode removeDefRc = RemoveQueryIndexDefinition(schema, name, false);
+                if (Failed(removeDefRc))
+                {
+                    return removeDefRc;
+                }
             }
 
             {
@@ -7024,6 +8615,10 @@ namespace StableCore::Storage
             }
 
             schema->UnloadIndex(name);
+            if (compositeIndex)
+            {
+                queryIndexRowIdsByTableAndName_.erase(BuildQueryIndexStorageKey(schema->TableRowId(), name));
+            }
             return SC_OK;
         }
 
@@ -8151,6 +9746,11 @@ namespace StableCore::Storage
 
                 if (data->state == RecordState::Deleted)
                 {
+                    const ErrorCode rebuildDeletedRc = RebuildCompositeIndexEntriesForRecord(table, *data);
+                    if (Failed(rebuildDeletedRc))
+                    {
+                        throw std::runtime_error("failed to rebuild deleted composite index entries");
+                    }
                     continue;
                 }
 
@@ -8162,6 +9762,12 @@ namespace StableCore::Storage
                     BindValueForStorage(insertValue, 4, 5, 6, 7, 8, 9, SCValue);
                     insertValue.Step();
                     insertValue.Reset();
+                }
+
+                const ErrorCode rebuildRc = RebuildCompositeIndexEntriesForRecord(table, *data);
+                if (Failed(rebuildRc))
+                {
+                    throw std::runtime_error("failed to rebuild composite index entries");
                 }
             }
         }

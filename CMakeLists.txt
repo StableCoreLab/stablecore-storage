@@ -101,6 +101,7 @@ set(SCSTORAGE_LIBRARY_SOURCES
 
 set(SCSTORAGE_LIBRARY_PRIVATE_HEADERS
     Src/Query/SCQuerySqliteExecutor.h
+    Src/Query/SCQuerySqliteIndexAccess.h
 )
 
 set(SCSTORAGE_PUBLIC_HEADERS

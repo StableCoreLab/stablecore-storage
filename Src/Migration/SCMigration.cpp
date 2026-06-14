@@ -33,6 +33,13 @@ namespace StableCore::Storage
                     L"Add binary storage columns for field values, schema "
                     L"defaults and journal entries.",
                 },
+                SCMigrationStep{
+                    4,
+                    5,
+                    L"sqlite-schema-v5",
+                    L"Add logical composite query-index metadata and entry "
+                    L"storage.",
+                },
             };
         }
 

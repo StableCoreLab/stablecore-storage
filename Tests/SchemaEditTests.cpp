@@ -1,8 +1,10 @@
+#include <algorithm>
 #include <filesystem>
 
 #include <gtest/gtest.h>
 #include <sqlite3.h>
 
+#include "ISCQuery.h"
 #include "SCStorage.h"
 
 namespace sc = StableCore::Storage;
@@ -48,6 +50,48 @@ namespace
         return rc == SQLITE_OK;
     }
 
+    bool QuerySqliteInt64(const fs::path& dbPath, const char* sql, std::int64_t* outValue)
+    {
+        if (outValue == nullptr)
+        {
+            return false;
+        }
+
+        sqlite3* db = nullptr;
+        const std::string narrowPath = dbPath.string();
+        if (sqlite3_open_v2(narrowPath.c_str(), &db, SQLITE_OPEN_READWRITE, nullptr) != SQLITE_OK)
+        {
+            if (db != nullptr)
+            {
+                sqlite3_close(db);
+            }
+            return false;
+        }
+
+        sqlite3_stmt* stmt = nullptr;
+        const int prepareRc = sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+        if (prepareRc != SQLITE_OK)
+        {
+            if (stmt != nullptr)
+            {
+                sqlite3_finalize(stmt);
+            }
+            sqlite3_close(db);
+            return false;
+        }
+
+        const int stepRc = sqlite3_step(stmt);
+        const bool ok = stepRc == SQLITE_ROW;
+        if (ok)
+        {
+            *outValue = sqlite3_column_int64(stmt, 0);
+        }
+
+        sqlite3_finalize(stmt);
+        sqlite3_close(db);
+        return ok;
+    }
+
     sc::SCColumnDef MakeIntColumn(const wchar_t* name, bool nullable = false)
     {
         sc::SCColumnDef column;
@@ -85,6 +129,82 @@ namespace
         index.name = name;
         index.columns.push_back(sc::SCIndexColumnDef{columnName, false});
         return index;
+    }
+
+    sc::SCIndexDef MakeCompositeIndex(const wchar_t* name, const wchar_t* firstColumn, const wchar_t* secondColumn)
+    {
+        sc::SCIndexDef index;
+        index.name = name;
+        index.columns.push_back(sc::SCIndexColumnDef{firstColumn, false});
+        index.columns.push_back(sc::SCIndexColumnDef{secondColumn, false});
+        return index;
+    }
+
+    sc::ErrorCode ExecuteQueryForBeam(sc::ISCDatabase* db,
+                                      std::vector<sc::QueryCondition> conditions,
+                                      const sc::QueryConstraints& constraints,
+                                      std::vector<std::wstring>* outNames,
+                                      sc::QueryExecutionResult* outResult)
+    {
+        if (db == nullptr || outNames == nullptr || outResult == nullptr)
+        {
+            return sc::SC_E_POINTER;
+        }
+
+        auto planner = sc::CreateDefaultQueryPlanner();
+        if (planner == nullptr)
+        {
+            return sc::SC_E_FAIL;
+        }
+
+        sc::QueryPlan plan;
+        const sc::ErrorCode planRc = planner->BuildPlan(sc::QueryTarget{L"Beam", sc::QueryTargetType::Table},
+                                                        {sc::QueryConditionGroup{sc::QueryLogicOperator::And, std::move(conditions)}},
+                                                        sc::QueryLogicOperator::And,
+                                                        {sc::SortSpec{L"Name", sc::QueryOrderDirection::Ascending, false}},
+                                                        {},
+                                                        {},
+                                                        constraints,
+                                                        &plan);
+        if (sc::Failed(planRc))
+        {
+            return planRc;
+        }
+
+        sc::SCRecordCursorPtr cursor;
+        sc::QueryExecutionContext context;
+        context.backendKind = sc::QueryBackendKind::SQLite;
+        context.database = db;
+        context.backendHandle = db;
+        context.resultCursor = &cursor;
+
+        const sc::ErrorCode execRc = sc::ExecuteQueryPlan(plan, context, outResult);
+        if (sc::Failed(execRc))
+        {
+            return execRc;
+        }
+
+        outNames->clear();
+        sc::SCRecordPtr record;
+        while (cursor->Next(record) == sc::SC_OK && record)
+        {
+            std::wstring name;
+            const sc::ErrorCode nameRc = record->GetStringCopy(L"Name", &name);
+            if (nameRc == sc::SC_OK)
+            {
+                outNames->push_back(name);
+            }
+            else if (nameRc == sc::SC_E_VALUE_IS_NULL)
+            {
+                outNames->push_back(L"<NULL>");
+            }
+            else
+            {
+                return nameRc;
+            }
+        }
+
+        return sc::SC_OK;
     }
 
     sc::SCConstraintDef MakeForeignKeyConstraint(const wchar_t* name,
@@ -211,6 +331,158 @@ TEST(SchemaEdit, CreateTableFromSchemaBuildsConstraintsAndIndexes)
     EXPECT_EQ(loadedSchema->FindIndex(L"idx_Beam_Name", &index), sc::SC_OK);
     ASSERT_EQ(index.columns.size(), 1u);
     EXPECT_EQ(index.columns.front().columnName, L"Name");
+}
+
+TEST(SchemaEdit, ExplicitCompositeIndexBuildsLogicalQueryIndexStorage)
+{
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_SchemaEdit_CompositeQueryIndex.sqlite");
+
+    sc::SCDbPtr db;
+    EXPECT_EQ(sc::CreateFileDatabase(dbPath.c_str(), sc::SCOpenDatabaseOptions{}, db), sc::SC_OK);
+
+    sc::SCTablePtr table;
+    EXPECT_EQ(db->CreateTable(L"Beam", table), sc::SC_OK);
+
+    sc::SCSchemaPtr schema;
+    EXPECT_EQ(table->GetSchema(schema), sc::SC_OK);
+    EXPECT_EQ(schema->AddColumn(MakeIntColumn(L"Width")), sc::SC_OK);
+    EXPECT_EQ(schema->AddColumn(MakeStringColumn(L"Name")), sc::SC_OK);
+    EXPECT_EQ(schema->AddIndex(MakeCompositeIndex(L"idx_Beam_Width_Name", L"Width", L"Name")), sc::SC_OK);
+
+    sc::SCEditPtr edit;
+    EXPECT_EQ(db->BeginEdit(L"seed", edit), sc::SC_OK);
+
+    sc::SCRecordPtr row;
+    EXPECT_EQ(table->CreateRecord(row), sc::SC_OK);
+    EXPECT_EQ(row->SetInt64(L"Width", 100), sc::SC_OK);
+    EXPECT_EQ(row->SetString(L"Name", L"Alpha"), sc::SC_OK);
+    EXPECT_EQ(db->Commit(edit.Get()), sc::SC_OK);
+
+    std::int64_t value = -1;
+    EXPECT_TRUE(QuerySqliteInt64(
+        dbPath,
+        "SELECT COUNT(*) FROM query_indexes qi JOIN tables t ON t.table_id = qi.table_id "
+        "WHERE t.name = 'Beam' AND qi.index_name = 'idx_Beam_Width_Name';",
+        &value));
+    EXPECT_EQ(value, 1);
+
+    EXPECT_TRUE(QuerySqliteInt64(
+        dbPath,
+        "SELECT COUNT(*) FROM query_index_entries qie JOIN query_indexes qi "
+        "ON qi.schema_index_id = qie.schema_index_id JOIN tables t ON t.table_id = qi.table_id "
+        "WHERE t.name = 'Beam' AND qi.index_name = 'idx_Beam_Width_Name';",
+        &value));
+    EXPECT_EQ(value, 1);
+}
+
+TEST(SchemaEdit, ExplicitCompositeIndexQueryStorageSurvivesUndoRedoAndReopen)
+{
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_SchemaEdit_CompositeQueryIndexUndoRedoReopen.sqlite");
+
+    {
+        sc::SCDbPtr db;
+        EXPECT_EQ(sc::CreateFileDatabase(dbPath.c_str(), sc::SCOpenDatabaseOptions{}, db), sc::SC_OK);
+
+        sc::SCTablePtr table;
+        EXPECT_EQ(db->CreateTable(L"Beam", table), sc::SC_OK);
+
+        sc::SCSchemaPtr schema;
+        EXPECT_EQ(table->GetSchema(schema), sc::SC_OK);
+        EXPECT_EQ(schema->AddColumn(MakeIntColumn(L"Width")), sc::SC_OK);
+        EXPECT_EQ(schema->AddColumn(MakeStringColumn(L"Name")), sc::SC_OK);
+
+        sc::SCEditPtr indexEdit;
+        EXPECT_EQ(db->BeginEdit(L"add composite index", indexEdit), sc::SC_OK);
+        EXPECT_EQ(schema->AddIndex(MakeCompositeIndex(L"idx_Beam_Width_Name", L"Width", L"Name")), sc::SC_OK);
+        EXPECT_EQ(db->Commit(indexEdit.Get()), sc::SC_OK);
+
+        sc::SCEditPtr seedEdit;
+        EXPECT_EQ(db->BeginEdit(L"seed composite index rows", seedEdit), sc::SC_OK);
+
+        sc::SCRecordPtr row;
+        EXPECT_EQ(table->CreateRecord(row), sc::SC_OK);
+        EXPECT_EQ(row->SetInt64(L"Width", 100), sc::SC_OK);
+        EXPECT_EQ(row->SetString(L"Name", L"Alpha"), sc::SC_OK);
+        EXPECT_EQ(db->Commit(seedEdit.Get()), sc::SC_OK);
+
+        std::int64_t value = -1;
+        EXPECT_TRUE(QuerySqliteInt64(
+            dbPath,
+            "SELECT COUNT(*) FROM query_indexes qi JOIN tables t ON t.table_id = qi.table_id "
+            "WHERE t.name = 'Beam' AND qi.index_name = 'idx_Beam_Width_Name';",
+            &value));
+        EXPECT_EQ(value, 1);
+        EXPECT_TRUE(QuerySqliteInt64(
+            dbPath,
+            "SELECT COUNT(*) FROM query_index_entries qie JOIN query_indexes qi "
+            "ON qi.schema_index_id = qie.schema_index_id JOIN tables t ON t.table_id = qi.table_id "
+            "WHERE t.name = 'Beam' AND qi.index_name = 'idx_Beam_Width_Name';",
+            &value));
+        EXPECT_EQ(value, 1);
+
+        EXPECT_EQ(db->Undo(), sc::SC_OK);
+    }
+
+    {
+        sc::SCDbPtr reopened;
+        EXPECT_EQ(sc::CreateFileDatabase(dbPath.c_str(), sc::SCOpenDatabaseOptions{}, reopened), sc::SC_OK);
+
+        sc::SCTablePtr table;
+        EXPECT_EQ(reopened->GetTable(L"Beam", table), sc::SC_OK);
+
+        sc::SCSchemaPtr schema;
+        EXPECT_EQ(table->GetSchema(schema), sc::SC_OK);
+
+        sc::SCIndexDef index;
+        EXPECT_EQ(schema->FindIndex(L"idx_Beam_Width_Name", &index), sc::SC_OK);
+
+        std::int64_t value = -1;
+        EXPECT_TRUE(QuerySqliteInt64(
+            dbPath,
+            "SELECT COUNT(*) FROM query_indexes qi JOIN tables t ON t.table_id = qi.table_id "
+            "WHERE t.name = 'Beam' AND qi.index_name = 'idx_Beam_Width_Name';",
+            &value));
+        EXPECT_EQ(value, 1);
+        EXPECT_TRUE(QuerySqliteInt64(
+            dbPath,
+            "SELECT COUNT(*) FROM query_index_entries qie JOIN query_indexes qi "
+            "ON qi.schema_index_id = qie.schema_index_id JOIN tables t ON t.table_id = qi.table_id "
+            "WHERE t.name = 'Beam' AND qi.index_name = 'idx_Beam_Width_Name';",
+            &value));
+        EXPECT_EQ(value, 0);
+
+        EXPECT_EQ(reopened->Undo(), sc::SC_OK);
+        EXPECT_EQ(schema->FindIndex(L"idx_Beam_Width_Name", &index), sc::SC_E_INDEX_NOT_FOUND);
+        EXPECT_TRUE(QuerySqliteInt64(
+            dbPath,
+            "SELECT COUNT(*) FROM query_indexes qi JOIN tables t ON t.table_id = qi.table_id "
+            "WHERE t.name = 'Beam' AND qi.index_name = 'idx_Beam_Width_Name';",
+            &value));
+        EXPECT_EQ(value, 0);
+        EXPECT_TRUE(QuerySqliteInt64(
+            dbPath,
+            "SELECT COUNT(*) FROM query_index_entries qie JOIN query_indexes qi "
+            "ON qi.schema_index_id = qie.schema_index_id JOIN tables t ON t.table_id = qi.table_id "
+            "WHERE t.name = 'Beam' AND qi.index_name = 'idx_Beam_Width_Name';",
+            &value));
+        EXPECT_EQ(value, 0);
+
+        EXPECT_EQ(reopened->Redo(), sc::SC_OK);
+        EXPECT_EQ(schema->FindIndex(L"idx_Beam_Width_Name", &index), sc::SC_OK);
+        EXPECT_TRUE(QuerySqliteInt64(
+            dbPath,
+            "SELECT COUNT(*) FROM query_indexes qi JOIN tables t ON t.table_id = qi.table_id "
+            "WHERE t.name = 'Beam' AND qi.index_name = 'idx_Beam_Width_Name';",
+            &value));
+        EXPECT_EQ(value, 1);
+        EXPECT_TRUE(QuerySqliteInt64(
+            dbPath,
+            "SELECT COUNT(*) FROM query_index_entries qie JOIN query_indexes qi "
+            "ON qi.schema_index_id = qie.schema_index_id JOIN tables t ON t.table_id = qi.table_id "
+            "WHERE t.name = 'Beam' AND qi.index_name = 'idx_Beam_Width_Name';",
+            &value));
+        EXPECT_EQ(value, 0);
+    }
 }
 
 TEST(SchemaEdit, BackendCreateTableFailureDoesNotLeaveVisibleTable)
@@ -382,6 +654,745 @@ TEST(SchemaEdit, ApplyTableSchemaPatchSupportsConstraintIndexCommitUndoAndRedo)
     EXPECT_EQ(schema->FindIndex(L"idx_Beam_Name", &index), sc::SC_OK);
 }
 
+TEST(SchemaEdit, ApplyTableSchemaPatchSupportsExplicitCompositeIndexLogicalStorage)
+{
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_SchemaEdit_PatchCompositeIndexLogicalStorage.sqlite");
+
+    sc::SCDbPtr db;
+    EXPECT_EQ(sc::CreateFileDatabase(dbPath.c_str(), sc::SCOpenDatabaseOptions{}, db), sc::SC_OK);
+
+    sc::SCTablePtr table = CreateBeamTable(db);
+    sc::SCSchemaPtr schema;
+    EXPECT_EQ(table->GetSchema(schema), sc::SC_OK);
+
+    sc::SCEditPtr seedEdit;
+    EXPECT_EQ(db->BeginEdit(L"seed before patch", seedEdit), sc::SC_OK);
+    sc::SCRecordPtr row;
+    EXPECT_EQ(table->CreateRecord(row), sc::SC_OK);
+    EXPECT_EQ(row->SetInt64(L"Width", 100), sc::SC_OK);
+    EXPECT_EQ(row->SetString(L"Name", L"Alpha"), sc::SC_OK);
+    EXPECT_EQ(db->Commit(seedEdit.Get()), sc::SC_OK);
+
+    sc::SCTableSchemaPatch patch;
+    patch.tableName = L"Beam";
+    patch.addIndexes.push_back(MakeCompositeIndex(L"idx_Beam_Width_Name", L"Width", L"Name"));
+
+    sc::SCSchemaEditResult result;
+    EXPECT_EQ(sc::ApplyTableSchemaPatch(db.Get(), patch, &result), sc::SC_OK);
+    EXPECT_TRUE(result.applied);
+
+    sc::SCIndexDef index;
+    EXPECT_EQ(schema->FindIndex(L"idx_Beam_Width_Name", &index), sc::SC_OK);
+
+    std::int64_t value = -1;
+    EXPECT_TRUE(QuerySqliteInt64(
+        dbPath,
+        "SELECT COUNT(*) FROM query_indexes qi JOIN tables t ON t.table_id = qi.table_id "
+        "WHERE t.name = 'Beam' AND qi.index_name = 'idx_Beam_Width_Name';",
+        &value));
+    EXPECT_EQ(value, 1);
+    EXPECT_TRUE(QuerySqliteInt64(
+        dbPath,
+        "SELECT COUNT(*) FROM query_index_entries qie JOIN query_indexes qi "
+        "ON qi.schema_index_id = qie.schema_index_id JOIN tables t ON t.table_id = qi.table_id "
+        "WHERE t.name = 'Beam' AND qi.index_name = 'idx_Beam_Width_Name';",
+        &value));
+    EXPECT_EQ(value, 1);
+
+    EXPECT_EQ(db->Undo(), sc::SC_OK);
+    EXPECT_EQ(schema->FindIndex(L"idx_Beam_Width_Name", &index), sc::SC_E_INDEX_NOT_FOUND);
+    EXPECT_TRUE(QuerySqliteInt64(
+        dbPath,
+        "SELECT COUNT(*) FROM query_indexes qi JOIN tables t ON t.table_id = qi.table_id "
+        "WHERE t.name = 'Beam' AND qi.index_name = 'idx_Beam_Width_Name';",
+        &value));
+    EXPECT_EQ(value, 0);
+    EXPECT_TRUE(QuerySqliteInt64(
+        dbPath,
+        "SELECT COUNT(*) FROM query_index_entries qie JOIN query_indexes qi "
+        "ON qi.schema_index_id = qie.schema_index_id JOIN tables t ON t.table_id = qi.table_id "
+        "WHERE t.name = 'Beam' AND qi.index_name = 'idx_Beam_Width_Name';",
+        &value));
+    EXPECT_EQ(value, 0);
+
+    EXPECT_EQ(db->Redo(), sc::SC_OK);
+    EXPECT_EQ(schema->FindIndex(L"idx_Beam_Width_Name", &index), sc::SC_OK);
+    EXPECT_TRUE(QuerySqliteInt64(
+        dbPath,
+        "SELECT COUNT(*) FROM query_indexes qi JOIN tables t ON t.table_id = qi.table_id "
+        "WHERE t.name = 'Beam' AND qi.index_name = 'idx_Beam_Width_Name';",
+        &value));
+    EXPECT_EQ(value, 1);
+    EXPECT_TRUE(QuerySqliteInt64(
+        dbPath,
+        "SELECT COUNT(*) FROM query_index_entries qie JOIN query_indexes qi "
+        "ON qi.schema_index_id = qie.schema_index_id JOIN tables t ON t.table_id = qi.table_id "
+        "WHERE t.name = 'Beam' AND qi.index_name = 'idx_Beam_Width_Name';",
+        &value));
+    EXPECT_EQ(value, 1);
+}
+
+TEST(SchemaEdit, ApplyTableSchemaPatchRemovesExplicitCompositeIndexAcrossReopen)
+{
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_SchemaEdit_PatchRemoveCompositeIndexReopen.sqlite");
+
+    {
+        sc::SCDbPtr db;
+        EXPECT_EQ(sc::CreateFileDatabase(dbPath.c_str(), sc::SCOpenDatabaseOptions{}, db), sc::SC_OK);
+
+        sc::SCTablePtr table = CreateBeamTable(db);
+        sc::SCSchemaPtr schema;
+        EXPECT_EQ(table->GetSchema(schema), sc::SC_OK);
+        EXPECT_EQ(schema->AddIndex(MakeCompositeIndex(L"idx_Beam_Width_Name", L"Width", L"Name")), sc::SC_OK);
+
+        sc::SCEditPtr seedEdit;
+        EXPECT_EQ(db->BeginEdit(L"seed before remove patch", seedEdit), sc::SC_OK);
+        sc::SCRecordPtr row;
+        EXPECT_EQ(table->CreateRecord(row), sc::SC_OK);
+        EXPECT_EQ(row->SetInt64(L"Width", 100), sc::SC_OK);
+        EXPECT_EQ(row->SetString(L"Name", L"Alpha"), sc::SC_OK);
+        EXPECT_EQ(db->Commit(seedEdit.Get()), sc::SC_OK);
+
+        sc::SCTableSchemaPatch patch;
+        patch.tableName = L"Beam";
+        patch.removeIndexes.push_back(L"idx_Beam_Width_Name");
+
+        sc::SCSchemaEditResult result;
+        EXPECT_EQ(sc::ApplyTableSchemaPatch(db.Get(), patch, &result), sc::SC_OK);
+        EXPECT_TRUE(result.applied);
+
+        sc::SCIndexDef index;
+        EXPECT_EQ(schema->FindIndex(L"idx_Beam_Width_Name", &index), sc::SC_E_INDEX_NOT_FOUND);
+
+        std::int64_t value = -1;
+        EXPECT_TRUE(QuerySqliteInt64(
+            dbPath,
+            "SELECT COUNT(*) FROM query_indexes qi JOIN tables t ON t.table_id = qi.table_id "
+            "WHERE t.name = 'Beam' AND qi.index_name = 'idx_Beam_Width_Name';",
+            &value));
+        EXPECT_EQ(value, 0);
+        EXPECT_TRUE(QuerySqliteInt64(
+            dbPath,
+            "SELECT COUNT(*) FROM query_index_entries qie JOIN query_indexes qi "
+            "ON qi.schema_index_id = qie.schema_index_id JOIN tables t ON t.table_id = qi.table_id "
+            "WHERE t.name = 'Beam' AND qi.index_name = 'idx_Beam_Width_Name';",
+            &value));
+        EXPECT_EQ(value, 0);
+    }
+
+    sc::SCDbPtr reopened;
+    EXPECT_EQ(sc::CreateFileDatabase(dbPath.c_str(), sc::SCOpenDatabaseOptions{}, reopened), sc::SC_OK);
+
+    sc::SCTablePtr reopenedTable;
+    EXPECT_EQ(reopened->GetTable(L"Beam", reopenedTable), sc::SC_OK);
+
+    sc::SCSchemaPtr reopenedSchema;
+    EXPECT_EQ(reopenedTable->GetSchema(reopenedSchema), sc::SC_OK);
+
+    sc::SCIndexDef reopenedIndex;
+    EXPECT_EQ(reopenedSchema->FindIndex(L"idx_Beam_Width_Name", &reopenedIndex), sc::SC_E_INDEX_NOT_FOUND);
+
+    std::int64_t value = -1;
+    EXPECT_TRUE(QuerySqliteInt64(
+        dbPath,
+        "SELECT COUNT(*) FROM query_indexes qi JOIN tables t ON t.table_id = qi.table_id "
+        "WHERE t.name = 'Beam' AND qi.index_name = 'idx_Beam_Width_Name';",
+        &value));
+    EXPECT_EQ(value, 0);
+    EXPECT_TRUE(QuerySqliteInt64(
+        dbPath,
+        "SELECT COUNT(*) FROM query_index_entries qie JOIN query_indexes qi "
+        "ON qi.schema_index_id = qie.schema_index_id JOIN tables t ON t.table_id = qi.table_id "
+        "WHERE t.name = 'Beam' AND qi.index_name = 'idx_Beam_Width_Name';",
+        &value));
+    EXPECT_EQ(value, 0);
+}
+
+TEST(SchemaEdit, ApplyTableSchemaPatchPreservesNullCompositeEntriesThroughUndoRedoAndReopen)
+{
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_SchemaEdit_PatchCompositeNullUndoRedoReopen.sqlite");
+
+    {
+        sc::SCDbPtr db;
+        EXPECT_EQ(sc::CreateFileDatabase(dbPath.c_str(), sc::SCOpenDatabaseOptions{}, db), sc::SC_OK);
+
+        sc::SCTablePtr table = CreateBeamTable(db);
+        sc::SCSchemaPtr schema;
+        EXPECT_EQ(table->GetSchema(schema), sc::SC_OK);
+
+        sc::SCEditPtr seedEdit;
+        EXPECT_EQ(db->BeginEdit(L"seed null patch chain", seedEdit), sc::SC_OK);
+        sc::SCRecordPtr row;
+        EXPECT_EQ(table->CreateRecord(row), sc::SC_OK);
+        EXPECT_EQ(row->SetInt64(L"Width", 100), sc::SC_OK);
+        EXPECT_EQ(db->Commit(seedEdit.Get()), sc::SC_OK);
+
+        sc::SCTableSchemaPatch patch;
+        patch.tableName = L"Beam";
+        patch.addIndexes.push_back(MakeCompositeIndex(L"idx_Beam_Width_Name", L"Width", L"Name"));
+
+        sc::SCSchemaEditResult result;
+        EXPECT_EQ(sc::ApplyTableSchemaPatch(db.Get(), patch, &result), sc::SC_OK);
+        EXPECT_TRUE(result.applied);
+
+        std::int64_t value = -1;
+        EXPECT_TRUE(QuerySqliteInt64(
+            dbPath,
+            "SELECT COUNT(*) FROM query_indexes qi JOIN tables t ON t.table_id = qi.table_id "
+            "WHERE t.name = 'Beam' AND qi.index_name = 'idx_Beam_Width_Name';",
+            &value));
+        EXPECT_EQ(value, 1);
+        EXPECT_TRUE(QuerySqliteInt64(
+            dbPath,
+            "SELECT COUNT(*) FROM query_index_entries qie JOIN query_indexes qi "
+            "ON qi.schema_index_id = qie.schema_index_id JOIN tables t ON t.table_id = qi.table_id "
+            "WHERE t.name = 'Beam' AND qi.index_name = 'idx_Beam_Width_Name';",
+            &value));
+        EXPECT_EQ(value, 1);
+
+        EXPECT_EQ(db->Undo(), sc::SC_OK);
+        EXPECT_TRUE(QuerySqliteInt64(
+            dbPath,
+            "SELECT COUNT(*) FROM query_indexes qi JOIN tables t ON t.table_id = qi.table_id "
+            "WHERE t.name = 'Beam' AND qi.index_name = 'idx_Beam_Width_Name';",
+            &value));
+        EXPECT_EQ(value, 0);
+        EXPECT_TRUE(QuerySqliteInt64(
+            dbPath,
+            "SELECT COUNT(*) FROM query_index_entries qie JOIN query_indexes qi "
+            "ON qi.schema_index_id = qie.schema_index_id JOIN tables t ON t.table_id = qi.table_id "
+            "WHERE t.name = 'Beam' AND qi.index_name = 'idx_Beam_Width_Name';",
+            &value));
+        EXPECT_EQ(value, 0);
+
+        EXPECT_EQ(db->Redo(), sc::SC_OK);
+        EXPECT_TRUE(QuerySqliteInt64(
+            dbPath,
+            "SELECT COUNT(*) FROM query_indexes qi JOIN tables t ON t.table_id = qi.table_id "
+            "WHERE t.name = 'Beam' AND qi.index_name = 'idx_Beam_Width_Name';",
+            &value));
+        EXPECT_EQ(value, 1);
+        EXPECT_TRUE(QuerySqliteInt64(
+            dbPath,
+            "SELECT COUNT(*) FROM query_index_entries qie JOIN query_indexes qi "
+            "ON qi.schema_index_id = qie.schema_index_id JOIN tables t ON t.table_id = qi.table_id "
+            "WHERE t.name = 'Beam' AND qi.index_name = 'idx_Beam_Width_Name';",
+            &value));
+        EXPECT_EQ(value, 1);
+    }
+
+    sc::SCDbPtr reopened;
+    EXPECT_EQ(sc::CreateFileDatabase(dbPath.c_str(), sc::SCOpenDatabaseOptions{}, reopened), sc::SC_OK);
+    sc::SCTablePtr reopenedTable;
+    EXPECT_EQ(reopened->GetTable(L"Beam", reopenedTable), sc::SC_OK);
+
+    std::int64_t value = -1;
+    EXPECT_TRUE(QuerySqliteInt64(
+        dbPath,
+        "SELECT COUNT(*) FROM query_indexes qi JOIN tables t ON t.table_id = qi.table_id "
+        "WHERE t.name = 'Beam' AND qi.index_name = 'idx_Beam_Width_Name';",
+        &value));
+    EXPECT_EQ(value, 1);
+    EXPECT_TRUE(QuerySqliteInt64(
+        dbPath,
+        "SELECT COUNT(*) FROM query_index_entries qie JOIN query_indexes qi "
+        "ON qi.schema_index_id = qie.schema_index_id JOIN tables t ON t.table_id = qi.table_id "
+        "WHERE t.name = 'Beam' AND qi.index_name = 'idx_Beam_Width_Name';",
+        &value));
+    EXPECT_EQ(value, 1);
+}
+
+TEST(SchemaEdit, ApplyTableSchemaPatchPreservesDefaultCompositeEntriesThroughUndoRedoAndReopen)
+{
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_SchemaEdit_PatchCompositeDefaultUndoRedoReopen.sqlite");
+
+    {
+        sc::SCDbPtr db;
+        EXPECT_EQ(sc::CreateFileDatabase(dbPath.c_str(), sc::SCOpenDatabaseOptions{}, db), sc::SC_OK);
+
+        sc::SCTablePtr table;
+        EXPECT_EQ(db->CreateTable(L"Beam", table), sc::SC_OK);
+
+        sc::SCSchemaPtr schema;
+        EXPECT_EQ(table->GetSchema(schema), sc::SC_OK);
+        EXPECT_EQ(schema->AddColumn(MakeIntColumn(L"Width")), sc::SC_OK);
+        EXPECT_EQ(schema->AddColumn(MakeStringColumn(L"Name", false)), sc::SC_OK);
+
+        sc::SCEditPtr seedEdit;
+        EXPECT_EQ(db->BeginEdit(L"seed default patch chain", seedEdit), sc::SC_OK);
+        sc::SCRecordPtr row;
+        EXPECT_EQ(table->CreateRecord(row), sc::SC_OK);
+        EXPECT_EQ(row->SetInt64(L"Width", 100), sc::SC_OK);
+        EXPECT_EQ(db->Commit(seedEdit.Get()), sc::SC_OK);
+
+        sc::SCTableSchemaPatch patch;
+        patch.tableName = L"Beam";
+        patch.addIndexes.push_back(MakeCompositeIndex(L"idx_Beam_Width_Name", L"Width", L"Name"));
+
+        sc::SCSchemaEditResult result;
+        EXPECT_EQ(sc::ApplyTableSchemaPatch(db.Get(), patch, &result), sc::SC_OK);
+        EXPECT_TRUE(result.applied);
+
+        std::int64_t value = -1;
+        EXPECT_TRUE(QuerySqliteInt64(
+            dbPath,
+            "SELECT COUNT(*) FROM query_indexes qi JOIN tables t ON t.table_id = qi.table_id "
+            "WHERE t.name = 'Beam' AND qi.index_name = 'idx_Beam_Width_Name';",
+            &value));
+        EXPECT_EQ(value, 1);
+        EXPECT_TRUE(QuerySqliteInt64(
+            dbPath,
+            "SELECT COUNT(*) FROM query_index_entries qie JOIN query_indexes qi "
+            "ON qi.schema_index_id = qie.schema_index_id JOIN tables t ON t.table_id = qi.table_id "
+            "WHERE t.name = 'Beam' AND qi.index_name = 'idx_Beam_Width_Name';",
+            &value));
+        EXPECT_EQ(value, 1);
+
+        EXPECT_EQ(db->Undo(), sc::SC_OK);
+        EXPECT_TRUE(QuerySqliteInt64(
+            dbPath,
+            "SELECT COUNT(*) FROM query_indexes qi JOIN tables t ON t.table_id = qi.table_id "
+            "WHERE t.name = 'Beam' AND qi.index_name = 'idx_Beam_Width_Name';",
+            &value));
+        EXPECT_EQ(value, 0);
+        EXPECT_TRUE(QuerySqliteInt64(
+            dbPath,
+            "SELECT COUNT(*) FROM query_index_entries qie JOIN query_indexes qi "
+            "ON qi.schema_index_id = qie.schema_index_id JOIN tables t ON t.table_id = qi.table_id "
+            "WHERE t.name = 'Beam' AND qi.index_name = 'idx_Beam_Width_Name';",
+            &value));
+        EXPECT_EQ(value, 0);
+
+        EXPECT_EQ(db->Redo(), sc::SC_OK);
+        EXPECT_TRUE(QuerySqliteInt64(
+            dbPath,
+            "SELECT COUNT(*) FROM query_indexes qi JOIN tables t ON t.table_id = qi.table_id "
+            "WHERE t.name = 'Beam' AND qi.index_name = 'idx_Beam_Width_Name';",
+            &value));
+        EXPECT_EQ(value, 1);
+        EXPECT_TRUE(QuerySqliteInt64(
+            dbPath,
+            "SELECT COUNT(*) FROM query_index_entries qie JOIN query_indexes qi "
+            "ON qi.schema_index_id = qie.schema_index_id JOIN tables t ON t.table_id = qi.table_id "
+            "WHERE t.name = 'Beam' AND qi.index_name = 'idx_Beam_Width_Name';",
+            &value));
+        EXPECT_EQ(value, 1);
+    }
+
+    sc::SCDbPtr reopened;
+    EXPECT_EQ(sc::CreateFileDatabase(dbPath.c_str(), sc::SCOpenDatabaseOptions{}, reopened), sc::SC_OK);
+    sc::SCTablePtr reopenedTable;
+    EXPECT_EQ(reopened->GetTable(L"Beam", reopenedTable), sc::SC_OK);
+
+    std::int64_t value = -1;
+    EXPECT_TRUE(QuerySqliteInt64(
+        dbPath,
+        "SELECT COUNT(*) FROM query_indexes qi JOIN tables t ON t.table_id = qi.table_id "
+        "WHERE t.name = 'Beam' AND qi.index_name = 'idx_Beam_Width_Name';",
+        &value));
+    EXPECT_EQ(value, 1);
+    EXPECT_TRUE(QuerySqliteInt64(
+        dbPath,
+        "SELECT COUNT(*) FROM query_index_entries qie JOIN query_indexes qi "
+        "ON qi.schema_index_id = qie.schema_index_id JOIN tables t ON t.table_id = qi.table_id "
+        "WHERE t.name = 'Beam' AND qi.index_name = 'idx_Beam_Width_Name';",
+        &value));
+    EXPECT_EQ(value, 1);
+}
+
+TEST(SchemaEdit, ApplyTableSchemaPatchAddAndRemoveCompositeIndexChangesActualQueryBehavior)
+{
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_SchemaEdit_PatchCompositeQueryBehavior.sqlite");
+
+    {
+        sc::SCDbPtr db;
+        EXPECT_EQ(sc::CreateFileDatabase(dbPath.c_str(), sc::SCOpenDatabaseOptions{}, db), sc::SC_OK);
+
+        sc::SCTablePtr table = CreateBeamTable(db);
+
+        sc::SCEditPtr seedEdit;
+        EXPECT_EQ(db->BeginEdit(L"seed query behavior patch", seedEdit), sc::SC_OK);
+        sc::SCRecordPtr row;
+        EXPECT_EQ(table->CreateRecord(row), sc::SC_OK);
+        EXPECT_EQ(row->SetInt64(L"Width", 100), sc::SC_OK);
+        EXPECT_EQ(row->SetString(L"Name", L"Alpha"), sc::SC_OK);
+        EXPECT_EQ(db->Commit(seedEdit.Get()), sc::SC_OK);
+
+        sc::SCTableSchemaPatch addPatch;
+        addPatch.tableName = L"Beam";
+        addPatch.addIndexes.push_back(MakeCompositeIndex(L"idx_Beam_Width_Name", L"Width", L"Name"));
+
+        sc::SCSchemaEditResult editResult;
+        EXPECT_EQ(sc::ApplyTableSchemaPatch(db.Get(), addPatch, &editResult), sc::SC_OK);
+
+        std::vector<std::wstring> names;
+        sc::QueryExecutionResult queryResult;
+        sc::QueryConstraints constraints;
+        constraints.requireIndex = true;
+        constraints.allowFallbackScan = false;
+        EXPECT_EQ(ExecuteQueryForBeam(db.Get(),
+                                      {sc::QueryCondition{L"Width",
+                                                          sc::QueryConditionOperator::Equal,
+                                                          {sc::SCValue::FromInt64(100)}},
+                                       sc::QueryCondition{L"Name",
+                                                          sc::QueryConditionOperator::Equal,
+                                                          {sc::SCValue::FromString(L"Alpha")}}},
+                                      constraints,
+                                      &names,
+                                      &queryResult),
+                  sc::SC_OK);
+        EXPECT_EQ(queryResult.mode, sc::QueryExecutionMode::DirectIndex);
+        ASSERT_EQ(queryResult.usedIndexIds.size(), 1u);
+        EXPECT_EQ(queryResult.usedIndexIds.front(), L"idx_Beam_Width_Name");
+        ASSERT_EQ(names.size(), 1u);
+        EXPECT_EQ(names.front(), L"Alpha");
+
+        sc::SCTableSchemaPatch removePatch;
+        removePatch.tableName = L"Beam";
+        removePatch.removeIndexes.push_back(L"idx_Beam_Width_Name");
+        EXPECT_EQ(sc::ApplyTableSchemaPatch(db.Get(), removePatch, &editResult), sc::SC_OK);
+    }
+
+    sc::SCDbPtr reopened;
+    EXPECT_EQ(sc::CreateFileDatabase(dbPath.c_str(), sc::SCOpenDatabaseOptions{}, reopened), sc::SC_OK);
+
+    std::vector<std::wstring> names;
+    sc::QueryExecutionResult queryResult;
+    sc::QueryConstraints constraints;
+    constraints.requireIndex = true;
+    constraints.allowFallbackScan = false;
+    EXPECT_EQ(ExecuteQueryForBeam(reopened.Get(),
+                                  {sc::QueryCondition{L"Width",
+                                                      sc::QueryConditionOperator::Equal,
+                                                      {sc::SCValue::FromInt64(100)}},
+                                   sc::QueryCondition{L"Name",
+                                                      sc::QueryConditionOperator::Equal,
+                                                      {sc::SCValue::FromString(L"Alpha")}}},
+                                  constraints,
+                                  &names,
+                                  &queryResult),
+              sc::SC_E_INVALIDARG);
+    EXPECT_EQ(queryResult.mode, sc::QueryExecutionMode::Unsupported);
+}
+
+TEST(SchemaEdit, ApplyTableSchemaPatchAddedCompositeIndexSupportsActualQueryHitsAfterReopen)
+{
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_SchemaEdit_PatchCompositeQueryHitReopen.sqlite");
+
+    {
+        sc::SCDbPtr db;
+        EXPECT_EQ(sc::CreateFileDatabase(dbPath.c_str(), sc::SCOpenDatabaseOptions{}, db), sc::SC_OK);
+
+        sc::SCTablePtr table = CreateBeamTable(db);
+
+        sc::SCEditPtr seedEdit;
+        EXPECT_EQ(db->BeginEdit(L"seed query hit patch", seedEdit), sc::SC_OK);
+        sc::SCRecordPtr row;
+        EXPECT_EQ(table->CreateRecord(row), sc::SC_OK);
+        EXPECT_EQ(row->SetInt64(L"Width", 100), sc::SC_OK);
+        EXPECT_EQ(row->SetString(L"Name", L"Alpha"), sc::SC_OK);
+        EXPECT_EQ(table->CreateRecord(row), sc::SC_OK);
+        EXPECT_EQ(row->SetInt64(L"Width", 100), sc::SC_OK);
+        EXPECT_EQ(row->SetString(L"Name", L"Bravo"), sc::SC_OK);
+        EXPECT_EQ(db->Commit(seedEdit.Get()), sc::SC_OK);
+
+        sc::SCTableSchemaPatch addPatch;
+        addPatch.tableName = L"Beam";
+        addPatch.addIndexes.push_back(MakeCompositeIndex(L"idx_Beam_Width_Name", L"Width", L"Name"));
+
+        sc::SCSchemaEditResult editResult;
+        EXPECT_EQ(sc::ApplyTableSchemaPatch(db.Get(), addPatch, &editResult), sc::SC_OK);
+    }
+
+    sc::SCDbPtr reopened;
+    EXPECT_EQ(sc::CreateFileDatabase(dbPath.c_str(), sc::SCOpenDatabaseOptions{}, reopened), sc::SC_OK);
+
+    std::vector<std::wstring> names;
+    sc::QueryExecutionResult queryResult;
+    sc::QueryConstraints constraints;
+    constraints.requireIndex = true;
+    constraints.allowFallbackScan = false;
+    EXPECT_EQ(ExecuteQueryForBeam(reopened.Get(),
+                                  {sc::QueryCondition{L"Width",
+                                                      sc::QueryConditionOperator::Equal,
+                                                      {sc::SCValue::FromInt64(100)}}},
+                                  constraints,
+                                  &names,
+                                  &queryResult),
+              sc::SC_OK);
+    EXPECT_EQ(queryResult.mode, sc::QueryExecutionMode::DirectIndex);
+    ASSERT_EQ(queryResult.usedIndexIds.size(), 1u);
+    EXPECT_EQ(queryResult.usedIndexIds.front(), L"idx_Beam_Width_Name");
+    ASSERT_EQ(names.size(), 2u);
+    EXPECT_EQ(names[0], L"Alpha");
+    EXPECT_EQ(names[1], L"Bravo");
+}
+
+TEST(SchemaEdit, ApplyTableSchemaPatchAddedCompositeIndexSupportsStartsWithAndBetweenAfterReopen)
+{
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_SchemaEdit_PatchCompositeRangeQueriesReopen.sqlite");
+
+    {
+        sc::SCDbPtr db;
+        EXPECT_EQ(sc::CreateFileDatabase(dbPath.c_str(), sc::SCOpenDatabaseOptions{}, db), sc::SC_OK);
+
+        sc::SCTablePtr table = CreateBeamTable(db);
+
+        sc::SCEditPtr seedEdit;
+        EXPECT_EQ(db->BeginEdit(L"seed query range patch", seedEdit), sc::SC_OK);
+        sc::SCRecordPtr row;
+        EXPECT_EQ(table->CreateRecord(row), sc::SC_OK);
+        EXPECT_EQ(row->SetInt64(L"Width", 100), sc::SC_OK);
+        EXPECT_EQ(row->SetString(L"Name", L"Alpha"), sc::SC_OK);
+        EXPECT_EQ(table->CreateRecord(row), sc::SC_OK);
+        EXPECT_EQ(row->SetInt64(L"Width", 100), sc::SC_OK);
+        EXPECT_EQ(row->SetString(L"Name", L"Alpine"), sc::SC_OK);
+        EXPECT_EQ(table->CreateRecord(row), sc::SC_OK);
+        EXPECT_EQ(row->SetInt64(L"Width", 100), sc::SC_OK);
+        EXPECT_EQ(row->SetString(L"Name", L"Bravo"), sc::SC_OK);
+        EXPECT_EQ(table->CreateRecord(row), sc::SC_OK);
+        EXPECT_EQ(row->SetInt64(L"Width", 100), sc::SC_OK);
+        EXPECT_EQ(row->SetString(L"Name", L"Zulu"), sc::SC_OK);
+        EXPECT_EQ(db->Commit(seedEdit.Get()), sc::SC_OK);
+
+        sc::SCTableSchemaPatch addPatch;
+        addPatch.tableName = L"Beam";
+        addPatch.addIndexes.push_back(MakeCompositeIndex(L"idx_Beam_Width_Name", L"Width", L"Name"));
+
+        sc::SCSchemaEditResult editResult;
+        EXPECT_EQ(sc::ApplyTableSchemaPatch(db.Get(), addPatch, &editResult), sc::SC_OK);
+    }
+
+    sc::SCDbPtr reopened;
+    EXPECT_EQ(sc::CreateFileDatabase(dbPath.c_str(), sc::SCOpenDatabaseOptions{}, reopened), sc::SC_OK);
+
+    auto planner = sc::CreateDefaultQueryPlanner();
+    ASSERT_NE(planner, nullptr);
+
+    sc::QueryConstraints constraints;
+    constraints.requireIndex = true;
+    constraints.allowFallbackScan = false;
+
+    sc::QueryPlan startsWithPlan;
+    EXPECT_EQ(
+        planner->BuildPlan(sc::QueryTarget{L"Beam", sc::QueryTargetType::Table},
+                           {sc::QueryConditionGroup{sc::QueryLogicOperator::And,
+                                                    {sc::QueryCondition{L"Width",
+                                                                        sc::QueryConditionOperator::Equal,
+                                                                        {sc::SCValue::FromInt64(100)}},
+                                                     sc::QueryCondition{L"Name",
+                                                                        sc::QueryConditionOperator::StartsWith,
+                                                                        {sc::SCValue::FromString(L"Al")}}}}},
+                           sc::QueryLogicOperator::And,
+                           {sc::SortSpec{L"Name", sc::QueryOrderDirection::Ascending, false}},
+                           {},
+                           {},
+                           constraints,
+                           &startsWithPlan),
+        sc::SC_OK);
+
+    sc::QueryPlan betweenPlan;
+    EXPECT_EQ(
+        planner->BuildPlan(sc::QueryTarget{L"Beam", sc::QueryTargetType::Table},
+                           {sc::QueryConditionGroup{sc::QueryLogicOperator::And,
+                                                    {sc::QueryCondition{L"Width",
+                                                                        sc::QueryConditionOperator::Equal,
+                                                                        {sc::SCValue::FromInt64(100)}},
+                                                     sc::QueryCondition{L"Name",
+                                                                        sc::QueryConditionOperator::Between,
+                                                                        {sc::SCValue::FromString(L"Alpha"),
+                                                                         sc::SCValue::FromString(L"Bravo")}}}}},
+                           sc::QueryLogicOperator::And,
+                           {sc::SortSpec{L"Name", sc::QueryOrderDirection::Ascending, false}},
+                           {},
+                           {},
+                           constraints,
+                           &betweenPlan),
+        sc::SC_OK);
+
+    sc::QueryExecutionContext context;
+    context.backendKind = sc::QueryBackendKind::SQLite;
+    context.database = reopened.Get();
+    context.backendHandle = reopened.Get();
+
+    sc::SCRecordCursorPtr startsWithCursor;
+    context.resultCursor = &startsWithCursor;
+    sc::QueryExecutionResult startsWithResult;
+    const sc::ErrorCode startsWithRc = sc::ExecuteQueryPlan(startsWithPlan, context, &startsWithResult);
+    SCOPED_TRACE(::testing::Message() << "executionRc=" << startsWithRc << " executionNote="
+                                      << std::string(startsWithResult.executionNote.begin(),
+                                                     startsWithResult.executionNote.end()));
+    EXPECT_EQ(startsWithRc, sc::SC_OK);
+    EXPECT_EQ(startsWithResult.mode, sc::QueryExecutionMode::PartialIndex);
+    ASSERT_EQ(startsWithResult.usedIndexIds.size(), 1u);
+    EXPECT_EQ(startsWithResult.usedIndexIds.front(), L"idx_Beam_Width_Name");
+
+    std::vector<std::wstring> startsWithNames;
+    sc::SCRecordPtr record;
+    while (startsWithCursor->Next(record) == sc::SC_OK && record)
+    {
+        std::wstring name;
+        EXPECT_EQ(record->GetStringCopy(L"Name", &name), sc::SC_OK);
+        startsWithNames.push_back(name);
+    }
+
+    ASSERT_EQ(startsWithNames.size(), 2u);
+    EXPECT_EQ(startsWithNames[0], L"Alpha");
+    EXPECT_EQ(startsWithNames[1], L"Alpine");
+
+    sc::SCRecordCursorPtr betweenCursor;
+    context.resultCursor = &betweenCursor;
+    sc::QueryExecutionResult betweenResult;
+    EXPECT_EQ(sc::ExecuteQueryPlan(betweenPlan, context, &betweenResult), sc::SC_OK);
+    EXPECT_EQ(betweenResult.mode, sc::QueryExecutionMode::PartialIndex);
+    ASSERT_EQ(betweenResult.usedIndexIds.size(), 1u);
+    EXPECT_EQ(betweenResult.usedIndexIds.front(), L"idx_Beam_Width_Name");
+
+    std::vector<std::wstring> betweenNames;
+    while (betweenCursor->Next(record) == sc::SC_OK && record)
+    {
+        std::wstring name;
+        EXPECT_EQ(record->GetStringCopy(L"Name", &name), sc::SC_OK);
+        betweenNames.push_back(name);
+    }
+
+    ASSERT_EQ(betweenNames.size(), 3u);
+    EXPECT_EQ(betweenNames[0], L"Alpha");
+    EXPECT_EQ(betweenNames[1], L"Alpine");
+    EXPECT_EQ(betweenNames[2], L"Bravo");
+}
+
+TEST(SchemaEdit, QueryIndexProviderDetectsDriftAndMaintainerRepairsIt)
+{
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_SchemaEdit_QueryIndexRepair.sqlite");
+
+    sc::SCDbPtr db;
+    EXPECT_EQ(sc::CreateFileDatabase(dbPath.c_str(), sc::SCOpenDatabaseOptions{}, db), sc::SC_OK);
+
+    sc::SCTablePtr table = CreateBeamTable(db);
+    sc::SCSchemaPtr schema;
+    EXPECT_EQ(table->GetSchema(schema), sc::SC_OK);
+    EXPECT_EQ(schema->AddIndex(MakeCompositeIndex(L"idx_Beam_Width_Name", L"Width", L"Name")), sc::SC_OK);
+
+    sc::SCEditPtr seedEdit;
+    EXPECT_EQ(db->BeginEdit(L"seed query index drift", seedEdit), sc::SC_OK);
+    sc::SCRecordPtr row;
+    EXPECT_EQ(table->CreateRecord(row), sc::SC_OK);
+    EXPECT_EQ(row->SetInt64(L"Width", 100), sc::SC_OK);
+    EXPECT_EQ(row->SetString(L"Name", L"Alpha"), sc::SC_OK);
+    EXPECT_EQ(db->Commit(seedEdit.Get()), sc::SC_OK);
+
+    const auto* provider = dynamic_cast<const sc::IQueryIndexProvider*>(db.Get());
+    ASSERT_NE(provider, nullptr);
+    auto* maintainer = dynamic_cast<sc::IQueryIndexMaintainer*>(db.Get());
+    ASSERT_NE(maintainer, nullptr);
+
+    sc::QueryIndexCheckResult check;
+    EXPECT_EQ(provider->CheckQueryIndex(&check), sc::SC_OK);
+    EXPECT_EQ(check.state, sc::QueryIndexHealthState::Healthy);
+
+    EXPECT_TRUE(ExecSqliteScript(dbPath, "DELETE FROM query_index_entries;"));
+
+    EXPECT_EQ(provider->CheckQueryIndex(&check), sc::SC_OK);
+    EXPECT_EQ(check.state, sc::QueryIndexHealthState::Corrupted);
+    EXPECT_NE(check.message.find(L"query-index-entry-missing"), std::wstring::npos);
+
+    EXPECT_EQ(maintainer->RebuildQueryIndex(), sc::SC_OK);
+    EXPECT_EQ(provider->CheckQueryIndex(&check), sc::SC_OK);
+    EXPECT_EQ(check.state, sc::QueryIndexHealthState::Healthy);
+
+    std::vector<std::wstring> names;
+    sc::QueryExecutionResult queryResult;
+    sc::QueryConstraints constraints;
+    constraints.requireIndex = true;
+    constraints.allowFallbackScan = false;
+    EXPECT_EQ(ExecuteQueryForBeam(db.Get(),
+                                  {sc::QueryCondition{L"Width",
+                                                      sc::QueryConditionOperator::Equal,
+                                                      {sc::SCValue::FromInt64(100)}},
+                                   sc::QueryCondition{L"Name",
+                                                      sc::QueryConditionOperator::Equal,
+                                                      {sc::SCValue::FromString(L"Alpha")}}},
+                                  constraints,
+                                  &names,
+                                  &queryResult),
+              sc::SC_OK);
+    EXPECT_EQ(queryResult.mode, sc::QueryExecutionMode::DirectIndex);
+    ASSERT_EQ(names.size(), 1u);
+    EXPECT_EQ(names.front(), L"Alpha");
+}
+
+TEST(SchemaEdit, StorageHealthReportIncludesQueryIndexDiagnosticsWhenEntriesDrift)
+{
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_SchemaEdit_QueryIndexDiagnostics.sqlite");
+
+    sc::SCDbPtr db;
+    EXPECT_EQ(sc::CreateFileDatabase(dbPath.c_str(), sc::SCOpenDatabaseOptions{}, db), sc::SC_OK);
+
+    sc::SCTablePtr table = CreateBeamTable(db);
+    sc::SCSchemaPtr schema;
+    EXPECT_EQ(table->GetSchema(schema), sc::SC_OK);
+    EXPECT_EQ(schema->AddIndex(MakeCompositeIndex(L"idx_Beam_Width_Name", L"Width", L"Name")), sc::SC_OK);
+
+    sc::SCEditPtr seedEdit;
+    EXPECT_EQ(db->BeginEdit(L"seed query index diagnostics", seedEdit), sc::SC_OK);
+    sc::SCRecordPtr row;
+    EXPECT_EQ(table->CreateRecord(row), sc::SC_OK);
+    EXPECT_EQ(row->SetInt64(L"Width", 100), sc::SC_OK);
+    EXPECT_EQ(row->SetString(L"Name", L"Alpha"), sc::SC_OK);
+    EXPECT_EQ(db->Commit(seedEdit.Get()), sc::SC_OK);
+
+    EXPECT_TRUE(ExecSqliteScript(dbPath, "DELETE FROM query_index_entries;"));
+
+    sc::SCStorageHealthReport report;
+    EXPECT_EQ(sc::BuildStorageHealthReport(db.Get(), L"sqlite", &report), sc::SC_OK);
+
+    const auto it = std::find_if(report.diagnostics.begin(),
+                                 report.diagnostics.end(),
+                                 [](const sc::SCDiagnosticEntry& entry) {
+                                     return entry.category == L"query-index" &&
+                                            entry.severity == sc::SCDiagnosticSeverity::Error &&
+                                            entry.message.find(L"query-index-entry-missing") != std::wstring::npos;
+                                 });
+    EXPECT_NE(it, report.diagnostics.end());
+}
+
+TEST(SchemaEdit, QueryIndexProviderReportsOutOfDateDuringActiveEditAndRejectsRepair)
+{
+    sc::SCDbPtr db;
+    EXPECT_EQ(CreateFileDb(L"StableCoreStorage_SchemaEdit_QueryIndexActiveEdit.sqlite", db), sc::SC_OK);
+
+    sc::SCTablePtr table = CreateBeamTable(db);
+    sc::SCSchemaPtr schema;
+    EXPECT_EQ(table->GetSchema(schema), sc::SC_OK);
+    EXPECT_EQ(schema->AddIndex(MakeCompositeIndex(L"idx_Beam_Width_Name", L"Width", L"Name")), sc::SC_OK);
+
+    sc::SCEditPtr seedEdit;
+    EXPECT_EQ(db->BeginEdit(L"seed active edit query index", seedEdit), sc::SC_OK);
+    sc::SCRecordPtr row;
+    EXPECT_EQ(table->CreateRecord(row), sc::SC_OK);
+    EXPECT_EQ(row->SetInt64(L"Width", 100), sc::SC_OK);
+    EXPECT_EQ(row->SetString(L"Name", L"Alpha"), sc::SC_OK);
+    EXPECT_EQ(db->Commit(seedEdit.Get()), sc::SC_OK);
+
+    const auto* provider = dynamic_cast<const sc::IQueryIndexProvider*>(db.Get());
+    ASSERT_NE(provider, nullptr);
+    auto* maintainer = dynamic_cast<sc::IQueryIndexMaintainer*>(db.Get());
+    ASSERT_NE(maintainer, nullptr);
+
+    sc::SCEditPtr edit;
+    EXPECT_EQ(db->BeginEdit(L"dirty query index", edit), sc::SC_OK);
+    EXPECT_EQ(row->SetString(L"Name", L"Bravo"), sc::SC_OK);
+
+    sc::QueryIndexCheckResult check;
+    EXPECT_EQ(provider->CheckQueryIndex(&check), sc::SC_OK);
+    EXPECT_EQ(check.state, sc::QueryIndexHealthState::OutOfDate);
+    EXPECT_EQ(check.message, L"query-index-rebuild-required");
+    EXPECT_EQ(maintainer->RebuildQueryIndex(), sc::SC_E_WRITE_CONFLICT);
+
+    EXPECT_EQ(db->Rollback(edit.Get()), sc::SC_OK);
+}
+
 TEST(SchemaEdit, ApplyTableSchemaPatchRollsBackWhenLaterOperationFails)
 {
     sc::SCDbPtr db;
@@ -445,6 +1456,142 @@ TEST(SchemaEdit, ApplyTableSchemaPatchRollsBackWhenConstraintOperationFailsAfter
     EXPECT_EQ(schema->FindConstraint(L"uq_Beam_Width", &constraint), sc::SC_OK);
     sc::SCIndexDef index;
     EXPECT_EQ(schema->FindIndex(L"idx_Beam_Name", &index), sc::SC_OK);
+}
+
+TEST(SchemaEdit, AddCompositeIndexFailureDoesNotLeaveSchemaIndexLoaded)
+{
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_SchemaEdit_AddCompositeIndexRollback.sqlite");
+
+    sc::SCDbPtr db;
+    EXPECT_EQ(sc::CreateFileDatabase(dbPath.c_str(), sc::SCOpenDatabaseOptions{}, db), sc::SC_OK);
+
+    sc::SCTablePtr table = CreateBeamTable(db);
+    sc::SCSchemaPtr schema;
+    EXPECT_EQ(table->GetSchema(schema), sc::SC_OK);
+
+    EXPECT_TRUE(ExecSqliteScript(dbPath, "DROP TABLE query_index_entries;"));
+
+    EXPECT_NE(schema->AddIndex(MakeCompositeIndex(L"idx_Beam_Width_Name", L"Width", L"Name")), sc::SC_OK);
+
+    sc::SCIndexDef index;
+    EXPECT_EQ(schema->FindIndex(L"idx_Beam_Width_Name", &index), sc::SC_E_INDEX_NOT_FOUND);
+}
+
+TEST(SchemaEdit, RemoveCompositeIndexFailurePreservesQueryIndexExecution)
+{
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_SchemaEdit_RemoveCompositeIndexRollback.sqlite");
+
+    sc::SCDbPtr db;
+    EXPECT_EQ(sc::CreateFileDatabase(dbPath.c_str(), sc::SCOpenDatabaseOptions{}, db), sc::SC_OK);
+
+    sc::SCTablePtr table = CreateBeamTable(db);
+    sc::SCSchemaPtr schema;
+    EXPECT_EQ(table->GetSchema(schema), sc::SC_OK);
+    EXPECT_EQ(schema->AddIndex(MakeCompositeIndex(L"idx_Beam_Width_Name", L"Width", L"Name")), sc::SC_OK);
+
+    sc::SCEditPtr seedEdit;
+    EXPECT_EQ(db->BeginEdit(L"seed composite index rollback", seedEdit), sc::SC_OK);
+    sc::SCRecordPtr row;
+    EXPECT_EQ(table->CreateRecord(row), sc::SC_OK);
+    EXPECT_EQ(row->SetInt64(L"Width", 100), sc::SC_OK);
+    EXPECT_EQ(row->SetString(L"Name", L"Alpha"), sc::SC_OK);
+    EXPECT_EQ(db->Commit(seedEdit.Get()), sc::SC_OK);
+
+    EXPECT_TRUE(ExecSqliteScript(dbPath, "DROP TABLE schema_index_columns;"));
+
+    EXPECT_NE(schema->RemoveIndex(L"idx_Beam_Width_Name"), sc::SC_OK);
+
+    sc::SCIndexDef index;
+    EXPECT_EQ(schema->FindIndex(L"idx_Beam_Width_Name", &index), sc::SC_OK);
+
+    std::vector<std::wstring> names;
+    sc::QueryExecutionResult queryResult;
+    sc::QueryConstraints constraints;
+    constraints.requireIndex = true;
+    constraints.allowFallbackScan = false;
+    EXPECT_EQ(ExecuteQueryForBeam(db.Get(),
+                                  {sc::QueryCondition{L"Width",
+                                                      sc::QueryConditionOperator::Equal,
+                                                      {sc::SCValue::FromInt64(100)}},
+                                   sc::QueryCondition{L"Name",
+                                                      sc::QueryConditionOperator::Equal,
+                                                      {sc::SCValue::FromString(L"Alpha")}}},
+                                  constraints,
+                                  &names,
+                                  &queryResult),
+              sc::SC_OK);
+    EXPECT_EQ(queryResult.mode, sc::QueryExecutionMode::DirectIndex);
+    ASSERT_EQ(queryResult.usedIndexIds.size(), 1u);
+    EXPECT_EQ(queryResult.usedIndexIds.front(), L"idx_Beam_Width_Name");
+    ASSERT_EQ(names.size(), 1u);
+    EXPECT_EQ(names.front(), L"Alpha");
+}
+
+TEST(SchemaEdit, DISABLED_RemoveCompositeIndexFailurePreservesQueryIndexExecutionAfterReopen)
+{
+    GTEST_SKIP() << "The current fault injection drops schema_index_columns, which permanently corrupts on-disk "
+                    "schema metadata. That can validate in-process rollback behavior, but it cannot validate "
+                    "reopen consistency without a non-destructive failure injection path.";
+
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_SchemaEdit_RemoveCompositeIndexRollbackReopen.sqlite");
+
+    {
+        sc::SCDbPtr db;
+        EXPECT_EQ(sc::CreateFileDatabase(dbPath.c_str(), sc::SCOpenDatabaseOptions{}, db), sc::SC_OK);
+
+        sc::SCTablePtr table = CreateBeamTable(db);
+        sc::SCSchemaPtr schema;
+        EXPECT_EQ(table->GetSchema(schema), sc::SC_OK);
+        EXPECT_EQ(schema->AddIndex(MakeCompositeIndex(L"idx_Beam_Width_Name", L"Width", L"Name")), sc::SC_OK);
+
+        sc::SCEditPtr seedEdit;
+        EXPECT_EQ(db->BeginEdit(L"seed composite index rollback reopen", seedEdit), sc::SC_OK);
+        sc::SCRecordPtr row;
+        EXPECT_EQ(table->CreateRecord(row), sc::SC_OK);
+        EXPECT_EQ(row->SetInt64(L"Width", 100), sc::SC_OK);
+        EXPECT_EQ(row->SetString(L"Name", L"Alpha"), sc::SC_OK);
+        EXPECT_EQ(db->Commit(seedEdit.Get()), sc::SC_OK);
+
+        EXPECT_TRUE(ExecSqliteScript(dbPath, "DROP TABLE schema_index_columns;"));
+
+        EXPECT_NE(schema->RemoveIndex(L"idx_Beam_Width_Name"), sc::SC_OK);
+
+        sc::SCIndexDef index;
+        EXPECT_EQ(schema->FindIndex(L"idx_Beam_Width_Name", &index), sc::SC_OK);
+    }
+
+    sc::SCDbPtr reopened;
+    EXPECT_EQ(sc::CreateFileDatabase(dbPath.c_str(), sc::SCOpenDatabaseOptions{}, reopened), sc::SC_OK);
+
+    sc::SCTablePtr reopenedTable;
+    EXPECT_EQ(reopened->GetTable(L"Beam", reopenedTable), sc::SC_OK);
+    sc::SCSchemaPtr reopenedSchema;
+    EXPECT_EQ(reopenedTable->GetSchema(reopenedSchema), sc::SC_OK);
+
+    sc::SCIndexDef reopenedIndex;
+    EXPECT_EQ(reopenedSchema->FindIndex(L"idx_Beam_Width_Name", &reopenedIndex), sc::SC_OK);
+
+    std::vector<std::wstring> names;
+    sc::QueryExecutionResult queryResult;
+    sc::QueryConstraints constraints;
+    constraints.requireIndex = true;
+    constraints.allowFallbackScan = false;
+    EXPECT_EQ(ExecuteQueryForBeam(reopened.Get(),
+                                  {sc::QueryCondition{L"Width",
+                                                      sc::QueryConditionOperator::Equal,
+                                                      {sc::SCValue::FromInt64(100)}},
+                                   sc::QueryCondition{L"Name",
+                                                      sc::QueryConditionOperator::Equal,
+                                                      {sc::SCValue::FromString(L"Alpha")}}},
+                                  constraints,
+                                  &names,
+                                  &queryResult),
+              sc::SC_OK);
+    EXPECT_EQ(queryResult.mode, sc::QueryExecutionMode::DirectIndex);
+    ASSERT_EQ(queryResult.usedIndexIds.size(), 1u);
+    EXPECT_EQ(queryResult.usedIndexIds.front(), L"idx_Beam_Width_Name");
+    ASSERT_EQ(names.size(), 1u);
+    EXPECT_EQ(names.front(), L"Alpha");
 }
 
 TEST(SchemaEdit, SchemaConstraintAndIndexPrimitivesSupportUndoAndRedo)

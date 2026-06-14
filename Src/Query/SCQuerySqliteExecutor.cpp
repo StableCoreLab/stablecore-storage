@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "SCRefCounted.h"
+#include "SCQuerySqliteIndexAccess.h"
 
 namespace StableCore::Storage
 {
@@ -558,6 +559,134 @@ namespace StableCore::Storage
             });
         }
 
+        ErrorCode MaterializeRecordsByIds(ISCDatabase* database,
+                                          const std::wstring& tableName,
+                                          const std::vector<RecordId>& recordIds,
+                                          std::vector<SCRecordPtr>* outRecords)
+        {
+            if (database == nullptr || outRecords == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+
+            outRecords->clear();
+            SCTablePtr table;
+            const ErrorCode tableRc = database->GetTable(tableName.c_str(), table);
+            if (Failed(tableRc))
+            {
+                return tableRc;
+            }
+
+            outRecords->reserve(recordIds.size());
+            for (RecordId recordId : recordIds)
+            {
+                SCRecordPtr record;
+                const ErrorCode recordRc = table->GetRecord(recordId, record);
+                if (Failed(recordRc) || !record)
+                {
+                    continue;
+                }
+                outRecords->push_back(record);
+            }
+
+            return SC_OK;
+        }
+
+        ISqliteQueryIndexAccess* ResolveQueryIndexAccess(const QueryExecutionContext& context)
+        {
+            if (context.database != nullptr)
+            {
+                if (auto* access = dynamic_cast<ISqliteQueryIndexAccess*>(context.database))
+                {
+                    return access;
+                }
+            }
+
+            // Fallback only when the caller already passed the exact backend-private
+            // interface pointer through the bridge.
+            return static_cast<ISqliteQueryIndexAccess*>(context.backendHandle);
+        }
+
+        ErrorCode MaterializeCursor(const std::vector<SCRecordPtr>& matchedRecords,
+                                    const QueryPlan& plan,
+                                    SCRecordCursorPtr* outCursor,
+                                    QueryExecutionResult* outResult);
+
+        ErrorCode ExecuteCompositeIndexPlan(const QueryPlan& plan,
+                                            const QueryExecutionContext& context,
+                                            QueryExecutionResult* outResult)
+        {
+            if (context.database == nullptr || outResult == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+            auto* access = ResolveQueryIndexAccess(context);
+            if (access == nullptr)
+            {
+                return SC_E_NOTIMPL;
+            }
+
+            std::vector<RecordId> recordIds;
+            std::uint64_t scannedEntries = 0;
+            const ErrorCode collectRc =
+                access->CollectCompositeIndexRecordIds(plan, &recordIds, &scannedEntries);
+            if (Failed(collectRc))
+            {
+                return collectRc;
+            }
+
+            std::vector<SCRecordPtr> matchedRecords;
+            const ErrorCode materializeRc =
+                MaterializeRecordsByIds(context.database, plan.target.name, recordIds, &matchedRecords);
+            if (Failed(materializeRc))
+            {
+                return materializeRc;
+            }
+
+            const bool requiresFullConditionVerification =
+                (plan.matchedIndex && plan.matchedIndex->hasRangeCondition) ||
+                !plan.pushdown.residualConditions.empty();
+            if (requiresFullConditionVerification)
+            {
+                std::vector<SCRecordPtr> filtered;
+                filtered.reserve(matchedRecords.size());
+                for (const SCRecordPtr& record : matchedRecords)
+                {
+                    if (EvaluatePlanForRecord(record, plan))
+                    {
+                        filtered.push_back(record);
+                    }
+                }
+                matchedRecords = std::move(filtered);
+            }
+
+            QueryExecutionResult result;
+            result.rc = SC_OK;
+            result.scannedRows = scannedEntries;
+            result.matchedRows = matchedRecords.size();
+            result.usedIndexIds.push_back(plan.matchedIndex ? plan.matchedIndex->indexName : L"");
+            result.mode =
+                requiresFullConditionVerification ? QueryExecutionMode::PartialIndex : QueryExecutionMode::DirectIndex;
+            result.fallbackTriggered = false;
+            result.fallbackSource = QueryFallbackSource::None;
+
+            if (!plan.orderBy.empty() && !(plan.matchedIndex && plan.matchedIndex->orderCovered))
+            {
+                SortMatchedRecords(&matchedRecords, plan);
+            }
+
+            const ErrorCode cursorRc =
+                MaterializeCursor(matchedRecords, plan, static_cast<SCRecordCursorPtr*>(context.resultCursor), &result);
+            if (Failed(cursorRc))
+            {
+                return cursorRc;
+            }
+
+            result.executionNote = BuildPlanSqlDescriptor(plan);
+            *outResult = std::move(result);
+            return SC_OK;
+        }
+
         ErrorCode CollectCandidateRecords(ISCDatabase* database,
                                           const QueryPlan& plan,
                                           std::vector<SCRecordPtr>* outMatchedRecords,
@@ -829,8 +958,21 @@ namespace StableCore::Storage
             QueryExecutionResult result;
             result.rc = SC_OK;
             result.mode = QueryExecutionMode::Unsupported;
+            QueryPlan effectivePlan = plan;
+            bool bridgeAnalyzed = false;
 
-            if (plan.target.type != QueryTargetType::Table)
+            if (ISqliteQueryIndexAccess* access = ResolveQueryIndexAccess(context))
+            {
+                QueryPlan analyzedPlan;
+                const ErrorCode analyzeRc = access->AnalyzeCompositeIndexPlan(plan, &analyzedPlan);
+                if (Succeeded(analyzeRc))
+                {
+                    effectivePlan = std::move(analyzedPlan);
+                    bridgeAnalyzed = true;
+                }
+            }
+
+            if (effectivePlan.target.type != QueryTargetType::Table)
             {
                 result.executionNote = L"executor-unsupported:view-target-not-enabled";
                 result.unsupportedSource = QueryUnsupportedSource::Executor;
@@ -838,15 +980,19 @@ namespace StableCore::Storage
                 return SC_E_NOTIMPL;
             }
 
-            if (plan.constraints.requireIndex && plan.state != QueryPlanState::DirectIndex)
+            if (effectivePlan.constraints.requireIndex && !effectivePlan.matchedIndex.has_value())
             {
-                result.executionNote = L"executor-unsupported:index-required";
+                std::wstringstream note;
+                note << L"executor-unsupported:index-required"
+                     << L" | bridgeAnalyzed=" << (bridgeAnalyzed ? L"true" : L"false")
+                     << L" | planState=" << static_cast<int>(effectivePlan.state);
+                result.executionNote = note.str();
                 result.unsupportedSource = QueryUnsupportedSource::Executor;
                 *outResult = std::move(result);
                 return SC_E_INVALIDARG;
             }
 
-            if (plan.state == QueryPlanState::ScanFallback && !plan.constraints.allowFallbackScan)
+            if (effectivePlan.state == QueryPlanState::ScanFallback && !effectivePlan.constraints.allowFallbackScan)
             {
                 result.executionNote = L"executor-unsupported:fallback-disallowed";
                 result.unsupportedSource = QueryUnsupportedSource::Executor;
@@ -854,9 +1000,38 @@ namespace StableCore::Storage
                 return SC_E_INVALIDARG;
             }
 
-            if (plan.state == QueryPlanState::ScanFallback)
+            const bool isCompositeIndexExecutionState =
+                effectivePlan.state == QueryPlanState::DirectIndex || effectivePlan.state == QueryPlanState::PartialIndex;
+
+            if (isCompositeIndexExecutionState && effectivePlan.matchedIndex.has_value())
             {
-                const ErrorCode fallbackRc = ExecuteControlledFallbackScan(database, plan, context, &result);
+                const ErrorCode compositeRc = ExecuteCompositeIndexPlan(effectivePlan, context, &result);
+                if (Failed(compositeRc))
+                {
+                    result.mode = QueryExecutionMode::Unsupported;
+                    result.unsupportedSource = QueryUnsupportedSource::Executor;
+                    std::wstringstream note;
+                    note << L"executor-unsupported:composite-index-execution-failed"
+                         << L" | rc=" << compositeRc
+                         << L" | index=" << effectivePlan.matchedIndex->indexName
+                         << L" | prefix=" << effectivePlan.matchedIndex->matchedPrefixLength
+                         << L" | equalityPrefix=" << effectivePlan.matchedIndex->equalityPrefixLength
+                         << L" | hasRange=" << (effectivePlan.matchedIndex->hasRangeCondition ? L"true" : L"false")
+                         << L" | bridgeAnalyzed=" << (bridgeAnalyzed ? L"true" : L"false");
+                    result.executionNote = note.str();
+                    result.rc = compositeRc;
+                    *outResult = std::move(result);
+                    return compositeRc;
+                }
+
+                result.rc = SC_OK;
+                *outResult = std::move(result);
+                return SC_OK;
+            }
+
+            if (effectivePlan.state == QueryPlanState::ScanFallback)
+            {
+                const ErrorCode fallbackRc = ExecuteControlledFallbackScan(database, effectivePlan, context, &result);
                 if (Failed(fallbackRc))
                 {
                     result.mode = QueryExecutionMode::Unsupported;
@@ -873,7 +1048,7 @@ namespace StableCore::Storage
             }
 
             std::vector<SCRecordPtr> matchedRecords;
-            const ErrorCode collectRc = CollectCandidateRecords(database, plan, &matchedRecords, &result);
+            const ErrorCode collectRc = CollectCandidateRecords(database, effectivePlan, &matchedRecords, &result);
             if (Failed(collectRc))
             {
                 result.mode = QueryExecutionMode::Unsupported;
@@ -884,7 +1059,7 @@ namespace StableCore::Storage
                 return collectRc;
             }
 
-            switch (plan.state)
+            switch (effectivePlan.state)
             {
                 case QueryPlanState::DirectIndex:
                     result.mode = QueryExecutionMode::DirectIndex;
@@ -907,13 +1082,14 @@ namespace StableCore::Storage
                     return SC_E_INVALIDARG;
             }
 
-            if (!plan.orderBy.empty())
+            if (!effectivePlan.orderBy.empty())
             {
-                SortMatchedRecords(&matchedRecords, plan);
+                SortMatchedRecords(&matchedRecords, effectivePlan);
             }
 
             const ErrorCode cursorRc =
-                MaterializeCursor(matchedRecords, plan, static_cast<SCRecordCursorPtr*>(context.resultCursor), &result);
+                MaterializeCursor(
+                    matchedRecords, effectivePlan, static_cast<SCRecordCursorPtr*>(context.resultCursor), &result);
             if (Failed(cursorRc))
             {
                 result.executionNote = L"executor-unsupported:cursor-materialization-failed";
@@ -924,7 +1100,7 @@ namespace StableCore::Storage
                 return cursorRc;
             }
 
-            result.executionNote = BuildPlanSqlDescriptor(plan);
+            result.executionNote = BuildPlanSqlDescriptor(effectivePlan);
             result.rc = SC_OK;
             *outResult = std::move(result);
             return SC_OK;

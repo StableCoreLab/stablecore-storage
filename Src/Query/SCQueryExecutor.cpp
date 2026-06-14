@@ -165,7 +165,11 @@ namespace StableCore::Storage
                 return SC_E_INVALIDARG;
             }
 
-            if (plan.state == QueryPlanState::Unsupported)
+            const bool allowBackendRecoveryForRequiredIndex =
+                context.backendKind == QueryBackendKind::SQLite && plan.constraints.requireIndex &&
+                plan.fallbackReason == L"index-required" && plan.target.type == QueryTargetType::Table;
+
+            if (plan.state == QueryPlanState::Unsupported && !allowBackendRecoveryForRequiredIndex)
             {
                 result.unsupportedSource = QueryUnsupportedSource::Planner;
                 result.executionNote =

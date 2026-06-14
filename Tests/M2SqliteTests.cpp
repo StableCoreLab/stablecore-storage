@@ -1171,7 +1171,7 @@ TEST(StorageM2Sqlite, VersionGraphReportsUpgradeWindow)
 {
     sc::SCVersionGraph graph;
     EXPECT_EQ(sc::BuildDefaultVersionGraph(&graph), sc::SC_OK);
-    EXPECT_GE(graph.latestSupportedVersion, 4);
+    EXPECT_GE(graph.latestSupportedVersion, 5);
     EXPECT_FALSE(graph.nodes.empty());
     EXPECT_FALSE(graph.edges.empty());
 
@@ -1197,7 +1197,7 @@ TEST(StorageM2Sqlite, UpgradeFromV3ToV4AddsBinaryColumns)
 
     sc::SCVersionGraph graph;
     EXPECT_EQ(sc::BuildDefaultVersionGraph(&graph), sc::SC_OK);
-    EXPECT_GE(graph.latestSupportedVersion, 4);
+    EXPECT_GE(graph.latestSupportedVersion, 5);
 
     sc::SCDbPtr reopened;
     EXPECT_EQ(CreateFileDb(dbPath.c_str(), reopened), sc::SC_OK);
