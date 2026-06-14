@@ -19,51 +19,51 @@ namespace StableCore::Storage::Editor
             QString* outError)
         {
             if (outDependencies == nullptr)
+        {
+            if (outError != nullptr)
             {
-                if (outError != nullptr)
-                {
-                    *outError =
-                        QStringLiteral("Output dependency container is null.");
-                }
-                return false;
+                *outError =
+                    QStringLiteral("输出依赖容器为空。");
+            }
+            return false;
+        }
+
+        outDependencies->clear();
+        const QStringList parts = text.split(',', Qt::SkipEmptyParts);
+        for (const QString& rawPart : parts)
+        {
+            const QString token = rawPart.trimmed();
+            if (token.isEmpty())
+            {
+                continue;
             }
 
-            outDependencies->clear();
-            const QStringList parts = text.split(',', Qt::SkipEmptyParts);
-            for (const QString& rawPart : parts)
+            const int dot = token.indexOf('.');
+            if (dot >= 0)
             {
-                const QString token = rawPart.trimmed();
-                if (token.isEmpty())
+                const QString tableName = token.left(dot).trimmed();
+                const QString fieldName = token.mid(dot + 1).trimmed();
+                if (tableName.isEmpty() || fieldName.isEmpty() ||
+                    token.indexOf('.', dot + 1) >= 0)
                 {
-                    continue;
-                }
-
-                const int dot = token.indexOf('.');
-                if (dot >= 0)
-                {
-                    const QString tableName = token.left(dot).trimmed();
-                    const QString fieldName = token.mid(dot + 1).trimmed();
-                    if (tableName.isEmpty() || fieldName.isEmpty() ||
-                        token.indexOf('.', dot + 1) >= 0)
+                    if (outError != nullptr)
                     {
-                        if (outError != nullptr)
-                        {
-                            *outError = QStringLiteral(
-                                "Dependencies must use Table.Field format.");
-                        }
-                        return false;
+                        *outError = QStringLiteral(
+                            "依赖项必须使用 表.字段 格式。");
                     }
-
-                    outDependencies->push_back(sc::SCFieldDependency{
-                        tableName.toStdWString(), fieldName.toStdWString()});
-                    continue;
+                    return false;
                 }
 
                 outDependencies->push_back(sc::SCFieldDependency{
-                    currentTableName.toStdWString(), token.toStdWString()});
+                    tableName.toStdWString(), fieldName.toStdWString()});
+                continue;
             }
-            return true;
+
+            outDependencies->push_back(sc::SCFieldDependency{
+                currentTableName.toStdWString(), token.toStdWString()});
         }
+        return true;
+    }
 
         QString JoinDependencies(
             const std::vector<sc::SCFieldDependency>& dependencies,
@@ -110,8 +110,8 @@ namespace StableCore::Storage::Editor
           lockName_(lockName)
     {
         setWindowTitle(initialValue.name.empty()
-                           ? QStringLiteral("Add Session Computed Column")
-                           : QStringLiteral("Edit Session Computed Column"));
+                           ? QStringLiteral("添加会话计算列")
+                           : QStringLiteral("编辑会话计算列"));
         resize(620, 540);
         BuildForm();
         nameEdit_->setReadOnly(lockName_);
@@ -129,8 +129,7 @@ namespace StableCore::Storage::Editor
     {
         auto* layout = new QVBoxLayout(this);
         layout->addWidget(new QLabel(
-            QStringLiteral("Computed columns are session-only and will "
-                           "disappear after the editor closes."),
+            QStringLiteral("计算列仅在会话期间有效，编辑器关闭后将消失。"),
             this));
 
         auto* form = new QFormLayout();
@@ -138,76 +137,76 @@ namespace StableCore::Storage::Editor
         displayNameEdit_ = new QLineEdit(this);
 
         valueKindCombo_ = new QComboBox(this);
-        valueKindCombo_->addItem(QStringLiteral("Int64"),
+        valueKindCombo_->addItem(QStringLiteral("整数 (Int64)"),
                                  static_cast<int>(sc::ValueKind::Int64));
-        valueKindCombo_->addItem(QStringLiteral("Double"),
+        valueKindCombo_->addItem(QStringLiteral("浮点数 (Double)"),
                                  static_cast<int>(sc::ValueKind::Double));
-        valueKindCombo_->addItem(QStringLiteral("Bool"),
+        valueKindCombo_->addItem(QStringLiteral("布尔 (Bool)"),
                                  static_cast<int>(sc::ValueKind::Bool));
-        valueKindCombo_->addItem(QStringLiteral("String"),
+        valueKindCombo_->addItem(QStringLiteral("字符串 (String)"),
                                  static_cast<int>(sc::ValueKind::String));
-        valueKindCombo_->addItem(QStringLiteral("RecordId"),
+        valueKindCombo_->addItem(QStringLiteral("记录ID (RecordId)"),
                                  static_cast<int>(sc::ValueKind::RecordId));
-        valueKindCombo_->addItem(QStringLiteral("Enum"),
+        valueKindCombo_->addItem(QStringLiteral("枚举 (Enum)"),
                                  static_cast<int>(sc::ValueKind::Enum));
 
         kindCombo_ = new QComboBox(this);
         kindCombo_->addItem(
-            QStringLiteral("Expression"),
+            QStringLiteral("表达式"),
             static_cast<int>(sc::ComputedFieldKind::Expression));
-        kindCombo_->addItem(QStringLiteral("Rule"),
+        kindCombo_->addItem(QStringLiteral("规则"),
                             static_cast<int>(sc::ComputedFieldKind::Rule));
-        kindCombo_->addItem(QStringLiteral("Aggregate"),
+        kindCombo_->addItem(QStringLiteral("聚合"),
                             static_cast<int>(sc::ComputedFieldKind::Aggregate));
 
         expressionEdit_ = new QPlainTextEdit(this);
         expressionEdit_->setPlaceholderText(
-            QStringLiteral("Example: Length * Width"));
+            QStringLiteral("示例: Length * Width"));
         expressionEdit_->setFixedHeight(100);
 
         ruleIdEdit_ = new QLineEdit(this);
-        ruleIdEdit_->setPlaceholderText(QStringLiteral("Rule registry id"));
+        ruleIdEdit_->setPlaceholderText(QStringLiteral("规则注册ID"));
 
         aggregateKindCombo_ = new QComboBox(this);
         aggregateKindCombo_->addItem(
-            QStringLiteral("Count"),
+            QStringLiteral("计数"),
             static_cast<int>(sc::SCAggregateKind::Count));
         aggregateKindCombo_->addItem(
-            QStringLiteral("Sum"), static_cast<int>(sc::SCAggregateKind::Sum));
+            QStringLiteral("求和"), static_cast<int>(sc::SCAggregateKind::Sum));
         aggregateKindCombo_->addItem(
-            QStringLiteral("Min"), static_cast<int>(sc::SCAggregateKind::Min));
+            QStringLiteral("最小值"), static_cast<int>(sc::SCAggregateKind::Min));
         aggregateKindCombo_->addItem(
-            QStringLiteral("Max"), static_cast<int>(sc::SCAggregateKind::Max));
+            QStringLiteral("最大值"), static_cast<int>(sc::SCAggregateKind::Max));
 
         aggregateRelationEdit_ = new QLineEdit(this);
         aggregateRelationEdit_->setPlaceholderText(
-            QStringLiteral("Example: Beam.FloorRef"));
+            QStringLiteral("示例: Beam.FloorRef"));
         aggregateFieldEdit_ = new QLineEdit(this);
         aggregateFieldEdit_->setPlaceholderText(
-            QStringLiteral("Field used by Sum/Min/Max"));
+            QStringLiteral("Sum/Min/Max 使用的字段"));
 
         factDepsEdit_ = new QLineEdit(this);
         factDepsEdit_->setPlaceholderText(
-            QStringLiteral("Comma-separated, supports Table.Field"));
+            QStringLiteral("逗号分隔，支持 表.字段 格式"));
         relationDepsEdit_ = new QLineEdit(this);
         relationDepsEdit_->setPlaceholderText(
-            QStringLiteral("Comma-separated, supports Table.Field"));
+            QStringLiteral("逗号分隔，支持 表.字段 格式"));
 
-        cacheableCheck_ = new QCheckBox(QStringLiteral("Cacheable"), this);
+        cacheableCheck_ = new QCheckBox(QStringLiteral("可缓存"), this);
         cacheableCheck_->setChecked(true);
 
-        form->addRow(QStringLiteral("Name"), nameEdit_);
-        form->addRow(QStringLiteral("Display Name"), displayNameEdit_);
-        form->addRow(QStringLiteral("SCValue Kind"), valueKindCombo_);
-        form->addRow(QStringLiteral("Kind"), kindCombo_);
-        form->addRow(QStringLiteral("Expression"), expressionEdit_);
-        form->addRow(QStringLiteral("Rule Id"), ruleIdEdit_);
-        form->addRow(QStringLiteral("Aggregate Kind"), aggregateKindCombo_);
-        form->addRow(QStringLiteral("Aggregate Relation"),
+        form->addRow(QStringLiteral("名称"), nameEdit_);
+        form->addRow(QStringLiteral("显示名称"), displayNameEdit_);
+        form->addRow(QStringLiteral("数据类型"), valueKindCombo_);
+        form->addRow(QStringLiteral("类型"), kindCombo_);
+        form->addRow(QStringLiteral("表达式"), expressionEdit_);
+        form->addRow(QStringLiteral("规则ID"), ruleIdEdit_);
+        form->addRow(QStringLiteral("聚合类型"), aggregateKindCombo_);
+        form->addRow(QStringLiteral("聚合关联表"),
                      aggregateRelationEdit_);
-        form->addRow(QStringLiteral("Aggregate Field"), aggregateFieldEdit_);
-        form->addRow(QStringLiteral("Fact Dependencies"), factDepsEdit_);
-        form->addRow(QStringLiteral("Relation Dependencies"),
+        form->addRow(QStringLiteral("聚合字段"), aggregateFieldEdit_);
+        form->addRow(QStringLiteral("事实依赖"), factDepsEdit_);
+        form->addRow(QStringLiteral("关联依赖"),
                      relationDepsEdit_);
         form->addRow(QString(), cacheableCheck_);
         layout->addLayout(form);
@@ -258,7 +257,7 @@ namespace StableCore::Storage::Editor
         {
             if (outError != nullptr)
             {
-                *outError = QStringLiteral("Output column is null.");
+                *outError = QStringLiteral("输出列为空。");
             }
             return false;
         }
@@ -268,7 +267,7 @@ namespace StableCore::Storage::Editor
         {
             if (outError != nullptr)
             {
-                *outError = QStringLiteral("Computed column name is required.");
+                *outError = QStringLiteral("计算列名称为必填项。");
             }
             return false;
         }
@@ -289,8 +288,7 @@ namespace StableCore::Storage::Editor
                 if (outError != nullptr)
                 {
                     *outError = QStringLiteral(
-                        "Expression is required for expression computed "
-                        "columns.");
+                        "表达式计算列需要填写表达式。");
                 }
                 return false;
             }
@@ -303,7 +301,7 @@ namespace StableCore::Storage::Editor
                 if (outError != nullptr)
                 {
                     *outError = QStringLiteral(
-                        "Rule id is required for rule computed columns.");
+                        "规则计算列需要填写规则ID。");
                 }
                 return false;
             }
@@ -316,7 +314,7 @@ namespace StableCore::Storage::Editor
                 if (outError != nullptr)
                 {
                     *outError =
-                        QStringLiteral("Aggregate relation is required.");
+                        QStringLiteral("聚合计算需要填写关联表。");
                 }
                 return false;
             }
@@ -331,7 +329,7 @@ namespace StableCore::Storage::Editor
                     if (outError != nullptr)
                     {
                         *outError = QStringLiteral(
-                            "Aggregate field is required for Sum/Min/Max.");
+                            "Sum/Min/Max 聚合需要填写聚合字段。");
                     }
                     return false;
                 }
@@ -356,7 +354,7 @@ namespace StableCore::Storage::Editor
             if (outError != nullptr)
             {
                 *outError =
-                    QStringLiteral("At least one dependency is required.");
+                    QStringLiteral("至少需要一个依赖项。");
             }
             return false;
         }

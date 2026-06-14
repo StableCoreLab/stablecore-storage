@@ -10,6 +10,8 @@ class QLabel;
 class QLineEdit;
 class QPlainTextEdit;
 class QCheckBox;
+class QListWidget;
+class QPushButton;
 
 namespace StableCore::Storage::Editor
 {
@@ -27,10 +29,15 @@ namespace StableCore::Storage::Editor
     private slots:
         void RefreshPreview();
         void CopyOutput();
+        void AddIndex();
+        void EditIndex();
+        void RemoveIndex();
+        void UpdateIndexList();
 
     private:
         bool ReloadSchema(QString* outError);
         void UpdateOutput();
+        std::vector<std::wstring> GetAvailableColumnNames() const;
 
         SCDatabaseSession* session_{nullptr};
         StableCore::Storage::SCSchemaSnapshot schemaSnapshot_;
@@ -42,6 +49,10 @@ namespace StableCore::Storage::Editor
         class QLabel* legacyHintLabel_{nullptr};
         class QPlainTextEdit* outputEdit_{nullptr};
         class QLabel* statusLabel_{nullptr};
+        class QListWidget* indexList_{nullptr};
+        class QPushButton* addIndexButton_{nullptr};
+        class QPushButton* editIndexButton_{nullptr};
+        class QPushButton* removeIndexButton_{nullptr};
     };
 
 }  // namespace StableCore::Storage::Editor

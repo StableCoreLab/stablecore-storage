@@ -44,7 +44,7 @@ namespace StableCore::Storage::Editor
 
     SCAddColumnDialog::SCAddColumnDialog(QWidget* parent) : QDialog(parent)
     {
-        setWindowTitle(QStringLiteral("Add Column"));
+        setWindowTitle(QStringLiteral("添加列"));
 
         auto* layout = new QVBoxLayout(this);
         auto* form = new QFormLayout();
@@ -52,7 +52,7 @@ namespace StableCore::Storage::Editor
         nameEdit_ = new QLineEdit(this);
         displayNameEdit_ = new QLineEdit(this);
         valueKindCombo_ = new QComboBox(this);
-        relationCheck_ = new QCheckBox(QStringLiteral("Relation Field"), this);
+        relationCheck_ = new QCheckBox(QStringLiteral("关系字段"), this);
         nullableCheck_ = new QCheckBox(this);
         editableCheck_ = new QCheckBox(this);
         userDefinedCheck_ = new QCheckBox(this);
@@ -62,37 +62,37 @@ namespace StableCore::Storage::Editor
         referenceTableEdit_ = new QLineEdit(this);
         defaultValueEdit_ = new QLineEdit(this);
         defaultValueEdit_->setPlaceholderText(
-            QStringLiteral("Required only when the table already has rows"));
+            QStringLiteral("仅当表已包含数据时才需要"));
 
-        valueKindCombo_->addItem(QStringLiteral("Int64"),
+        valueKindCombo_->addItem(QStringLiteral("整数 (Int64)"),
                                  static_cast<int>(sc::ValueKind::Int64));
-        valueKindCombo_->addItem(QStringLiteral("Double"),
+        valueKindCombo_->addItem(QStringLiteral("浮点数 (Double)"),
                                  static_cast<int>(sc::ValueKind::Double));
-        valueKindCombo_->addItem(QStringLiteral("Bool"),
+        valueKindCombo_->addItem(QStringLiteral("布尔 (Bool)"),
                                  static_cast<int>(sc::ValueKind::Bool));
-        valueKindCombo_->addItem(QStringLiteral("String"),
+        valueKindCombo_->addItem(QStringLiteral("字符串 (String)"),
                                  static_cast<int>(sc::ValueKind::String));
-        valueKindCombo_->addItem(QStringLiteral("RecordId"),
+        valueKindCombo_->addItem(QStringLiteral("记录ID (RecordId)"),
                                  static_cast<int>(sc::ValueKind::RecordId));
-        valueKindCombo_->addItem(QStringLiteral("Enum"),
+        valueKindCombo_->addItem(QStringLiteral("枚举 (Enum)"),
                                  static_cast<int>(sc::ValueKind::Enum));
 
         nullableCheck_->setChecked(true);
         editableCheck_->setChecked(true);
 
-        form->addRow(QStringLiteral("Name"), nameEdit_);
-        form->addRow(QStringLiteral("Display Name"), displayNameEdit_);
-        form->addRow(QStringLiteral("SCValue Kind"), valueKindCombo_);
-        form->addRow(QStringLiteral("Column Kind"), relationCheck_);
-        form->addRow(QStringLiteral("Nullable"), nullableCheck_);
-        form->addRow(QStringLiteral("Editable"), editableCheck_);
-        form->addRow(QStringLiteral("User Defined"), userDefinedCheck_);
-        form->addRow(QStringLiteral("Indexed"), indexedCheck_);
-        form->addRow(QStringLiteral("Participates In Calc"),
+        form->addRow(QStringLiteral("名称"), nameEdit_);
+        form->addRow(QStringLiteral("显示名称"), displayNameEdit_);
+        form->addRow(QStringLiteral("数据类型"), valueKindCombo_);
+        form->addRow(QStringLiteral("列类型"), relationCheck_);
+        form->addRow(QStringLiteral("可为空"), nullableCheck_);
+        form->addRow(QStringLiteral("可编辑"), editableCheck_);
+        form->addRow(QStringLiteral("用户定义"), userDefinedCheck_);
+        form->addRow(QStringLiteral("已索引"), indexedCheck_);
+        form->addRow(QStringLiteral("参与计算"),
                      participatesInCalcCheck_);
-        form->addRow(QStringLiteral("Unit"), unitEdit_);
-        form->addRow(QStringLiteral("Reference Table"), referenceTableEdit_);
-        form->addRow(QStringLiteral("Default SCValue"), defaultValueEdit_);
+        form->addRow(QStringLiteral("单位"), unitEdit_);
+        form->addRow(QStringLiteral("引用表"), referenceTableEdit_);
+        form->addRow(QStringLiteral("默认值"), defaultValueEdit_);
         layout->addLayout(form);
 
         validationLabel_ = new QLabel(this);
@@ -125,7 +125,7 @@ namespace StableCore::Storage::Editor
                                          QWidget* parent)
         : SCAddColumnDialog(parent)
     {
-        setWindowTitle(QStringLiteral("Edit Column"));
+        setWindowTitle(QStringLiteral("编辑列"));
         nameEdit_->setReadOnly(true);
         ApplyInitialValue(initialValue);
     }
@@ -257,16 +257,13 @@ namespace StableCore::Storage::Editor
                     validationLabel_->setStyleSheet(
                         QStringLiteral("color: #b00020;"));
                     validationLabel_->setText(QStringLiteral(
-                        "This table already has records. Non-null columns "
-                        "need a default value."));
+                        "此表已包含数据。非空列需要设置默认值。"));
                 } else
                 {
                     validationLabel_->setStyleSheet(
                         QStringLiteral("color: #0b5fff;"));
                     validationLabel_->setText(QStringLiteral(
-                        "This table is empty. You can create a non-null "
-                        "column without a default, but future inserts must "
-                        "set a value explicitly."));
+                        "此表为空。可以创建不带默认值非空列，但后续插入必须显式设置值。"));
                 }
             } else
             {

@@ -303,7 +303,7 @@ namespace StableCore::Storage::Editor
             {
                 if (outError != nullptr)
                 {
-                    *outError = QStringLiteral("No database is open.");
+                    *outError = QStringLiteral("未打开数据库。");
                 }
                 return false;
             }
@@ -534,7 +534,7 @@ namespace StableCore::Storage::Editor
             {
                 if (outError != nullptr)
                 {
-                    *outError = QStringLiteral("No database is open.");
+                    *outError = QStringLiteral("未打开数据库。");
                 }
                 return false;
             }
@@ -838,7 +838,7 @@ namespace StableCore::Storage::Editor
         {
             if (outError != nullptr)
             {
-                *outError = QStringLiteral("No database is open.");
+                *outError = QStringLiteral("未打开数据库。");
             }
             return false;
         }
@@ -870,7 +870,7 @@ namespace StableCore::Storage::Editor
         {
             if (outError != nullptr)
             {
-                *outError = QStringLiteral("No database is open.");
+                *outError = QStringLiteral("未打开数据库。");
             }
             return false;
         }
@@ -893,7 +893,7 @@ namespace StableCore::Storage::Editor
         {
             if (outError != nullptr)
             {
-                *outError = QStringLiteral("No database is open.");
+                *outError = QStringLiteral("未打开数据库。");
             }
             return false;
         }
@@ -920,7 +920,7 @@ namespace StableCore::Storage::Editor
         {
             if (outError != nullptr)
             {
-                *outError = QStringLiteral("No database is open.");
+                *outError = QStringLiteral("未打开数据库。");
             }
             return false;
         }
@@ -958,7 +958,7 @@ namespace StableCore::Storage::Editor
         {
             if (outError != nullptr)
             {
-                *outError = QStringLiteral("No database is open.");
+                *outError = QStringLiteral("未打开数据库。");
             }
             return false;
         }
@@ -1092,7 +1092,7 @@ namespace StableCore::Storage::Editor
         {
             if (outError != nullptr)
             {
-                *outError = QStringLiteral("No database is open.");
+                *outError = QStringLiteral("未打开数据库。");
             }
             return false;
         }
@@ -1194,7 +1194,7 @@ namespace StableCore::Storage::Editor
         {
             if (outError != nullptr)
             {
-                *outError = QStringLiteral("No database is open.");
+                *outError = QStringLiteral("未打开数据库。");
             }
             return false;
         }
@@ -1810,7 +1810,7 @@ namespace StableCore::Storage::Editor
         {
             if (outError != nullptr)
             {
-                *outError = QStringLiteral("No database is open.");
+                *outError = QStringLiteral("未打开数据库。");
             }
             return false;
         }
@@ -1903,7 +1903,7 @@ namespace StableCore::Storage::Editor
         {
             if (outError != nullptr)
             {
-                *outError = QStringLiteral("No database is open.");
+                *outError = QStringLiteral("未打开数据库。");
             }
             return false;
         }
@@ -1938,7 +1938,7 @@ namespace StableCore::Storage::Editor
         {
             if (outError != nullptr)
             {
-                *outError = QStringLiteral("No database is open.");
+                *outError = QStringLiteral("未打开数据库。");
             }
             return false;
         }
@@ -1973,7 +1973,7 @@ namespace StableCore::Storage::Editor
         {
             if (outError != nullptr)
             {
-                *outError = QStringLiteral("No database is open.");
+                *outError = QStringLiteral("未打开数据库。");
             }
             return false;
         }
@@ -2009,7 +2009,7 @@ namespace StableCore::Storage::Editor
         {
             if (outError != nullptr)
             {
-                *outError = QStringLiteral("No database is open.");
+                *outError = QStringLiteral("未打开数据库。");
             }
             return false;
         }
@@ -2185,7 +2185,7 @@ namespace StableCore::Storage::Editor
         {
             if (outError != nullptr)
             {
-                *outError = QStringLiteral("No database is open.");
+                *outError = QStringLiteral("未打开数据库。");
             }
             return false;
         }
@@ -2538,11 +2538,135 @@ namespace StableCore::Storage::Editor
         return sessionComputedColumnsByTable_.value(currentTableName_);
     }
 
+    bool SCDatabaseSession::AddIndex(const sc::SCIndexDef& index,
+                                     QString* outError)
+    {
+        if (!currentTable_)
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("No table is selected.");
+            }
+            return false;
+        }
+
+        if (index.name.empty() || index.columns.empty())
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("Index name and columns are required.");
+            }
+            return false;
+        }
+
+        return BeginAndCommitSingleAction(
+            L"Add Index",
+            [this, index]() {
+                sc::SCSchemaPtr schema;
+                sc::ErrorCode rc = currentTable_->GetSchema(schema);
+                if (sc::Failed(rc))
+                {
+                    return rc;
+                }
+                return schema->AddIndex(index);
+            },
+            outError);
+    }
+
+    bool SCDatabaseSession::RemoveIndex(const QString& indexName,
+                                        QString* outError)
+    {
+        if (!currentTable_)
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("No table is selected.");
+            }
+            return false;
+        }
+
+        const QString name = indexName.trimmed();
+        if (name.isEmpty())
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("Index name is required.");
+            }
+            return false;
+        }
+
+        return BeginAndCommitSingleAction(
+            L"Remove Index",
+            [this, name]() {
+                sc::SCSchemaPtr schema;
+                sc::ErrorCode rc = currentTable_->GetSchema(schema);
+                if (sc::Failed(rc))
+                {
+                    return rc;
+                }
+                return schema->RemoveIndex(name.toStdWString().c_str());
+            },
+            outError);
+    }
+
+    bool SCDatabaseSession::UpdateIndex(const QString& originalName,
+                                        const sc::SCIndexDef& newIndex,
+                                        QString* outError)
+    {
+        if (!currentTable_)
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("No table is selected.");
+            }
+            return false;
+        }
+
+        const QString original = originalName.trimmed();
+        if (original.isEmpty() || newIndex.name.empty())
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("Index name is required.");
+            }
+            return false;
+        }
+
+        if (newIndex.columns.empty())
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("Index must have at least one column.");
+            }
+            return false;
+        }
+
+        return BeginAndCommitSingleAction(
+            L"Update Index",
+            [this, original, newIndex]() {
+                sc::SCSchemaPtr schema;
+                sc::ErrorCode rc = currentTable_->GetSchema(schema);
+                if (sc::Failed(rc))
+                {
+                    return rc;
+                }
+
+                rc = schema->RemoveIndex(original.toStdWString().c_str());
+                if (sc::Failed(rc))
+                {
+                    return rc;
+                }
+
+                return schema->AddIndex(newIndex);
+            },
+            outError);
+    }
+
     QString SCDatabaseSession::BuildHealthSummary() const
     {
         if (!IsOpen())
         {
-            return QStringLiteral("No database is open.");
+            return QStringLiteral("未打开数据库。");
         }
 
         sc::SCStorageHealthReport report;
@@ -3160,7 +3284,7 @@ namespace StableCore::Storage::Editor
         {
             if (outError != nullptr)
             {
-                *outError = QStringLiteral("No database is open.");
+                *outError = QStringLiteral("未打开数据库。");
             }
             return false;
         }

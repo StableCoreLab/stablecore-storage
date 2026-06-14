@@ -2,13 +2,18 @@ cmake_minimum_required(VERSION 3.24)
 
 project(SCStorage LANGUAGES C CXX)
 
+# Add /FS flag for MSVC to allow parallel compilation without PDB conflicts
+if (MSVC)
+    string(APPEND CMAKE_CXX_FLAGS " /FS")
+endif()
+
 include(CTest)
 include(FetchContent)
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 include(${CMAKE_CURRENT_LIST_DIR}/cmake/SCUtf8.cmake)
 
-option(SCSTORAGE_BUILD_DB_EDITOR "Build the Qt database editor tool" OFF)
+option(SCSTORAGE_BUILD_DB_EDITOR "Build the Qt database editor tool" ON)
 
 set(SCSTORAGE_TARGET SCStorage)
 set(SCSTORAGE_PRODUCT_EXAMPLE_TARGET SCStorageProductExample)
@@ -218,20 +223,53 @@ if (SCSTORAGE_BUILD_TESTS)
     endif()
 
     add_executable(${SCSTORAGE_TESTS_TARGET}
+        Tests/Support/TestPaths.cpp
+        Tests/Support/TestSqliteHelpers.cpp
+        Tests/Support/TestSchemaBuilders.cpp
+        Tests/Support/TestSeedData.cpp
+        Tests/Support/TestQueryHelpers.cpp
         Tests/ComputedTests.cpp
-        Tests/M1Tests.cpp
-        Tests/M2SqliteTests.cpp
-        Tests/M3Tests.cpp
         Tests/QueryPlannerBridgeTests.cpp
-        Tests/QuerySqliteExecutorTests.cpp
+        Tests/Query/QueryExecutorRequireIndexTests.cpp
+        Tests/Query/QueryExecutorCompositeIndexTests.cpp
+        Tests/Query/QueryExecutorCompositeRangeTests.cpp
+        Tests/Query/QueryExecutorCompositeOrderingTests.cpp
+        Tests/Query/QueryExecutorCompositeNullDefaultTests.cpp
+        Tests/Query/QueryExecutorTieBreakTests.cpp
+        Tests/Query/QueryExecutorReopenUndoRedoTests.cpp
         Tests/PerformanceSmokeTests.cpp
-        Tests/SchemaEditTests.cpp
+        Tests/SchemaEdit/SchemaCreateTableTests.cpp
+        Tests/SchemaEdit/SchemaPatchTests.cpp
+        Tests/SchemaEdit/SchemaConstraintTests.cpp
+        Tests/SchemaEdit/SchemaIndexTests.cpp
+        Tests/SchemaEdit/SchemaCompositeIndexTests.cpp
+        Tests/SchemaEdit/SchemaRollbackTests.cpp
+        Tests/SchemaEdit/SchemaQueryIndexRepairTests.cpp
+        Tests/SqliteBackend/SqliteBasicOperationsTests.cpp
+        Tests/SqliteBackend/SqliteUndoRedoTests.cpp
+        Tests/SqliteBackend/SqliteEditLogTests.cpp
+        Tests/SqliteBackend/SqliteBackupTests.cpp
+        Tests/SqliteBackend/SqliteUpgradeTests.cpp
+        Tests/SqliteBackend/SqliteImportTests.cpp
+        Tests/SqliteBackend/SqliteSchemaTests.cpp
+        Tests/SqliteBackend/SqliteBatchTests.cpp
+        Tests/SqliteBackend/SqliteReadOnlyOpenTests.cpp
+        Tests/SqliteBackend/SqliteRelationTests.cpp
+        Tests/StorageCore/StorageCoreValueTests.cpp
+        Tests/StorageCore/StorageCoreSchemaTests.cpp
+        Tests/StorageCore/StorageCoreTransactionTests.cpp
+        Tests/StorageCore/StorageCoreRelationTests.cpp
         Tests/TableViewTests.cpp
     )
     SCStorageConfigureOutputDirs(${SCSTORAGE_TESTS_TARGET})
     if (MSVC)
         target_compile_options(${SCSTORAGE_TESTS_TARGET} PRIVATE /MP)
     endif()
+
+    target_include_directories(${SCSTORAGE_TESTS_TARGET}
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/Tests
+    )
 
     target_link_libraries(${SCSTORAGE_TESTS_TARGET}
         PRIVATE
@@ -240,14 +278,43 @@ if (SCSTORAGE_BUILD_TESTS)
             GTest::gtest_main
     )
     SCStorageSourceGroupTree("${CMAKE_CURRENT_SOURCE_DIR}"
+        Tests/Support/TestPaths.cpp
+        Tests/Support/TestSqliteHelpers.cpp
+        Tests/Support/TestSchemaBuilders.cpp
+        Tests/Support/TestSeedData.cpp
+        Tests/Support/TestQueryHelpers.cpp
+        Tests/Support/TestFixtures.h
         Tests/ComputedTests.cpp
-        Tests/M1Tests.cpp
-        Tests/M2SqliteTests.cpp
-        Tests/M3Tests.cpp
         Tests/QueryPlannerBridgeTests.cpp
-        Tests/QuerySqliteExecutorTests.cpp
+        Tests/Query/QueryExecutorRequireIndexTests.cpp
+        Tests/Query/QueryExecutorCompositeIndexTests.cpp
+        Tests/Query/QueryExecutorCompositeRangeTests.cpp
+        Tests/Query/QueryExecutorCompositeOrderingTests.cpp
+        Tests/Query/QueryExecutorCompositeNullDefaultTests.cpp
+        Tests/Query/QueryExecutorTieBreakTests.cpp
+        Tests/Query/QueryExecutorReopenUndoRedoTests.cpp
         Tests/PerformanceSmokeTests.cpp
-        Tests/SchemaEditTests.cpp
+        Tests/SchemaEdit/SchemaCreateTableTests.cpp
+        Tests/SchemaEdit/SchemaPatchTests.cpp
+        Tests/SchemaEdit/SchemaConstraintTests.cpp
+        Tests/SchemaEdit/SchemaIndexTests.cpp
+        Tests/SchemaEdit/SchemaCompositeIndexTests.cpp
+        Tests/SchemaEdit/SchemaRollbackTests.cpp
+        Tests/SchemaEdit/SchemaQueryIndexRepairTests.cpp
+        Tests/StorageCore/StorageCoreSchemaTests.cpp
+        Tests/StorageCore/StorageCoreTransactionTests.cpp
+        Tests/StorageCore/StorageCoreRelationTests.cpp
+        Tests/StorageCore/StorageCoreValueTests.cpp
+        Tests/SqliteBackend/SqliteBasicOperationsTests.cpp
+        Tests/SqliteBackend/SqliteUndoRedoTests.cpp
+        Tests/SqliteBackend/SqliteEditLogTests.cpp
+        Tests/SqliteBackend/SqliteBackupTests.cpp
+        Tests/SqliteBackend/SqliteUpgradeTests.cpp
+        Tests/SqliteBackend/SqliteImportTests.cpp
+        Tests/SqliteBackend/SqliteSchemaTests.cpp
+        Tests/SqliteBackend/SqliteBatchTests.cpp
+        Tests/SqliteBackend/SqliteReadOnlyOpenTests.cpp
+        Tests/SqliteBackend/SqliteRelationTests.cpp
         Tests/TableViewTests.cpp
     )
 

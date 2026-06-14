@@ -9986,22 +9986,7 @@ namespace StableCore::Storage
                 {
                     return SC_OK;
                 }
-
-                SCUpgradePlan upgradePlan;
-                const ErrorCode planRc =
-                    BuildUpgradePlan(currentVersion, versionGraph.latestSupportedVersion, versionGraph, &upgradePlan);
-                if (Failed(planRc))
-                {
-                    return planRc;
-                }
-
-                SCUpgradeResult upgradeResult;
-                const ErrorCode upgradeRc = database->ExecuteUpgradePlan(upgradePlan, true, &upgradeResult);
-                if (Failed(upgradeRc))
-                {
-                    return upgradeRc;
-                }
-                return SC_OK;
+                return SC_E_NOTIMPL;
             };
 
             if (options.openMode == SCDatabaseOpenMode::ReadOnly)
@@ -10042,36 +10027,11 @@ namespace StableCore::Storage
                     return SC_OK;
                 }
 
-                readOnlyDatabase.Reset();
-
-                SCOpenDatabaseOptions writableOptions = options;
-                writableOptions.openMode = SCDatabaseOpenMode::Normal;
-
-                SCDbPtr writableDatabase;
-                rc = openDatabase(writableOptions, &writableDatabase);
-                if (Failed(rc))
+                if (auto* sqliteDb = dynamic_cast<SqliteDatabase*>(readOnlyDatabase.Get()))
                 {
-                    return rc;
+                    sqliteDb->SuppressCleanShutdownOnDestroy();
                 }
-
-                rc = upgradeDatabaseIfNeeded(writableDatabase.Get());
-                if (Failed(rc))
-                {
-                    if (auto* sqliteDb = dynamic_cast<SqliteDatabase*>(writableDatabase.Get()))
-                    {
-                        sqliteDb->SuppressCleanShutdownOnDestroy();
-                    }
-                    return rc;
-                }
-
-                writableDatabase.Reset();
-                rc = openDatabase(readOnlyOptions, &outDatabase);
-                if (Failed(rc))
-                {
-                    return rc;
-                }
-
-                return SC_OK;
+                return SC_E_NOTIMPL;
             }
 
             SCDbPtr database;

@@ -18,23 +18,23 @@ namespace StableCore::Storage::Editor
           targetTableName_(targetTableName),
           candidates_(candidates)
     {
-        setWindowTitle(QStringLiteral("Select Relation Record"));
+        setWindowTitle(QStringLiteral("选择关联记录"));
         resize(780, 520);
 
         auto* layout = new QVBoxLayout(this);
         layout->addWidget(new QLabel(
-            QStringLiteral("Target Table: %1").arg(targetTableName_), this));
+            QStringLiteral("目标表: %1").arg(targetTableName_), this));
 
         filterEdit_ = new QLineEdit(this);
         filterEdit_->setPlaceholderText(
-            QStringLiteral("Filter by label, id, or preview field"));
+            QStringLiteral("按标签、ID 或预览字段筛选"));
         layout->addWidget(filterEdit_);
 
         tableWidget_ = new QTableWidget(this);
         tableWidget_->setColumnCount(3);
-        tableWidget_->setHorizontalHeaderLabels({QStringLiteral("RecordId"),
-                                                 QStringLiteral("Label"),
-                                                 QStringLiteral("Preview")});
+        tableWidget_->setHorizontalHeaderLabels({QStringLiteral("记录ID"),
+                                                 QStringLiteral("标签"),
+                                                 QStringLiteral("预览")});
         tableWidget_->horizontalHeader()->setStretchLastSection(true);
         tableWidget_->horizontalHeader()->setSectionResizeMode(
             QHeaderView::ResizeToContents);

@@ -120,6 +120,12 @@ namespace StableCore::Storage::Editor
             QString* outError) const;
         QVector<StableCore::Storage::SCComputedColumnDef>
         CurrentSessionComputedColumns() const;
+        bool AddIndex(const StableCore::Storage::SCIndexDef& index,
+                      QString* outError);
+        bool RemoveIndex(const QString& indexName, QString* outError);
+        bool UpdateIndex(const QString& originalName,
+                         const StableCore::Storage::SCIndexDef& newIndex,
+                         QString* outError);
 
         QString BuildHealthSummary() const;
         bool BuildSchemaSnapshot(

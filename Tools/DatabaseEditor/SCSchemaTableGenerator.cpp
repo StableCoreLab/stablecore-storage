@@ -195,14 +195,25 @@ namespace StableCore::Storage::Editor
         }
 
         QString FormatIndexColumns(
-            const std::vector<sc::SCIndexColumnDef>& columns)
+            const std::vector<sc::SCIndexColumnDef>& columns,
+            QString* outDescColumns)
         {
             QStringList parts;
+            QStringList descParts;
             for (const sc::SCIndexColumnDef& column : columns)
             {
-                parts.push_back(QStringLiteral("\"") +
-                                EscapeCppString(ToQString(column.columnName)) +
-                                QStringLiteral("\""));
+                QString colName = QStringLiteral("\"") +
+                                  EscapeCppString(ToQString(column.columnName)) +
+                                  QStringLiteral("\"");
+                parts.push_back(colName);
+                if (column.descending)
+                {
+                    descParts.push_back(colName);
+                }
+            }
+            if (outDescColumns != nullptr && !descParts.isEmpty())
+            {
+                *outDescColumns = descParts.join(QStringLiteral(", "));
             }
             return parts.join(QStringLiteral(", "));
         }
@@ -294,8 +305,16 @@ namespace StableCore::Storage::Editor
             }
             code += QStringLiteral("        .Index(\"") +
                     EscapeCppString(indexName) + QStringLiteral("\")");
+            QString descColumns;
             code += QStringLiteral(".Columns(") +
-                    FormatIndexColumns(index.columns) + QStringLiteral(")\n");
+                    FormatIndexColumns(index.columns, &descColumns) +
+                    QStringLiteral(")");
+            if (!descColumns.isEmpty())
+            {
+                code += QStringLiteral("\n                .Desc(") +
+                        descColumns + QStringLiteral(")");
+            }
+            code += QStringLiteral("\n");
         }
 
         if (code.endsWith(QLatin1Char('\n')))

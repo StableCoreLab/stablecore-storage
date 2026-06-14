@@ -99,17 +99,16 @@ namespace StableCore::Storage::Editor
 
         QDockWidget* objectExplorerDock_{nullptr};
         QTreeWidget* objectTree_{nullptr};
-        QWidget* databaseStatusBar_{nullptr};
-        QLabel* databasePathLabel_{nullptr};
         QLabel* openModeLabel_{nullptr};
         QLabel* currentTableLabel_{nullptr};
         QLabel* tableStatsLabel_{nullptr};
         QLabel* filterStateLabel_{nullptr};
         QLabel* transactionStateLabel_{nullptr};
         QWidget* tablePage_{nullptr};
-        QLabel* tableTitleLabel_{nullptr};
         QToolBar* tableToolBar_{nullptr};
         QAction* closeDatabaseAction_{nullptr};
+        QAction* undoAction_{nullptr};
+        QAction* redoAction_{nullptr};
         QAction* savePendingChangesAction_{nullptr};
         QAction* discardPendingChangesAction_{nullptr};
         QTableView* dataTable_{nullptr};
