@@ -45,4 +45,6 @@ namespace StableCore::Storage
                                     const SCTableSchemaPatch& patch,
                                     SCSchemaEditResult* outResult);
 
+    ErrorCode ValidateRelationColumnDef(const ISCDatabase* database, const SCColumnDef& def);
+
 }  // namespace StableCore::Storage

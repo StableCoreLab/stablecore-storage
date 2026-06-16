@@ -100,9 +100,9 @@ TEST(SqliteUpgrade, UnsupportedVersionIsRejectedByOpenPolicy)
 {
     sc::SCVersionGraph graph;
     EXPECT_EQ(sc::BuildDefaultVersionGraph(&graph), sc::SC_OK);
-    EXPECT_GE(graph.latestSupportedVersion, 5);
+    EXPECT_EQ(graph.latestSupportedVersion, 6);
     EXPECT_FALSE(graph.nodes.empty());
-    EXPECT_FALSE(graph.edges.empty());
+    EXPECT_TRUE(graph.edges.empty());
 
     // 基线版本（最新支持版本）应该可以正常读写打开
     sc::SCOpenDecision baselineDecision;
@@ -116,17 +116,16 @@ TEST(SqliteUpgrade, UnsupportedVersionIsRejectedByOpenPolicy)
     sc::SCOpenDecision oldVersionDecision;
     EXPECT_EQ(sc::EvaluateOpenDecision(graph, 1, true, &oldVersionDecision), sc::SC_OK);
     // 旧版本应被拒绝，不允许 writable open
-    EXPECT_TRUE(oldVersionDecision.readOnlyOnly || oldVersionDecision.mode == sc::SCOpenMode::Unsupported);
+    EXPECT_EQ(oldVersionDecision.mode, sc::SCOpenMode::UpgradeRequired);
+    EXPECT_TRUE(oldVersionDecision.needsUpgrade);
     EXPECT_FALSE(oldVersionDecision.writable);
 
     // 版本 2 也应该被拒绝（如果低于基线）
-    if (graph.latestSupportedVersion > 2)
-    {
-        sc::SCOpenDecision v2Decision;
-        EXPECT_EQ(sc::EvaluateOpenDecision(graph, 2, true, &v2Decision), sc::SC_OK);
-        EXPECT_TRUE(v2Decision.readOnlyOnly || v2Decision.mode == sc::SCOpenMode::Unsupported);
-        EXPECT_FALSE(v2Decision.writable);
-    }
+    sc::SCOpenDecision v2Decision;
+    EXPECT_EQ(sc::EvaluateOpenDecision(graph, 2, true, &v2Decision), sc::SC_OK);
+    EXPECT_EQ(v2Decision.mode, sc::SCOpenMode::UpgradeRequired);
+    EXPECT_TRUE(v2Decision.needsUpgrade);
+    EXPECT_FALSE(v2Decision.writable);
 }
 
 // 迁移了 ReadOnlySqliteOpenRejectsWrites 到 SqliteReadOnlyOpenTests.cpp
@@ -189,4 +188,53 @@ TEST(SqliteUpgrade, RealOpenPathRejectsUnsupportedSchemaVersionWithoutModifyingD
     std::int64_t tableCount = 0;
     EXPECT_TRUE(QuerySqliteInt64(dbPath, "SELECT COUNT(*) FROM tables WHERE name='TestTable'", &tableCount));
     EXPECT_GT(tableCount, 0);
+}
+
+TEST(SqliteUpgrade, ExplicitUpgradeEntryAppliesRegisteredRelationUpgrade)
+{
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_ExplicitUpgrade.sqlite");
+
+    sc::SCDbPtr seedDb;
+    EXPECT_EQ(sc::CreateFileDatabase(dbPath.c_str(), sc::SCOpenDatabaseOptions{}, seedDb), sc::SC_OK);
+
+    seedDb.Reset();
+
+    EXPECT_TRUE(SetMetadataValue(dbPath, "schema_version", "5"));
+
+    sc::SCDbPtr upgradedDb;
+    sc::SCUpgradeResult upgradeResult;
+    EXPECT_EQ(sc::UpgradeFileDatabase(dbPath.c_str(), upgradedDb, &upgradeResult), sc::SC_OK);
+    EXPECT_EQ(upgradeResult.status, sc::SCUpgradeStatus::Success);
+    EXPECT_EQ(upgradeResult.sourceVersion, 5);
+    EXPECT_EQ(upgradeResult.targetVersion, 6);
+    ASSERT_TRUE(upgradedDb);
+    EXPECT_EQ(upgradedDb->GetSchemaVersion(), 6);
+
+    upgradedDb.Reset();
+
+    sc::SCDbPtr reopenedDb;
+    EXPECT_EQ(sc::CreateFileDatabase(dbPath.c_str(), sc::SCOpenDatabaseOptions{}, reopenedDb), sc::SC_OK);
+    ASSERT_TRUE(reopenedDb);
+    EXPECT_EQ(reopenedDb->GetSchemaVersion(), 6);
+}
+
+TEST(SqliteUpgrade, CreateFileDatabaseAutoUpgradesRegisteredRelationVersion)
+{
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_CreateAutoUpgrade.sqlite");
+
+    sc::SCDbPtr seedDb;
+    EXPECT_EQ(sc::CreateFileDatabase(dbPath.c_str(), sc::SCOpenDatabaseOptions{}, seedDb), sc::SC_OK);
+    seedDb.Reset();
+
+    EXPECT_TRUE(SetMetadataValue(dbPath, "schema_version", "5"));
+
+    sc::SCDbPtr reopenedDb;
+    EXPECT_EQ(sc::CreateFileDatabase(dbPath.c_str(), sc::SCOpenDatabaseOptions{}, reopenedDb), sc::SC_OK);
+    ASSERT_TRUE(reopenedDb);
+    EXPECT_EQ(reopenedDb->GetSchemaVersion(), 6);
+
+    std::int64_t schemaVersionAfterOpen = 0;
+    EXPECT_TRUE(
+        QuerySqliteInt64(dbPath, "SELECT value FROM metadata WHERE key='schema_version'", &schemaVersionAfterOpen));
+    EXPECT_EQ(schemaVersionAfterOpen, 6);
 }

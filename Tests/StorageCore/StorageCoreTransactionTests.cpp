@@ -184,6 +184,27 @@ TEST_F(BeamTableTest, EmptyQueryIsNotError)
     EXPECT_FALSE(static_cast<bool>(result));
 }
 
+TEST_F(FileDbTest, CreateRecordRejectsEmptySchemaTable)
+{
+    sc::SCTablePtr table;
+    EXPECT_EQ(db()->CreateTable(L"EmptyTable", table), sc::SC_OK);
+
+    sc::SCEditPtr edit;
+    EXPECT_EQ(db()->BeginEdit(L"create empty record", edit), sc::SC_OK);
+
+    sc::SCRecordPtr record;
+    EXPECT_EQ(table->CreateRecord(record), sc::SC_E_SCHEMA_VIOLATION);
+
+    EXPECT_EQ(db()->Rollback(edit.Get()), sc::SC_OK);
+
+    sc::SCRecordCursorPtr cursor;
+    EXPECT_EQ(table->EnumerateRecords(cursor), sc::SC_OK);
+
+    sc::SCRecordPtr result;
+    EXPECT_EQ(cursor->Next(result), sc::SC_OK);
+    EXPECT_FALSE(static_cast<bool>(result));
+}
+
 TEST_F(BeamTableTest, EditLogCommitIdentityAndVersionStayStableAcrossUndoRedo)
 {
     sc::SCEditPtr createEdit;

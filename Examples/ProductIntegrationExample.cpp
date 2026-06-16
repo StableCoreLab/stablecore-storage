@@ -51,57 +51,66 @@ int main()
 
     sc::SCSchemaPtr floorSchema;
     floorTable->GetSchema(floorSchema);
-    floorSchema->AddColumn(sc::SCColumnDef{L"Name",
-                                           L"Name",
-                                           sc::ValueKind::String,
-                                           sc::ColumnKind::Fact,
-                                           false,
-                                           true,
-                                           false,
-                                           false,
-                                           false,
-                                           L"",
-                                           L"",
-                                           sc::SCValue::FromString(L"")});
+    sc::SCColumnDef floorName;
+    floorName.name = L"Name";
+    floorName.displayName = L"Name";
+    floorName.valueKind = sc::ValueKind::String;
+    floorName.columnKind = sc::ColumnKind::Fact;
+    floorName.nullable = false;
+    floorName.editable = true;
+    floorName.userDefined = false;
+    floorName.indexed = false;
+    floorName.participatesInCalc = false;
+    floorName.unit = L"";
+    floorName.referenceTable = L"";
+    floorName.referenceStorageColumn = L"";
+    floorName.referenceDisplayColumn = L"";
+    floorName.defaultValue = sc::SCValue::FromString(L"");
+    floorSchema->AddColumn(floorName);
 
     sc::SCSchemaPtr beamSchema;
     beamTable->GetSchema(beamSchema);
-    beamSchema->AddColumn(sc::SCColumnDef{L"Length",
-                                          L"Length",
-                                          sc::ValueKind::Double,
-                                          sc::ColumnKind::Fact,
-                                          false,
-                                          true,
-                                          false,
-                                          false,
-                                          true,
-                                          L"mm",
-                                          L"",
-                                          sc::SCValue::FromDouble(0.0)});
-    beamSchema->AddColumn(sc::SCColumnDef{L"Width",
-                                          L"Width",
-                                          sc::ValueKind::Double,
-                                          sc::ColumnKind::Fact,
-                                          false,
-                                          true,
-                                          false,
-                                          false,
-                                          true,
-                                          L"mm",
-                                          L"",
-                                          sc::SCValue::FromDouble(0.0)});
-    beamSchema->AddColumn(sc::SCColumnDef{L"Height",
-                                          L"Height",
-                                          sc::ValueKind::Double,
-                                          sc::ColumnKind::Fact,
-                                          false,
-                                          true,
-                                          false,
-                                          false,
-                                          true,
-                                          L"mm",
-                                          L"",
-                                          sc::SCValue::FromDouble(0.0)});
+    sc::SCColumnDef length;
+    length.name = L"Length";
+    length.displayName = L"Length";
+    length.valueKind = sc::ValueKind::Double;
+    length.columnKind = sc::ColumnKind::Fact;
+    length.nullable = false;
+    length.editable = true;
+    length.userDefined = false;
+    length.indexed = false;
+    length.participatesInCalc = true;
+    length.unit = L"mm";
+    length.defaultValue = sc::SCValue::FromDouble(0.0);
+    beamSchema->AddColumn(length);
+
+    sc::SCColumnDef width;
+    width.name = L"Width";
+    width.displayName = L"Width";
+    width.valueKind = sc::ValueKind::Double;
+    width.columnKind = sc::ColumnKind::Fact;
+    width.nullable = false;
+    width.editable = true;
+    width.userDefined = false;
+    width.indexed = false;
+    width.participatesInCalc = true;
+    width.unit = L"mm";
+    width.defaultValue = sc::SCValue::FromDouble(0.0);
+    beamSchema->AddColumn(width);
+
+    sc::SCColumnDef height;
+    height.name = L"Height";
+    height.displayName = L"Height";
+    height.valueKind = sc::ValueKind::Double;
+    height.columnKind = sc::ColumnKind::Fact;
+    height.nullable = false;
+    height.editable = true;
+    height.userDefined = false;
+    height.indexed = false;
+    height.participatesInCalc = true;
+    height.unit = L"mm";
+    height.defaultValue = sc::SCValue::FromDouble(0.0);
+    beamSchema->AddColumn(height);
 
     sc::SCColumnDef floorRef;
     floorRef.name = L"FloorRef";

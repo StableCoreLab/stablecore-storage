@@ -1,54 +1,54 @@
-# Architecture And Semantics
+# 架构与语义
 
-## Repository Identity
+## 仓库定位
 
-- Repository: `stablecore-storage`
-- Role: Core SQLite-based storage infrastructure for the quantity/takeoff system
+- 仓库：`stablecore-storage`
+- 角色：工程量/算量系统的核心 SQLite 存储基础设施
 
-## Primary Responsibilities
+## 主要职责
 
-- SQLite project persistence
-- Undo / Redo
-- Transaction semantics
-- ChangeSet / Journal / Snapshot / Replay
-- Recoverable editing
-- Upgrade / migration infrastructure
+- SQLite 项目持久化
+- 撤销 / 重做
+- 事务语义
+- 变更集 / 日志 / 快照 / 回放
+- 可恢复编辑
+- 升级 / 迁移基础设施
 
-## Core Architecture (P0)
+## 核心架构（P0）
 
 ```text
-Core (semantic rules)
-    -> Adapter (public interface bridge)
-    -> Backend (SQLite)
+Core（语义规则）
+    -> Adapter（公共接口桥接）
+    -> Backend（SQLite）
 ```
 
-Mandatory constraints:
+强制约束：
 
-- Upper layers must NOT access SQLite directly
-- Query / Computed modules must NOT bypass public interfaces
-- Backend modules must NOT contain business semantics
-- Public storage semantics must remain independent from SQLite implementation details
+- 上层不得直接访问 SQLite
+- Query / Computed 模块不得绕过公共接口
+- Backend 模块不得包含业务语义
+- 公共存储语义必须独立于 SQLite 实现细节
 
-## Storage Semantic Invariants (P0)
+## 存储语义不变量（P0）
 
-The following semantics are invariant and must NEVER be violated:
+以下语义为不变量，绝不可违反：
 
-- `open()` must not mutate data
-- read operations must not write
-- upgrades must be explicit
-- rollback must fully restore state
-- deleted records must never revive
-- Undo / Redo must preserve identity consistency
-- transactions must not leave partial success states
-- SQLite implementation details must not leak into public APIs
+- `CreateFileDatabase()` 可以在返回前自动升级，但数据库构造函数不得修改数据
+- 读操作不得写入
+- 升级只能通过显式的工厂或数据库升级 API 执行
+- 回滚必须完全恢复状态
+- 已删除记录绝不可复活
+- 撤销 / 重做必须保证身份一致性
+- 事务不得留下部分成功状态
+- SQLite 实现细节不得泄漏到公共 API
 
-Correctness is always higher priority than performance.
+正确性始终优先于性能。
 
-## Core Design Principles
+## 核心设计原则
 
-### Explicit State Transitions
+### 显式状态转换
 
-All state mutations must happen through explicit APIs:
+所有状态变更必须通过显式 API 进行：
 
 - BeginEdit
 - Commit
@@ -58,72 +58,72 @@ All state mutations must happen through explicit APIs:
 - Finalize
 - Abort
 
-Implicit state mutation is forbidden.
+禁止隐式状态变更。
 
-### Single Source of Truth
+### 单一真实来源
 
-Persistent truth sources are limited to:
+持久化真实来源仅限于：
 
 - Project
 - ChangeSet
 - Journal
 - Snapshot
 
-UI state, cache, and session objects are NOT truth sources.
+UI 状态、缓存和会话对象不是真实来源。
 
-### Recoverability First
+### 可恢复性优先
 
-All write paths must support:
+所有写入路径必须支持：
 
-- rollback
-- recovery
-- interruption safety
+- 回滚
+- 恢复
+- 中断安全
 
-Must handle:
+必须处理：
 
-- interrupted import
-- failed migration
-- rollback failure
-- deleted-record access
-- interrupted SQLite transaction
-- corrupted or incomplete journal
+- 导入中断
+- 迁移失败
+- 回滚失败
+- 访问已删除记录
+- SQLite 事务中断
+- 日志损坏或不完整
 
-### Backend Isolation
+### Backend 隔离
 
-SQLite is an implementation detail.
+SQLite 是实现细节。
 
-Rules:
+规则：
 
-- public APIs must remain storage-semantic
-- SQL details must not leak into upper layers
-- schema changes must go through explicit migration logic
-- storage behavior must not depend on UI state
-- SQLite schema must not become a public contract
+- 公共 API 必须保持存储语义
+- SQL 细节不得泄漏到上层
+- Schema 变更必须通过显式迁移逻辑
+- 存储行为不得依赖 UI 状态
+- SQLite Schema 不得成为公共契约
 
-### Minimal Surprise Principle
+### 最小意外原则
 
-The system must preserve intuitive semantics:
+系统必须保持直观语义：
 
-- reads do not write
-- deleted data does not revive
-- readonly mode does not mutate data
-- failed operations do not partially commit
-- opening a project does not upgrade it implicitly
-- closing a project does not silently commit unfinished edits
+- 读不写
+- 已删除数据不复活
+- 只读模式不修改数据
+- 失败操作不部分提交
+- 打开项目可能在返回前将其升级到当前支持的 Schema
+- 关闭项目不会静默提交未完成的编辑
 
-## Engineering Philosophy
+## 工程哲学
 
-Priority order:
+优先级顺序：
 
 ```text
-Correctness
-    > Recoverability
-        > Storage Semantic Stability
-            > Maintainability
-                > Performance
+正确性
+    > 可恢复性
+        > 存储语义稳定性
+            > 可维护性
+                > 性能
 ```
 
-AI is expected to behave as:
+对 AI 的期望行为定位为：
 
-> A constrained engineering executor,
-> not an autonomous redesign agent.
+> 一个受约束的工程执行者，
+> 而非一个自主重构代理。

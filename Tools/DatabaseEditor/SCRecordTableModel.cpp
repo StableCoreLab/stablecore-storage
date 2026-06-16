@@ -90,27 +90,23 @@ namespace StableCore::Storage::Editor
             return QVariant{};
         }
 
-        sc::ISCComputedTableView* view = session_->CurrentTableView();
-        if (view == nullptr)
-        {
-            return QVariant{};
-        }
-
-        sc::SCValue SCValue;
-        const sc::ErrorCode rc =
-            view->GetCellValue(rows_[index.row()].recordId,
-                               columns_[index.column()].name.c_str(), &SCValue);
-        if (rc == sc::SC_E_VALUE_IS_NULL)
-        {
-            return QVariant{};
-        }
-        if (sc::Failed(rc))
+        QVariant cellValue;
+        QString error;
+        const bool ok =
+            role == Qt::EditRole
+                ? session_->GetCellStoredValue(rows_[index.row()].recordId,
+                                               ToQString(columns_[index.column()].name),
+                                               &cellValue, &error)
+                : session_->GetCellDisplayValue(rows_[index.row()].recordId,
+                                                ToQString(columns_[index.column()].name),
+                                                &cellValue, &error);
+        if (!ok)
         {
             return role == Qt::DisplayRole || role == Qt::ToolTipRole
-                       ? QStringLiteral("<error>")
+                       ? (error.isEmpty() ? QStringLiteral("<error>") : error)
                        : QVariant{};
         }
-        return ValueToVariant(SCValue);
+        return cellValue;
     }
 
     QVariant SCRecordTableModel::headerData(int section,

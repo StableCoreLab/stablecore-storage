@@ -1,26 +1,27 @@
-# StableCore Database Editor
+# StableCore 数据库编辑器
 
-`StableCore Database Editor` is the Qt Widgets desktop application for working with `SCStorage` SQLite databases.
+`StableCore Database Editor` 是 `SCStorage` 的 Qt Widgets 桌面工具，用于浏览、编辑和维护 SQLite 数据库。
 
-Current capabilities:
+## 当前功能
 
-- Create and open SQLite databases
-- Create tables from a table name or from `SC_SCHEMA_TABLE(...)` schema text
-- Delete tables from the object explorer or Table menu
-- Add fact columns and relation columns
-- Browse, add, delete, and edit records
-- Inspect schema, selected records, computed columns, and relation bindings
-- Undo and redo schema/data edits
-- Export and import CSV
-- Export debug packages and backup copies
+- 创建和打开 SQLite 数据库
+- 通过表名创建空表
+- 通过 `SC_SCHEMA_TABLE(...)` 文本创建表结构
+- 删除表
+- 新增普通字段和关系字段
+- 浏览、添加、删除、编辑记录
+- 查看表结构、当前记录、计算列和关系绑定
+- 撤销和重做结构与数据修改
+- 导出和导入 CSV
+- 导出调试包和备份副本
 
-## Build Requirements
+## 构建要求
 
 - CMake 3.24+
-- Visual Studio 2022 or another C++20 compiler
-- Qt 6.8 Widgets development package
+- Visual Studio 2022 或其他支持 C++20 的编译器
+- Qt 6.8 Widgets 开发包
 
-The database editor is not built by default. Enable it explicitly:
+数据库编辑器默认不参与构建，需要显式开启：
 
 ```powershell
 cmake -S Storage -B Build\StorageDbEditor `
@@ -30,31 +31,29 @@ cmake -S Storage -B Build\StorageDbEditor `
 cmake --build Build\StorageDbEditor --config Release --target SCStorageDatabaseEditor
 ```
 
-On Windows, the target is built as a GUI desktop program rather than a console executable.
+如果 `CMake` 找不到 `Qt6Config.cmake`，请检查：
 
-If CMake cannot find `Qt6Config.cmake`, verify:
+- 是否已安装 Qt 6.8
+- `CMAKE_PREFIX_PATH` 是否指向 Qt 安装根目录
+- 或者是否显式设置了 `Qt6_DIR`
 
-- Qt 6.8 is installed
-- `CMAKE_PREFIX_PATH` points to the Qt install prefix
-- or `Qt6_DIR` is set explicitly
+## 启动
 
-## Launch
-
-After a successful build:
+构建完成后可直接运行：
 
 ```powershell
 Build\StorageDbEditor\Release\SCStorageDatabaseEditor.exe
 ```
 
-## Table Creation
+## 创建表
 
-### Create by name
+### 通过表名创建
 
-Use `Table -> Create Table...` to create an empty table by name.
+在菜单中选择 `Table -> Create Table...`，即可创建一个空表。
 
-### Create from schema text
+### 通过 schema 文本创建
 
-Use `Table -> Create Table From Schema...` and paste text like:
+在菜单中选择 `Table -> Create Table From Schema...`，然后粘贴类似下面的文本：
 
 ```cpp
 SC_SCHEMA_TABLE(ProjectInfo)
@@ -62,23 +61,29 @@ SC_SCHEMA_TABLE(ProjectInfo)
     Table("ProjectInfo")
         .Column("GUID", SCType::String)
         .Column("ProjectName", SCType::String)
-            .Description("工程名称")
+            .Description("项目名称")
         .Column("ProjectCode", SCType::String)
-            .Description("工程编号");
+            .Description("项目编号");
 }
 ```
 
-This feature creates the table and its columns from the schema description. Column descriptions are imported as display names, and default values are imported when the DSL provides them. Table descriptions and primary keys are treated as import hints unless the underlying storage model can persist them.
+这会根据 schema 文本创建表和字段。字段描述会作为显示名称导入，若 DSL 中提供默认值，也会一并导入。表描述和主键目前会作为导入提示处理，是否真正持久化取决于底层存储模型。
 
-## Table Deletion
+关系字段也支持显式指定存储列和显示列，例如：
 
-`Delete Selected Table` removes the chosen table explicitly.
+- `.Ref("Floor")`：兼容旧的 `RecordId` 关系形式
+- `.Ref("Floor", "Code")`：存储 `Floor.Code`
+- `.Ref("Floor", "Code", "Name")`：存储 `Code`，界面显示 `Name`
 
-- The operation is treated as destructive and is not currently undoable.
-- Use it only after confirming the table is no longer needed.
-- See [Docs/DatabaseEditorTableDeletionSemantics.md](../../Docs/DatabaseEditorTableDeletionSemantics.md) for the current behavior contract.
+## 删除表
 
-## Related Files
+`Delete Selected Table` 会显式删除当前选择的表。
+
+- 该操作属于破坏性操作，当前不支持撤销
+- 使用前请确认表确实不再需要
+- 当前行为约束见 [Docs/DatabaseEditorTableDeletionSemantics.md](../../Docs/DatabaseEditorTableDeletionSemantics.md)
+
+## 相关文件
 
 - `Tools/DatabaseEditor/SCDatabaseEditorMainWindow.cpp`
 - `Tools/DatabaseEditor/SCDatabaseSession.cpp`

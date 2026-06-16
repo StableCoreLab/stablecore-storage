@@ -72,6 +72,69 @@ namespace
         return table;
     }
 
+    sc::SCTablePtr CreateBusinessKeyFloorTable(sc::SCDbPtr& db)
+    {
+        sc::SCTablePtr table;
+        EXPECT_EQ(db->CreateTable(L"Floor", table), sc::SC_OK);
+
+        sc::SCSchemaPtr schema;
+        EXPECT_EQ(table->GetSchema(schema), sc::SC_OK);
+
+        sc::SCColumnDef code;
+        code.name = L"Code";
+        code.displayName = L"Code";
+        code.valueKind = sc::ValueKind::String;
+        code.nullable = false;
+        code.defaultValue = sc::SCValue::FromString(L"");
+        EXPECT_EQ(schema->AddColumn(code), sc::SC_OK);
+
+        sc::SCConstraintDef codeUnique;
+        codeUnique.kind = sc::SCConstraintKind::Unique;
+        codeUnique.name = L"uq_Floor_Code";
+        codeUnique.columns.push_back(L"Code");
+        EXPECT_EQ(schema->AddConstraint(codeUnique), sc::SC_OK);
+
+        sc::SCColumnDef name;
+        name.name = L"Name";
+        name.displayName = L"Name";
+        name.valueKind = sc::ValueKind::String;
+        name.nullable = false;
+        name.defaultValue = sc::SCValue::FromString(L"");
+        EXPECT_EQ(schema->AddColumn(name), sc::SC_OK);
+
+        return table;
+    }
+
+    sc::SCTablePtr CreateBusinessKeyBeamTable(sc::SCDbPtr& db)
+    {
+        sc::SCTablePtr table;
+        EXPECT_EQ(db->CreateTable(L"Beam", table), sc::SC_OK);
+
+        sc::SCSchemaPtr schema;
+        EXPECT_EQ(table->GetSchema(schema), sc::SC_OK);
+
+        sc::SCColumnDef name;
+        name.name = L"Name";
+        name.displayName = L"Name";
+        name.valueKind = sc::ValueKind::String;
+        name.defaultValue = sc::SCValue::FromString(L"");
+        EXPECT_EQ(schema->AddColumn(name), sc::SC_OK);
+
+        sc::SCColumnDef floorRef;
+        floorRef.name = L"FloorRef";
+        floorRef.displayName = L"FloorRef";
+        floorRef.valueKind = sc::ValueKind::String;
+        floorRef.columnKind = sc::ColumnKind::Relation;
+        floorRef.referenceTable = L"Floor";
+        floorRef.referenceStorageColumn = L"Code";
+        floorRef.referenceDisplayColumn = L"Name";
+        floorRef.nullable = false;
+        floorRef.defaultValue = sc::SCValue::FromString(L"");
+        EXPECT_EQ(schema->AddColumn(floorRef), sc::SC_OK);
+
+        return table;
+    }
+
     std::vector<std::wstring> CollectBeamNames(sc::SCTablePtr& beamTable, sc::RecordId floorId)
     {
         sc::SCRecordCursorPtr cursor;
@@ -248,6 +311,57 @@ TEST(SqliteRelation, RelationIntegrityPreventsDeletingReferencedRecord)
     sc::SCRecordPtr reloadedFloor;
     EXPECT_EQ(floorTable->GetRecord(floor->GetId(), reloadedFloor), sc::SC_OK);
     EXPECT_FALSE(reloadedFloor->IsDeleted());
+}
+
+TEST(SqliteRelation, RelationCanStoreBusinessKeyAndDisplayDifferentColumn)
+{
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_BusinessKeyRelation.sqlite");
+
+    sc::SCDbPtr db;
+    EXPECT_EQ(sc::CreateFileDatabase(dbPath.c_str(), sc::SCOpenDatabaseOptions{}, db), sc::SC_OK);
+
+    sc::SCTablePtr floorTable = CreateBusinessKeyFloorTable(db);
+    sc::SCTablePtr beamTable = CreateBusinessKeyBeamTable(db);
+
+    sc::SCEditPtr seedEdit;
+    ASSERT_EQ(db->BeginEdit(L"seed business relation", seedEdit), sc::SC_OK);
+
+    sc::SCRecordPtr floor;
+    ASSERT_EQ(floorTable->CreateRecord(floor), sc::SC_OK);
+    ASSERT_EQ(floor->SetString(L"Code", L"F-001"), sc::SC_OK);
+    ASSERT_EQ(floor->SetString(L"Name", L"1F"), sc::SC_OK);
+
+    sc::SCRecordPtr beam;
+    ASSERT_EQ(beamTable->CreateRecord(beam), sc::SC_OK);
+    ASSERT_EQ(beam->SetString(L"Name", L"B-1"), sc::SC_OK);
+    ASSERT_EQ(beam->SetRef(L"FloorRef", floor->GetId()), sc::SC_OK);
+
+    ASSERT_EQ(db->Commit(seedEdit.Get()), sc::SC_OK);
+
+    std::wstring storedCode;
+    ASSERT_EQ(beam->GetStringCopy(L"FloorRef", &storedCode), sc::SC_OK);
+    EXPECT_EQ(storedCode, L"F-001");
+
+    sc::RecordId refId = 0;
+    EXPECT_EQ(beam->GetRef(L"FloorRef", &refId), sc::SC_OK);
+    EXPECT_EQ(refId, floor->GetId());
+
+    sc::SCQueryCondition condition{L"FloorRef", sc::SCValue::FromString(L"F-001")};
+    sc::SCRecordCursorPtr cursor;
+    EXPECT_EQ(beamTable->FindRecords(condition, cursor), sc::SC_OK);
+
+    int count = 0;
+    sc::SCRecordPtr record;
+    while (cursor->Next(record) == sc::SC_OK && static_cast<bool>(record))
+    {
+        ++count;
+    }
+    EXPECT_EQ(count, 1);
+
+    sc::SCEditPtr deleteEdit;
+    ASSERT_EQ(db->BeginEdit(L"delete business referenced", deleteEdit), sc::SC_OK);
+    EXPECT_EQ(floorTable->DeleteRecord(floor->GetId()), sc::SC_E_CONSTRAINT_VIOLATION);
+    EXPECT_EQ(db->Rollback(deleteEdit.Get()), sc::SC_OK);
 }
 
 // 新增测试：解除引用后可以删除记录

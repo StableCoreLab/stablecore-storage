@@ -1,11 +1,13 @@
 #include "SCFactory.h"
 #include "ISCQuery.h"
 #include "SCQuerySqliteExecutor.h"
+#include "SCSchemaEdit.h"
 
 #include <algorithm>
 #include <iomanip>
 #include <cstring>
 #include <cwctype>
+#include <filesystem>
 #include <mutex>
 #include <map>
 #include <memory>
@@ -23,6 +25,7 @@
 #include "SCBatch.h"
 #include "SCMigration.h"
 #include "SCQuerySqliteIndexAccess.h"
+#include "SqliteUpgradeRegistry.h"
 #include "SCRefCounted.h"
 
 #if defined(_WIN32)
@@ -43,10 +46,101 @@ namespace StableCore::Storage
             });
         }
 
+        ErrorCode BuildRegisteredUpgradePlan(std::int32_t currentVersion,
+                                             std::int32_t targetVersion,
+                                             SCUpgradePlan* outPlan)
+        {
+            if (outPlan == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+
+            std::vector<SCMigrationStep> availableSteps;
+            const auto& registeredSteps = GetRegisteredSqliteUpgradeSteps();
+            availableSteps.reserve(registeredSteps.size());
+            for (const auto& registration : registeredSteps)
+            {
+                availableSteps.push_back(registration.step);
+            }
+
+            SCMigrationPlan migrationPlan;
+            const ErrorCode planRc = BuildMigrationPlan(currentVersion, targetVersion, availableSteps, &migrationPlan);
+            if (Failed(planRc))
+            {
+                return planRc;
+            }
+
+            SCUpgradePlan upgradePlan;
+            upgradePlan.currentVersion = currentVersion;
+            upgradePlan.targetVersion = targetVersion;
+            upgradePlan.requiresConfirmation = true;
+            upgradePlan.upgradeRequired = true;
+            upgradePlan.compatibilityWindow.minReadableVersion = currentVersion;
+            upgradePlan.compatibilityWindow.maxReadableVersion = targetVersion;
+            upgradePlan.compatibilityWindow.minWritableVersion = targetVersion;
+            upgradePlan.compatibilityWindow.maxWritableVersion = targetVersion;
+            upgradePlan.compatibilityWindow.readOnlyAllowed = false;
+            upgradePlan.compatibilityWindow.upgradeAllowed = true;
+            upgradePlan.orderedSteps = std::move(migrationPlan.orderedSteps);
+            upgradePlan.reason = L"Explicit upgrade requested.";
+
+            *outPlan = std::move(upgradePlan);
+            return SC_OK;
+        }
+
+        // Shared upgrade executor used by the factory open path and the
+        // explicit upgrade entry point.
+        ErrorCode UpgradeOpenedSqliteDatabase(ISCDatabase* database, SCUpgradeResult* outResult)
+        {
+            if (database == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+
+            SCUpgradeResult localResult;
+            const std::int32_t currentVersion = database->GetSchemaVersion();
+            const std::int32_t targetVersion = GetLatestSupportedSchemaVersion();
+            localResult.sourceVersion = currentVersion;
+            localResult.targetVersion = targetVersion;
+
+            if (currentVersion == targetVersion)
+            {
+                localResult.status = SCUpgradeStatus::NotRequired;
+                localResult.failureReason = L"Database schema is already up to date.";
+                if (outResult != nullptr)
+                {
+                    *outResult = localResult;
+                }
+                return SC_OK;
+            }
+
+            SCUpgradePlan upgradePlan;
+            const ErrorCode planRc = BuildRegisteredUpgradePlan(currentVersion, targetVersion, &upgradePlan);
+            if (Failed(planRc))
+            {
+                localResult.status = SCUpgradeStatus::Unsupported;
+                localResult.failureReason = L"No registered upgrade path was found.";
+                if (outResult != nullptr)
+                {
+                    *outResult = localResult;
+                }
+                return SC_E_NOTIMPL;
+            }
+
+            localResult.status = SCUpgradeStatus::Failed;
+            const ErrorCode upgradeRc = database->ExecuteUpgradePlan(upgradePlan, true, &localResult);
+            if (outResult != nullptr)
+            {
+                *outResult = localResult;
+            }
+            return upgradeRc;
+        }
+
         constexpr int kStackUndo = 0;
         constexpr int kStackRedo = 1;
 
         ErrorCode MapSqliteError(int code);
+        bool HasTableColumnRaw(sqlite3* db, const char* tableName, const char* columnName);
 
         std::string ToUtf8(const std::wstring& text)
         {
@@ -1723,17 +1817,32 @@ namespace StableCore::Storage
             }
             if (def.columnKind == ColumnKind::Relation)
             {
-                if (def.valueKind != ValueKind::RecordId)
-                {
-                    return SC_E_SCHEMA_VIOLATION;
-                }
                 if (def.referenceTable.empty())
                 {
                     return SC_E_SCHEMA_VIOLATION;
                 }
-                if (!def.defaultValue.IsNull() && def.defaultValue.GetKind() != ValueKind::RecordId)
+
+                if (def.referenceStorageColumn.empty() && !def.referenceDisplayColumn.empty())
                 {
                     return SC_E_SCHEMA_VIOLATION;
+                }
+
+                if (def.referenceStorageColumn.empty())
+                {
+                    if (def.valueKind != ValueKind::RecordId)
+                    {
+                        return SC_E_SCHEMA_VIOLATION;
+                    }
+                    if (!def.defaultValue.IsNull() && def.defaultValue.GetKind() != ValueKind::RecordId)
+                    {
+                        return SC_E_SCHEMA_VIOLATION;
+                    }
+                } else
+                {
+                    if (!def.defaultValue.IsNull() && def.defaultValue.GetKind() != def.valueKind)
+                    {
+                        return SC_E_SCHEMA_VIOLATION;
+                    }
                 }
             } else
             {
@@ -2032,6 +2141,8 @@ namespace StableCore::Storage
                                      int participatesIndex,
                                      int unitIndex,
                                      int referenceTableIndex,
+                                     int referenceStorageColumnIndex,
+                                     int referenceDisplayColumnIndex,
                                      int defaultKindIndex,
                                      int defaultInt64Index,
                                      int defaultDoubleIndex,
@@ -2050,6 +2161,8 @@ namespace StableCore::Storage
             stmt.BindInt(participatesIndex, def.participatesInCalc ? 1 : 0);
             stmt.BindText(unitIndex, def.unit);
             stmt.BindText(referenceTableIndex, def.referenceTable);
+            stmt.BindText(referenceStorageColumnIndex, def.referenceStorageColumn);
+            stmt.BindText(referenceDisplayColumnIndex, def.referenceDisplayColumn);
             BindValueForStorage(stmt,
                                 defaultKindIndex,
                                 defaultInt64Index,
@@ -2071,6 +2184,8 @@ namespace StableCore::Storage
                                              int participatesIndex,
                                              int unitIndex,
                                              int referenceTableIndex,
+                                             int referenceStorageColumnIndex,
+                                             int referenceDisplayColumnIndex,
                                              int defaultKindIndex,
                                              int defaultInt64Index,
                                              int defaultDoubleIndex,
@@ -2089,6 +2204,8 @@ namespace StableCore::Storage
             def.participatesInCalc = stmt.ColumnBool(participatesIndex);
             def.unit = stmt.ColumnText(unitIndex);
             def.referenceTable = stmt.ColumnText(referenceTableIndex);
+            def.referenceStorageColumn = stmt.ColumnText(referenceStorageColumnIndex);
+            def.referenceDisplayColumn = stmt.ColumnText(referenceDisplayColumnIndex);
             def.defaultValue = ReadValueFromStorage(stmt,
                                                     defaultKindIndex,
                                                     defaultInt64Index,
@@ -2631,6 +2748,7 @@ namespace StableCore::Storage
                                      public IReferenceIndexProvider,
                                      public IReferenceIndexMaintainer,
                                      public ISqliteQueryIndexAccess,
+                                     public SqliteUpgradeContext,
                                      public SCRefCountedObject
         {
         public:
@@ -2696,6 +2814,16 @@ namespace StableCore::Storage
             ErrorCode CollectCompositeIndexRecordIds(const QueryPlan& analyzedPlan,
                                                      std::vector<RecordId>* outRecordIds,
                                                      std::uint64_t* outScannedEntries) override;
+            ErrorCode ExecuteSql(const char* sql) override
+            {
+                return db_.Execute(sql);
+            }
+            bool HasTableColumn(const char* tableName, const char* columnName) const override
+            {
+                return HasTableColumnRaw(db_.Raw(), tableName, columnName);
+            }
+            ErrorCode BackfillSchemaMetadataV3() override;
+            void InitializeQueryIndexStorage() override;
 
             friend class SqliteSchema;
 
@@ -2720,6 +2848,12 @@ namespace StableCore::Storage
                                  const std::shared_ptr<SqliteRecordData>& data,
                                  const std::wstring& fieldName,
                                  const SCValue& value);
+            ErrorCode ResolveRelationStoredValue(const SCColumnDef& relationColumn,
+                                                 RecordId targetRecordId,
+                                                 SCValue* outValue) const;
+            ErrorCode ResolveRelationTargetRecordId(const SCColumnDef& relationColumn,
+                                                    const SCValue& storedValue,
+                                                    RecordId* outRecordId) const;
             ErrorCode DeleteRecord(SqliteTable* table, const std::shared_ptr<SqliteRecordData>& data);
             void RecordCreate(SqliteTable* table, const std::shared_ptr<SqliteRecordData>& data);
             ErrorCode PersistAddedColumn(SqliteSchema* schema, const SCColumnDef& def);
@@ -2743,13 +2877,11 @@ namespace StableCore::Storage
             bool HasTable(const wchar_t* name);
             void EnsureSchemaMetadataTables();
             ErrorCode LoadSchemaMetadata(SqliteTable* table);
-            ErrorCode BackfillSchemaMetadataV3();
             void LoadJournalStacks();
             // Explicit writable setup/repair path only. Must not be called from load/open.
             ErrorCode EnsureLegacyColumnIndexes();
             // Explicit repair/write path only. Must not be called from load/open.
             ErrorCode RebuildCompositeQueryIndexes();
-            void InitializeQueryIndexStorage();
             ErrorCode EnsureImportSessionStore();
             void EnsureColumnIndex(std::int64_t tableRowId, const std::wstring& columnName);
             void RunStartupIntegrityCheck();
@@ -2766,6 +2898,14 @@ namespace StableCore::Storage
             ErrorCode ValidateColumnDefForSchema(SqliteSchema* schema, const SCColumnDef& def) const;
             ErrorCode ValidateConstraintDefForSchema(SqliteSchema* schema, const SCConstraintDef& def) const;
             ErrorCode ValidateIndexDefForSchema(SqliteSchema* schema, const SCIndexDef& def) const;
+            const SCColumnDef* FindRelationStorageColumn(const SCColumnDef& relationColumn) const;
+            const SCColumnDef* FindRelationDisplayColumn(const SCColumnDef& relationColumn) const;
+            ErrorCode ResolveRelationWriteValue(const SCColumnDef& relationColumn,
+                                                const SCValue& inputValue,
+                                                SCValue* outValue) const;
+            ErrorCode ResolveRelationDisplayValue(const SCColumnDef& relationColumn,
+                                                  const SCValue& storedValue,
+                                                  std::wstring* outValue) const;
             ErrorCode EncodeIndexColumnValue(const SCValue& value,
                                              ValueKind valueKind,
                                              bool descending,
@@ -3347,18 +3487,47 @@ namespace StableCore::Storage
 
         ErrorCode SqliteRecord::GetRef(const wchar_t* name, RecordId* outValue)
         {
+            if (outValue == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+
+            const SCColumnDef* column = table_->Schema()->FindColumnDef(name);
+            if (column == nullptr)
+            {
+                return SC_E_COLUMN_NOT_FOUND;
+            }
+
             SCValue value;
             const ErrorCode rc = ReadTypedValue(name, &value);
             if (Failed(rc))
             {
                 return rc;
             }
-            return value.AsRecordId(outValue);
+
+            return db_->ResolveRelationTargetRecordId(*column, value, outValue);
         }
 
         ErrorCode SqliteRecord::SetRef(const wchar_t* name, RecordId value)
         {
-            return SetValue(name, SCValue::FromRecordId(value));
+            if (name == nullptr)
+            {
+                return SC_E_INVALIDARG;
+            }
+
+            const SCColumnDef* column = table_->Schema()->FindColumnDef(name);
+            if (column == nullptr)
+            {
+                return SC_E_COLUMN_NOT_FOUND;
+            }
+
+            SCValue storedValue;
+            const ErrorCode rc = db_->ResolveRelationStoredValue(*column, value, &storedValue);
+            if (Failed(rc))
+            {
+                return rc;
+            }
+            return SetValue(name, storedValue);
         }
 
         ErrorCode SqliteTable::GetRecord(RecordId id, SCRecordPtr& outRecord)
@@ -3377,6 +3546,17 @@ namespace StableCore::Storage
             if (!db_->HasActiveEdit())
             {
                 return SC_E_NO_ACTIVE_EDIT;
+            }
+
+            std::int32_t columnCount = 0;
+            const ErrorCode columnCountRc = schema_->GetColumnCount(&columnCount);
+            if (Failed(columnCountRc))
+            {
+                return columnCountRc;
+            }
+            if (columnCount <= 0)
+            {
+                return SC_E_SCHEMA_VIOLATION;
             }
 
             auto data = std::make_shared<SqliteRecordData>(db_->AllocateRecordId());
@@ -3548,6 +3728,8 @@ namespace StableCore::Storage
                 "user_defined_flag INTEGER NOT NULL, indexed_flag INTEGER NOT "
                 "NULL, participates_in_calc_flag INTEGER NOT NULL,"
                 "unit TEXT NOT NULL, reference_table TEXT NOT NULL, "
+                "reference_storage_column TEXT NOT NULL, "
+                "reference_display_column TEXT NOT NULL, "
                 "default_kind INTEGER NOT NULL, default_int64 INTEGER,"
                 "default_double REAL, default_bool INTEGER, default_text TEXT, "
                 "default_blob BLOB, "
@@ -3598,7 +3780,8 @@ namespace StableCore::Storage
                 "old_column_kind INTEGER, old_nullable INTEGER, old_editable "
                 "INTEGER, old_user_defined INTEGER, old_indexed INTEGER, "
                 "old_participates_in_calc INTEGER, old_unit TEXT, "
-                "old_reference_table TEXT, old_default_kind INTEGER, "
+                "old_reference_table TEXT, old_reference_storage_column TEXT, "
+                "old_reference_display_column TEXT, old_default_kind INTEGER, "
                 "old_default_int64 INTEGER, old_default_double REAL, "
                 "old_default_bool INTEGER, old_default_text TEXT, "
                 "old_default_blob BLOB, "
@@ -3606,8 +3789,9 @@ namespace StableCore::Storage
                 "new_column_kind INTEGER, new_nullable INTEGER, "
                 "new_editable INTEGER, new_user_defined INTEGER, "
                 "new_indexed INTEGER, new_participates_in_calc INTEGER, "
-                "new_unit TEXT, new_reference_table TEXT, new_default_kind "
-                "INTEGER, new_default_int64 INTEGER, new_default_double REAL, "
+                "new_unit TEXT, new_reference_table TEXT, "
+                "new_reference_storage_column TEXT, new_reference_display_column TEXT, "
+                "new_default_kind INTEGER, new_default_int64 INTEGER, new_default_double REAL, "
                 "new_default_bool INTEGER, new_default_text TEXT, "
                 "new_default_blob BLOB, "
                 "PRIMARY KEY(tx_id, sequence_index));");
@@ -3698,7 +3882,7 @@ namespace StableCore::Storage
             return stmt.Step(&hasRow) == SC_OK && hasRow;
         }
 
-        bool HasTableColumn(sqlite3* db, const char* tableName, const char* columnName)
+        bool HasTableColumnRaw(sqlite3* db, const char* tableName, const char* columnName)
         {
             if (db == nullptr || tableName == nullptr || columnName == nullptr)
             {
@@ -3770,6 +3954,7 @@ namespace StableCore::Storage
         void SqliteDatabase::LoadTables()
         {
             const bool supportsBinaryStorage = schemaVersion_ >= 4;
+            const bool supportsRelationReferenceColumns = schemaVersion_ >= 6;
             SqliteStmt tablesStmt = db_.Prepare("SELECT table_id, name FROM tables ORDER BY name;");
             bool hasRow = false;
             while (tablesStmt.Step(&hasRow) == SC_OK && hasRow)
@@ -3781,20 +3966,42 @@ namespace StableCore::Storage
                 auto* sqliteTable = static_cast<SqliteTable*>(table.Get());
 
                 SqliteStmt columnsStmt =
-                    db_.Prepare(supportsBinaryStorage ? "SELECT rowid, column_name, display_name, "
-                                                        "value_kind, column_kind, nullable_flag, "
-                                                        "editable_flag, user_defined_flag, indexed_flag, "
-                                                        "participates_in_calc_flag, unit, reference_table, "
-                                                        "default_kind, default_int64, default_double, "
-                                                        "default_bool, default_text, default_blob FROM "
-                                                        "schema_columns WHERE table_id = ? ORDER BY rowid;"
-                                                      : "SELECT rowid, column_name, display_name, "
-                                                        "value_kind, column_kind, nullable_flag, "
-                                                        "editable_flag, user_defined_flag, indexed_flag, "
-                                                        "participates_in_calc_flag, unit, reference_table, "
-                                                        "default_kind, default_int64, default_double, "
-                                                        "default_bool, default_text FROM schema_columns "
-                                                        "WHERE table_id = ? ORDER BY rowid;");
+                    db_.Prepare(
+                        supportsBinaryStorage
+                            ? (supportsRelationReferenceColumns
+                                   ? "SELECT rowid, column_name, display_name, "
+                                     "value_kind, column_kind, nullable_flag, "
+                                     "editable_flag, user_defined_flag, indexed_flag, "
+                                     "participates_in_calc_flag, unit, reference_table, "
+                                     "reference_storage_column, reference_display_column, "
+                                     "default_kind, default_int64, default_double, "
+                                     "default_bool, default_text, default_blob FROM "
+                                     "schema_columns WHERE table_id = ? ORDER BY rowid;"
+                                   : "SELECT rowid, column_name, display_name, "
+                                     "value_kind, column_kind, nullable_flag, "
+                                     "editable_flag, user_defined_flag, indexed_flag, "
+                                     "participates_in_calc_flag, unit, reference_table, "
+                                     "'' AS reference_storage_column, '' AS reference_display_column, "
+                                     "default_kind, default_int64, default_double, "
+                                     "default_bool, default_text, default_blob FROM "
+                                     "schema_columns WHERE table_id = ? ORDER BY rowid;")
+                            : (supportsRelationReferenceColumns
+                                   ? "SELECT rowid, column_name, display_name, "
+                                     "value_kind, column_kind, nullable_flag, "
+                                     "editable_flag, user_defined_flag, indexed_flag, "
+                                     "participates_in_calc_flag, unit, reference_table, "
+                                     "reference_storage_column, reference_display_column, "
+                                     "default_kind, default_int64, default_double, "
+                                     "default_bool, default_text FROM schema_columns "
+                                     "WHERE table_id = ? ORDER BY rowid;"
+                                   : "SELECT rowid, column_name, display_name, "
+                                     "value_kind, column_kind, nullable_flag, "
+                                     "editable_flag, user_defined_flag, indexed_flag, "
+                                     "participates_in_calc_flag, unit, reference_table, "
+                                     "'' AS reference_storage_column, '' AS reference_display_column, "
+                                     "default_kind, default_int64, default_double, "
+                                     "default_bool, default_text FROM schema_columns "
+                                     "WHERE table_id = ? ORDER BY rowid;"));
                 columnsStmt.BindInt64(1, tableRowId);
                 bool hasColumn = false;
                 while (columnsStmt.Step(&hasColumn) == SC_OK && hasColumn)
@@ -3812,9 +4019,11 @@ namespace StableCore::Storage
                     def.participatesInCalc = columnsStmt.ColumnBool(9);
                     def.unit = columnsStmt.ColumnText(10);
                     def.referenceTable = columnsStmt.ColumnText(11);
+                    def.referenceStorageColumn = columnsStmt.ColumnText(12);
+                    def.referenceDisplayColumn = columnsStmt.ColumnText(13);
                     def.defaultValue = supportsBinaryStorage
-                                           ? ReadValueFromStorage(columnsStmt, 12, 13, 14, 15, 16, 17)
-                                           : ReadValueFromStorage(columnsStmt, 12, 13, 14, 15, 16, 16);
+                                           ? ReadValueFromStorage(columnsStmt, 14, 15, 16, 17, 18, 19)
+                                           : ReadValueFromStorage(columnsStmt, 14, 15, 16, 17, 18, 18);
                     sqliteTable->Schema()->LoadColumn(def, rowId);
                 }
                 const ErrorCode metadataRc = LoadSchemaMetadata(sqliteTable);
@@ -4287,14 +4496,16 @@ namespace StableCore::Storage
                                                         "old_column_kind, old_nullable, old_editable, "
                                                         "old_user_defined, old_indexed, "
                                                         "old_participates_in_calc, old_unit, "
-                                                        "old_reference_table, old_default_kind, "
+                                                        "old_reference_table, old_reference_storage_column, "
+                                                        "old_reference_display_column, old_default_kind, "
                                                         "old_default_int64, old_default_double, "
                                                         "old_default_bool, old_default_text, "
                                                         "old_default_blob, new_display_name, "
                                                         "new_value_kind, new_column_kind, new_nullable, "
                                                         "new_editable, new_user_defined, new_indexed, "
                                                         "new_participates_in_calc, new_unit, "
-                                                        "new_reference_table, new_default_kind, "
+                                                        "new_reference_table, new_reference_storage_column, "
+                                                        "new_reference_display_column, new_default_kind, "
                                                         "new_default_int64, new_default_double, "
                                                         "new_default_bool, new_default_text, "
                                                         "new_default_blob FROM journal_schema_entries "
@@ -4304,13 +4515,15 @@ namespace StableCore::Storage
                                                         "old_column_kind, old_nullable, old_editable, "
                                                         "old_user_defined, old_indexed, "
                                                         "old_participates_in_calc, old_unit, "
-                                                        "old_reference_table, old_default_kind, "
+                                                        "old_reference_table, old_reference_storage_column, "
+                                                        "old_reference_display_column, old_default_kind, "
                                                         "old_default_int64, old_default_double, "
                                                         "old_default_bool, old_default_text, "
                                                         "new_display_name, new_value_kind, new_column_kind, "
                                                         "new_nullable, new_editable, new_user_defined, "
                                                         "new_indexed, new_participates_in_calc, new_unit, "
-                                                        "new_reference_table, new_default_kind, "
+                                                        "new_reference_table, new_reference_storage_column, "
+                                                        "new_reference_display_column, new_default_kind, "
                                                         "new_default_int64, new_default_double, "
                                                         "new_default_bool, new_default_text FROM "
                                                         "journal_schema_entries WHERE tx_id = ?;");
@@ -4327,15 +4540,15 @@ namespace StableCore::Storage
                     entry.columnRowId = schemaStmt.ColumnInt64(4);
                     entry.oldColumn = supportsBinaryStorage
                                           ? ReadColumnDefFromStorage(
-                                                schemaStmt, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20)
+                                                schemaStmt, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22)
                                           : ReadColumnDefFromStorage(
-                                                schemaStmt, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 19);
+                                                schemaStmt, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 21);
                     entry.newColumn =
                         supportsBinaryStorage
                             ? ReadColumnDefFromStorage(
-                                  schemaStmt, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36)
+                                  schemaStmt, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40)
                             : ReadColumnDefFromStorage(
-                                  schemaStmt, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 34);
+                                  schemaStmt, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 38);
                     persistedEntry.entry = std::move(entry);
                     entries.push_back(std::move(persistedEntry));
                 }
@@ -4437,157 +4650,28 @@ namespace StableCore::Storage
                         return finish(SC_E_INVALIDARG);
                     }
 
-                    if (step.fromVersion == 1 && step.toVersion == 2)
-                    {
-                        const ErrorCode diagnosticsRc = db_.Execute(
-                            "CREATE TABLE IF NOT EXISTS startup_diagnostics ("
-                            "diag_id INTEGER PRIMARY KEY AUTOINCREMENT, "
-                            "severity INTEGER NOT NULL, category TEXT NOT "
-                            "NULL, message TEXT NOT NULL);");
-                        if (Failed(diagnosticsRc))
-                        {
-                            schemaVersion_ = originalSchemaVersion;
-                            result.status = SCUpgradeStatus::RolledBack;
-                            result.rolledBack = true;
-                            result.failureReason =
-                                L"Failed to create upgrade-required diagnostic "
-                                L"storage.";
-                            return finish(diagnosticsRc);
-                        }
-
-                        const ErrorCode indexRc = db_.Execute(
-                            "CREATE INDEX IF NOT EXISTS "
-                            "idx_field_values_record ON field_values(table_id, "
-                            "record_id, column_name);");
-                        if (Failed(indexRc))
-                        {
-                            schemaVersion_ = originalSchemaVersion;
-                            result.status = SCUpgradeStatus::RolledBack;
-                            result.rolledBack = true;
-                            result.failureReason =
-                                L"Failed to create upgrade-required lookup "
-                                L"index.";
-                            return finish(indexRc);
-                        }
-                    } else if (step.fromVersion == 2 && step.toVersion == 3)
-                    {
-                        const ErrorCode metadataRc = BackfillSchemaMetadataV3();
-                        if (Failed(metadataRc))
-                        {
-                            schemaVersion_ = originalSchemaVersion;
-                            result.status = SCUpgradeStatus::RolledBack;
-                            result.rolledBack = true;
-                            result.failureReason =
-                                L"Failed to persist table-level schema "
-                                L"metadata.";
-                            return finish(metadataRc);
-                        }
-                    } else if (step.fromVersion == 3 && step.toVersion == 4)
-                    {
-                        if (!HasTableColumn(db_.Raw(), "field_values", "blob_value"))
-                        {
-                            const ErrorCode fieldValuesRc = db_.Execute(
-                                "ALTER TABLE field_values ADD COLUMN "
-                                "blob_value BLOB;");
-                            if (Failed(fieldValuesRc))
-                            {
-                                schemaVersion_ = originalSchemaVersion;
-                                result.status = SCUpgradeStatus::RolledBack;
-                                result.rolledBack = true;
-                                result.failureReason = L"Failed to add binary field storage.";
-                                return finish(fieldValuesRc);
-                            }
-                        }
-
-                        if (!HasTableColumn(db_.Raw(), "schema_columns", "default_blob"))
-                        {
-                            const ErrorCode schemaColumnsRc = db_.Execute(
-                                "ALTER TABLE schema_columns ADD COLUMN "
-                                "default_blob BLOB;");
-                            if (Failed(schemaColumnsRc))
-                            {
-                                schemaVersion_ = originalSchemaVersion;
-                                result.status = SCUpgradeStatus::RolledBack;
-                                result.rolledBack = true;
-                                result.failureReason =
-                                    L"Failed to add schema default binary "
-                                    L"storage.";
-                                return finish(schemaColumnsRc);
-                            }
-                        }
-
-                        if (!HasTableColumn(db_.Raw(), "journal_entries", "old_blob"))
-                        {
-                            const ErrorCode journalEntriesRc = db_.Execute(
-                                "ALTER TABLE journal_entries ADD COLUMN "
-                                "old_blob BLOB;");
-                            if (Failed(journalEntriesRc))
-                            {
-                                schemaVersion_ = originalSchemaVersion;
-                                result.status = SCUpgradeStatus::RolledBack;
-                                result.rolledBack = true;
-                                result.failureReason = L"Failed to extend journal entry storage.";
-                                return finish(journalEntriesRc);
-                            }
-                        }
-
-                        if (!HasTableColumn(db_.Raw(), "journal_entries", "new_blob"))
-                        {
-                            const ErrorCode journalEntriesRc2 = db_.Execute(
-                                "ALTER TABLE journal_entries ADD COLUMN "
-                                "new_blob BLOB;");
-                            if (Failed(journalEntriesRc2))
-                            {
-                                schemaVersion_ = originalSchemaVersion;
-                                result.status = SCUpgradeStatus::RolledBack;
-                                result.rolledBack = true;
-                                result.failureReason = L"Failed to extend journal entry storage.";
-                                return finish(journalEntriesRc2);
-                            }
-                        }
-
-                        if (!HasTableColumn(db_.Raw(), "journal_schema_entries", "old_default_blob"))
-                        {
-                            const ErrorCode schemaJournalRc = db_.Execute(
-                                "ALTER TABLE journal_schema_entries ADD "
-                                "COLUMN old_default_blob BLOB;");
-                            if (Failed(schemaJournalRc))
-                            {
-                                schemaVersion_ = originalSchemaVersion;
-                                result.status = SCUpgradeStatus::RolledBack;
-                                result.rolledBack = true;
-                                result.failureReason =
-                                    L"Failed to extend schema journal "
-                                    L"storage.";
-                                return finish(schemaJournalRc);
-                            }
-                        }
-
-                        if (!HasTableColumn(db_.Raw(), "journal_schema_entries", "new_default_blob"))
-                        {
-                            const ErrorCode schemaJournalRc2 = db_.Execute(
-                                "ALTER TABLE journal_schema_entries ADD "
-                                "COLUMN new_default_blob BLOB;");
-                            if (Failed(schemaJournalRc2))
-                            {
-                                schemaVersion_ = originalSchemaVersion;
-                                result.status = SCUpgradeStatus::RolledBack;
-                                result.rolledBack = true;
-                                result.failureReason =
-                                    L"Failed to extend schema journal "
-                                    L"storage.";
-                                return finish(schemaJournalRc2);
-                            }
-                        }
-                    } else if (step.fromVersion == 4 && step.toVersion == 5)
-                    {
-                        InitializeQueryIndexStorage();
-                    } else
+                    const SqliteUpgradeStepRegistration* registration =
+                        FindRegisteredSqliteUpgradeStep(step.fromVersion, step.toVersion);
+                    if (registration == nullptr || registration->handler == nullptr)
                     {
                         schemaVersion_ = originalSchemaVersion;
                         result.status = SCUpgradeStatus::Unsupported;
                         result.failureReason = L"Unsupported upgrade step.";
                         return finish(SC_E_NOTIMPL);
+                    }
+
+                    const ErrorCode stepRc = registration->handler(*this, &result);
+                    if (Failed(stepRc))
+                    {
+                        schemaVersion_ = originalSchemaVersion;
+                        result.rolledBack = true;
+                        result.status = stepRc == SC_E_NOTIMPL ? SCUpgradeStatus::Unsupported
+                                                                : SCUpgradeStatus::RolledBack;
+                        if (result.failureReason.empty())
+                        {
+                            result.failureReason = L"Upgrade step failed.";
+                        }
+                        return finish(stepRc);
                     }
 
                     schemaVersion_ = step.toVersion;
@@ -5963,6 +6047,358 @@ namespace StableCore::Storage
             return SC_OK;
         }
 
+        const SCColumnDef* SqliteDatabase::FindRelationStorageColumn(const SCColumnDef& relationColumn) const
+        {
+            if (relationColumn.referenceTable.empty() ||
+                relationColumn.referenceStorageColumn.empty())
+            {
+                return nullptr;
+            }
+
+            const auto tableIt = tables_.find(relationColumn.referenceTable);
+            if (tableIt == tables_.end())
+            {
+                return nullptr;
+            }
+
+            auto* table = static_cast<SqliteTable*>(tableIt->second.Get());
+            if (table == nullptr)
+            {
+                return nullptr;
+            }
+
+            return table->Schema()->FindColumnDef(relationColumn.referenceStorageColumn);
+        }
+
+        const SCColumnDef* SqliteDatabase::FindRelationDisplayColumn(const SCColumnDef& relationColumn) const
+        {
+            if (relationColumn.referenceTable.empty())
+            {
+                return nullptr;
+            }
+
+            const std::wstring& displayColumnName = relationColumn.referenceDisplayColumn.empty()
+                                                        ? relationColumn.referenceStorageColumn
+                                                        : relationColumn.referenceDisplayColumn;
+            if (displayColumnName.empty())
+            {
+                return nullptr;
+            }
+
+            const auto tableIt = tables_.find(relationColumn.referenceTable);
+            if (tableIt == tables_.end())
+            {
+                return nullptr;
+            }
+
+            auto* table = static_cast<SqliteTable*>(tableIt->second.Get());
+            if (table == nullptr)
+            {
+                return nullptr;
+            }
+
+            return table->Schema()->FindColumnDef(displayColumnName);
+        }
+
+        ErrorCode SqliteDatabase::ResolveRelationStoredValue(const SCColumnDef& relationColumn,
+                                                             RecordId targetRecordId,
+                                                             SCValue* outValue) const
+        {
+            if (outValue == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+            if (relationColumn.referenceStorageColumn.empty())
+            {
+                *outValue = SCValue::FromRecordId(targetRecordId);
+                return SC_OK;
+            }
+
+            const auto tableIt = tables_.find(relationColumn.referenceTable);
+            if (tableIt == tables_.end())
+            {
+                return SC_E_REFERENCE_INVALID;
+            }
+
+            auto* table = static_cast<SqliteTable*>(tableIt->second.Get());
+            if (table == nullptr)
+            {
+                return SC_E_REFERENCE_INVALID;
+            }
+
+            SCRecordPtr record;
+            const ErrorCode recordRc = table->GetRecord(targetRecordId, record);
+            if (Failed(recordRc))
+            {
+                return recordRc;
+            }
+            if (!record || record->IsDeleted())
+            {
+                return SC_E_REFERENCE_INVALID;
+            }
+
+            return record->GetValue(relationColumn.referenceStorageColumn.c_str(), outValue);
+        }
+
+        ErrorCode SqliteDatabase::ResolveRelationWriteValue(const SCColumnDef& relationColumn,
+                                                            const SCValue& inputValue,
+                                                            SCValue* outValue) const
+        {
+            if (outValue == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+            if (relationColumn.referenceStorageColumn.empty())
+            {
+                *outValue = inputValue;
+                return SC_OK;
+            }
+
+            RecordId targetRecordId = 0;
+            if (Succeeded(ResolveRelationTargetRecordId(relationColumn, inputValue, &targetRecordId)))
+            {
+                return ResolveRelationStoredValue(relationColumn, targetRecordId, outValue);
+            }
+
+            const SCColumnDef* displayColumn = FindRelationDisplayColumn(relationColumn);
+            if (displayColumn == nullptr)
+            {
+                return SC_E_REFERENCE_INVALID;
+            }
+
+            const auto tableIt = tables_.find(relationColumn.referenceTable);
+            if (tableIt == tables_.end())
+            {
+                return SC_E_REFERENCE_INVALID;
+            }
+
+            auto* table = static_cast<SqliteTable*>(tableIt->second.Get());
+            if (table == nullptr)
+            {
+                return SC_E_REFERENCE_INVALID;
+            }
+
+            bool found = false;
+            RecordId foundId = 0;
+            for (const auto& [candidateId, candidateData] : table->Records())
+            {
+                if (candidateData == nullptr || candidateData->state == RecordState::Deleted)
+                {
+                    continue;
+                }
+
+                SCRecordPtr record;
+                if (Failed(table->GetRecord(candidateId, record)) || !record)
+                {
+                    continue;
+                }
+
+                SCValue displayValue;
+                if (Failed(record->GetValue(displayColumn->name.c_str(), &displayValue)))
+                {
+                    continue;
+                }
+
+                if (displayValue != inputValue)
+                {
+                    continue;
+                }
+
+                if (found)
+                {
+                    return SC_E_REFERENCE_INVALID;
+                }
+                found = true;
+                foundId = candidateId;
+            }
+
+            if (!found)
+            {
+                return SC_E_REFERENCE_INVALID;
+            }
+
+            return ResolveRelationStoredValue(relationColumn, foundId, outValue);
+        }
+
+        ErrorCode SqliteDatabase::ResolveRelationTargetRecordId(const SCColumnDef& relationColumn,
+                                                                const SCValue& storedValue,
+                                                                RecordId* outRecordId) const
+        {
+            if (outRecordId == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+            if (relationColumn.referenceStorageColumn.empty())
+            {
+                return storedValue.AsRecordId(outRecordId);
+            }
+
+            const auto tableIt = tables_.find(relationColumn.referenceTable);
+            if (tableIt == tables_.end())
+            {
+                return SC_E_REFERENCE_INVALID;
+            }
+
+            auto* table = static_cast<SqliteTable*>(tableIt->second.Get());
+            if (table == nullptr)
+            {
+                return SC_E_REFERENCE_INVALID;
+            }
+
+            bool found = false;
+            RecordId foundId = 0;
+            for (const auto& [candidateId, candidateData] : table->Records())
+            {
+                if (candidateData == nullptr || candidateData->state == RecordState::Deleted)
+                {
+                    continue;
+                }
+
+                SCRecordPtr record;
+                if (Failed(table->GetRecord(candidateId, record)) || !record)
+                {
+                    continue;
+                }
+
+                SCValue candidateStoredValue;
+                if (Failed(record->GetValue(relationColumn.referenceStorageColumn.c_str(), &candidateStoredValue)))
+                {
+                    continue;
+                }
+
+                if (candidateStoredValue != storedValue)
+                {
+                    continue;
+                }
+                if (found)
+                {
+                    return SC_E_REFERENCE_INVALID;
+                }
+                found = true;
+                foundId = candidateId;
+            }
+
+            if (!found)
+            {
+                return SC_E_REFERENCE_INVALID;
+            }
+
+            *outRecordId = foundId;
+            return SC_OK;
+        }
+
+        ErrorCode SqliteDatabase::ResolveRelationDisplayValue(const SCColumnDef& relationColumn,
+                                                              const SCValue& storedValue,
+                                                              std::wstring* outValue) const
+        {
+            if (outValue == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+            if (relationColumn.referenceTable.empty())
+            {
+                return SC_E_REFERENCE_INVALID;
+            }
+
+            const std::wstring& displayColumnName = relationColumn.referenceDisplayColumn.empty()
+                                                        ? relationColumn.referenceStorageColumn
+                                                        : relationColumn.referenceDisplayColumn;
+            if (displayColumnName.empty())
+            {
+                return storedValue.AsStringCopy(outValue);
+            }
+
+            RecordId targetRecordId = 0;
+            const ErrorCode targetRc = ResolveRelationTargetRecordId(relationColumn, storedValue, &targetRecordId);
+            if (Failed(targetRc))
+            {
+                return targetRc;
+            }
+
+            const auto tableIt = tables_.find(relationColumn.referenceTable);
+            if (tableIt == tables_.end())
+            {
+                return SC_E_REFERENCE_INVALID;
+            }
+
+            auto* table = static_cast<SqliteTable*>(tableIt->second.Get());
+            if (table == nullptr)
+            {
+                return SC_E_REFERENCE_INVALID;
+            }
+
+            SCRecordPtr record;
+            const ErrorCode recordRc = table->GetRecord(targetRecordId, record);
+            if (Failed(recordRc))
+            {
+                return recordRc;
+            }
+
+            SCValue displayValue;
+            const ErrorCode valueRc = record->GetValue(displayColumnName.c_str(), &displayValue);
+            if (valueRc == SC_E_VALUE_IS_NULL)
+            {
+                outValue->clear();
+                return SC_OK;
+            }
+            if (Failed(valueRc))
+            {
+                return valueRc;
+            }
+
+            switch (displayValue.GetKind())
+            {
+                case ValueKind::Int64: {
+                    std::int64_t v = 0;
+                    if (displayValue.AsInt64(&v) == SC_OK)
+                    {
+                        *outValue = std::to_wstring(v);
+                        return SC_OK;
+                    }
+                    break;
+                }
+                case ValueKind::Double: {
+                    double v = 0.0;
+                    if (displayValue.AsDouble(&v) == SC_OK)
+                    {
+                        std::wstringstream stream;
+                        stream << v;
+                        *outValue = stream.str();
+                        return SC_OK;
+                    }
+                    break;
+                }
+                case ValueKind::Bool: {
+                    bool v = false;
+                    if (displayValue.AsBool(&v) == SC_OK)
+                    {
+                        *outValue = v ? L"true" : L"false";
+                        return SC_OK;
+                    }
+                    break;
+                }
+                case ValueKind::String:
+                    return displayValue.AsStringCopy(outValue);
+                case ValueKind::RecordId: {
+                    RecordId v = 0;
+                    if (displayValue.AsRecordId(&v) == SC_OK)
+                    {
+                        *outValue = std::to_wstring(v);
+                        return SC_OK;
+                    }
+                    break;
+                }
+                case ValueKind::Enum:
+                    return displayValue.AsEnumCopy(outValue);
+                case ValueKind::Binary:
+                case ValueKind::Null:
+                default:
+                    break;
+            }
+            *outValue = L"";
+            return SC_OK;
+        }
+
         ErrorCode SqliteDatabase::ValidateWrite(SqliteTable* table,
                                                 const std::shared_ptr<SqliteRecordData>& data,
                                                 const std::wstring& fieldName,
@@ -5985,6 +6421,22 @@ namespace StableCore::Storage
             if (!column->editable)
             {
                 return SC_E_READ_ONLY_COLUMN;
+            }
+
+            if (column->columnKind == ColumnKind::Relation &&
+                !column->referenceStorageColumn.empty())
+            {
+                if (value.IsNull())
+                {
+                    return column->nullable ? SC_OK : SC_E_VALUE_IS_NULL;
+                }
+                SCValue normalized;
+                const ErrorCode refRc = ResolveRelationWriteValue(*column, value, &normalized);
+                if (Failed(refRc))
+                {
+                    return refRc;
+                }
+                return SC_OK;
             }
 
             const ErrorCode validate = ValidateValueKind(column->valueKind, value, column->nullable);
@@ -6030,6 +6482,12 @@ namespace StableCore::Storage
             if (Failed(shapeRc))
             {
                 return shapeRc;
+            }
+
+            const ErrorCode relationRc = ValidateRelationColumnDef(this, def);
+            if (Failed(relationRc))
+            {
+                return relationRc;
             }
 
             if (!def.nullable && def.defaultValue.IsNull() && HasAliveRecords(schema))
@@ -7617,6 +8075,16 @@ namespace StableCore::Storage
             }
 
             const SCColumnDef* column = table->Schema()->FindColumnDef(fieldName);
+            SCValue storedValue = value;
+            if (column != nullptr && column->columnKind == ColumnKind::Relation &&
+                !column->referenceStorageColumn.empty() && !value.IsNull())
+            {
+                const ErrorCode relationRc = ResolveRelationWriteValue(*column, value, &storedValue);
+                if (Failed(relationRc))
+                {
+                    return relationRc;
+                }
+            }
             SCValue oldValue = column->defaultValue;
             const auto existing = data->values.find(fieldName);
             if (existing != data->values.end())
@@ -7624,16 +8092,16 @@ namespace StableCore::Storage
                 oldValue = existing->second;
             }
 
-            if (oldValue == value)
+            if (oldValue == storedValue)
             {
                 return SC_OK;
             }
 
-            data->values[fieldName] = value;
+            data->values[fieldName] = storedValue;
             const JournalOp op = (column != nullptr && column->columnKind == ColumnKind::Relation)
                                      ? JournalOp::SetRelation
                                      : JournalOp::SetValue;
-            RecordJournal(table->Name(), data->id, fieldName, oldValue, value, false, false, op);
+            RecordJournal(table->Name(), data->id, fieldName, oldValue, storedValue, false, false, op);
             MarkReferenceIndexDirty();
             return SC_OK;
         }
@@ -7735,14 +8203,20 @@ namespace StableCore::Storage
                     continue;
                 }
 
-                const auto valueIt = recordIt->second->values.find(column.name);
-                if (valueIt == recordIt->second->values.end())
+                SCRecordPtr record;
+                if (Failed(table->GetRecord(sourceRecordId, record)) || !record)
+                {
+                    continue;
+                }
+
+                SCValue relationValue;
+                if (Failed(record->GetValue(column.name.c_str(), &relationValue)))
                 {
                     continue;
                 }
 
                 RecordId targetRecordId = 0;
-                if (Failed(valueIt->second.AsRecordId(&targetRecordId)))
+                if (Failed(ResolveRelationTargetRecordId(column, relationValue, &targetRecordId)))
                 {
                     continue;
                 }
@@ -7809,14 +8283,21 @@ namespace StableCore::Storage
                             continue;
                         }
 
-                        const auto valueIt = candidateData->values.find(column.name);
-                        if (valueIt == candidateData->values.end())
+                        SCRecordPtr record;
+                        if (Failed(table->GetRecord(candidateId, record)) || !record)
+                        {
+                            continue;
+                        }
+
+                        SCValue relationValue;
+                        if (Failed(record->GetValue(column.name.c_str(), &relationValue)))
                         {
                             continue;
                         }
 
                         RecordId referencedId = 0;
-                        if (Succeeded(valueIt->second.AsRecordId(&referencedId)) && referencedId == targetRecordId)
+                        if (Succeeded(ResolveRelationTargetRecordId(column, relationValue, &referencedId)) &&
+                            referencedId == targetRecordId)
                         {
                             outRecords->push_back(ReverseReferenceRecord{targetTable,
                                                                          targetRecordId,
@@ -7906,14 +8387,20 @@ namespace StableCore::Storage
                             continue;
                         }
 
-                        const auto valueIt = recordData->values.find(column.name);
-                        if (valueIt == recordData->values.end())
+                        SCRecordPtr record;
+                        if (Failed(table->GetRecord(recordId, record)) || !record)
+                        {
+                            continue;
+                        }
+
+                        SCValue relationValue;
+                        if (Failed(record->GetValue(column.name.c_str(), &relationValue)))
                         {
                             continue;
                         }
 
                         RecordId targetId = 0;
-                        if (Failed(valueIt->second.AsRecordId(&targetId)))
+                        if (Failed(ResolveRelationTargetRecordId(column, relationValue, &targetId)))
                         {
                             continue;
                         }
@@ -8140,6 +8627,12 @@ namespace StableCore::Storage
                         continue;
                     }
 
+                    SCValue targetStoredValue;
+                    if (Failed(ResolveRelationStoredValue(column, recordId, &targetStoredValue)))
+                    {
+                        continue;
+                    }
+
                     for (const auto& [candidateId, candidateData] : table->Records())
                     {
                         if (candidateData == nullptr || candidateData->state == RecordState::Deleted)
@@ -8147,14 +8640,19 @@ namespace StableCore::Storage
                             continue;
                         }
 
-                        const auto valueIt = candidateData->values.find(column.name);
-                        if (valueIt == candidateData->values.end())
+                        SCRecordPtr record;
+                        if (Failed(table->GetRecord(candidateId, record)) || !record)
                         {
                             continue;
                         }
 
-                        RecordId referencedId = 0;
-                        if (Succeeded(valueIt->second.AsRecordId(&referencedId)) && referencedId == recordId)
+                        SCValue relationValue;
+                        if (Failed(record->GetValue(column.name.c_str(), &relationValue)))
+                        {
+                            continue;
+                        }
+
+                        if (relationValue == targetStoredValue)
                         {
                             return true;
                         }
@@ -8187,10 +8685,11 @@ namespace StableCore::Storage
                 "column_kind, nullable_flag, editable_flag,"
                 " user_defined_flag, indexed_flag, "
                 "participates_in_calc_flag, unit, reference_table,"
+                " reference_storage_column, reference_display_column,"
                 " default_kind, default_int64, default_double, "
                 "default_bool, default_text, default_blob)"
                 " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
-                "?);");
+                "?, ?, ?);");
             if (rowId > 0)
             {
                 stmt.BindInt64(1, rowId);
@@ -8200,7 +8699,26 @@ namespace StableCore::Storage
             }
             stmt.BindInt64(2, schema->TableRowId());
             stmt.BindText(3, def.name);
-            BindColumnDefForStorage(stmt, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, def);
+            BindColumnDefForStorage(stmt,
+                                    4,
+                                    5,
+                                    6,
+                                    7,
+                                    8,
+                                    9,
+                                    10,
+                                    11,
+                                    12,
+                                    13,
+                                    14,
+                                    15,
+                                    16,
+                                    17,
+                                    18,
+                                    19,
+                                    20,
+                                    21,
+                                    def);
             const ErrorCode rc = stmt.Step();
             if (Failed(rc))
             {
@@ -8252,9 +8770,10 @@ namespace StableCore::Storage
                 " display_name = ?, value_kind = ?, column_kind = ?, "
                 "nullable_flag = ?, editable_flag = ?, user_defined_flag = ?, "
                 "indexed_flag = ?, participates_in_calc_flag = ?, unit = ?, "
-                "reference_table = ?, default_kind = ?, default_int64 = ?, "
-                "default_double = ?, default_bool = ?, default_text = ?, "
-                "default_blob = ? "
+                "reference_table = ?, reference_storage_column = ?, "
+                "reference_display_column = ?, default_kind = ?, "
+                "default_int64 = ?, default_double = ?, default_bool = ?, "
+                "default_text = ?, default_blob = ? "
                 "WHERE table_id = ? AND column_name = ?;");
             stmt.BindText(1, def.displayName);
             stmt.BindInt(2, ToSqliteValueKind(def.valueKind));
@@ -8266,9 +8785,11 @@ namespace StableCore::Storage
             stmt.BindInt(8, def.participatesInCalc ? 1 : 0);
             stmt.BindText(9, def.unit);
             stmt.BindText(10, def.referenceTable);
-            BindValueForStorage(stmt, 11, 12, 13, 14, 15, 16, def.defaultValue);
-            stmt.BindInt64(17, schema->TableRowId());
-            stmt.BindText(18, def.name);
+            stmt.BindText(11, def.referenceStorageColumn);
+            stmt.BindText(12, def.referenceDisplayColumn);
+            BindValueForStorage(stmt, 13, 14, 15, 16, 17, 18, def.defaultValue);
+            stmt.BindInt64(19, schema->TableRowId());
+            stmt.BindText(20, def.name);
             const ErrorCode rc = stmt.Step();
             if (Failed(rc))
             {
@@ -9858,16 +10379,18 @@ namespace StableCore::Storage
                 "column_rowid, old_display_name, old_value_kind, "
                 "old_column_kind, old_nullable, old_editable, "
                 "old_user_defined, old_indexed, old_participates_in_calc, "
-                "old_unit, old_reference_table, old_default_kind, "
+                "old_unit, old_reference_table, old_reference_storage_column, "
+                "old_reference_display_column, old_default_kind, "
                 "old_default_int64, old_default_double, old_default_bool, "
                 "old_default_text, old_default_blob, new_display_name, new_value_kind, "
                 "new_column_kind, new_nullable, new_editable, "
                 "new_user_defined, new_indexed, new_participates_in_calc, "
-                "new_unit, new_reference_table, new_default_kind, "
+                "new_unit, new_reference_table, new_reference_storage_column, "
+                "new_reference_display_column, new_default_kind, "
                 "new_default_int64, new_default_double, new_default_bool, "
                 "new_default_text, new_default_blob)"
                 " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
-                "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);");
+                "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);");
 
             for (const auto& entry : tx.entries)
             {
@@ -9884,9 +10407,11 @@ namespace StableCore::Storage
                 stmt.BindText(5, entry.fieldName);
                 stmt.BindInt64(6, entry.columnRowId);
                 BindColumnDefForStorage(
-                    stmt, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, entry.oldColumn);
+                    stmt, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
+                    entry.oldColumn);
                 BindColumnDefForStorage(
-                    stmt, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, entry.newColumn);
+                    stmt, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42,
+                    entry.newColumn);
                 stmt.Step();
                 stmt.Reset();
             }
@@ -9964,31 +10489,6 @@ namespace StableCore::Storage
                 }
             };
 
-            const auto upgradeDatabaseIfNeeded = [](ISCDatabase* database) -> ErrorCode {
-                if (database == nullptr)
-                {
-                    return SC_E_POINTER;
-                }
-
-                SCVersionGraph versionGraph;
-                const ErrorCode graphRc = BuildDefaultVersionGraph(&versionGraph);
-                if (Failed(graphRc))
-                {
-                    return graphRc;
-                }
-
-                const std::int32_t currentVersion = database->GetSchemaVersion();
-                if (currentVersion > versionGraph.latestSupportedVersion)
-                {
-                    return SC_E_NOTIMPL;
-                }
-                if (currentVersion == versionGraph.latestSupportedVersion)
-                {
-                    return SC_OK;
-                }
-                return SC_E_NOTIMPL;
-            };
-
             if (options.openMode == SCDatabaseOpenMode::ReadOnly)
             {
                 SCOpenDatabaseOptions readOnlyOptions = options;
@@ -10001,37 +10501,13 @@ namespace StableCore::Storage
                     return rc;
                 }
 
-                SCVersionGraph versionGraph;
-                rc = BuildDefaultVersionGraph(&versionGraph);
-                if (Failed(rc))
-                {
-                    if (auto* sqliteDb = dynamic_cast<SqliteDatabase*>(readOnlyDatabase.Get()))
-                    {
-                        sqliteDb->SuppressCleanShutdownOnDestroy();
-                    }
-                    return rc;
-                }
-
                 const std::int32_t currentVersion = readOnlyDatabase->GetSchemaVersion();
-                if (currentVersion > versionGraph.latestSupportedVersion)
+                if (currentVersion != GetLatestSupportedSchemaVersion())
                 {
-                    if (auto* sqliteDb = dynamic_cast<SqliteDatabase*>(readOnlyDatabase.Get()))
-                    {
-                        sqliteDb->SuppressCleanShutdownOnDestroy();
-                    }
                     return SC_E_NOTIMPL;
                 }
-                if (currentVersion == versionGraph.latestSupportedVersion)
-                {
-                    outDatabase = std::move(readOnlyDatabase);
-                    return SC_OK;
-                }
-
-                if (auto* sqliteDb = dynamic_cast<SqliteDatabase*>(readOnlyDatabase.Get()))
-                {
-                    sqliteDb->SuppressCleanShutdownOnDestroy();
-                }
-                return SC_E_NOTIMPL;
+                outDatabase = std::move(readOnlyDatabase);
+                return SC_OK;
             }
 
             SCDbPtr database;
@@ -10041,14 +10517,19 @@ namespace StableCore::Storage
                 return rc;
             }
 
-            rc = upgradeDatabaseIfNeeded(database.Get());
-            if (Failed(rc))
+            const std::int32_t currentVersion = database->GetSchemaVersion();
+            const std::int32_t targetVersion = GetLatestSupportedSchemaVersion();
+            if (currentVersion == targetVersion)
             {
-                if (auto* sqliteDb = dynamic_cast<SqliteDatabase*>(database.Get()))
-                {
-                    sqliteDb->SuppressCleanShutdownOnDestroy();
-                }
-                return rc;
+                outDatabase = std::move(database);
+                return SC_OK;
+            }
+
+            SCUpgradeResult upgradeResult;
+            const ErrorCode upgradeRc = UpgradeOpenedSqliteDatabase(database.Get(), &upgradeResult);
+            if (Failed(upgradeRc))
+            {
+                return upgradeRc;
             }
 
             outDatabase = std::move(database);
@@ -10056,6 +10537,166 @@ namespace StableCore::Storage
         } catch (...)
         {
             outDatabase.Reset();
+            return SC_E_FAIL;
+        }
+    }
+
+    ErrorCode UpgradeFileDatabase(const wchar_t* path, SCDbPtr& outDatabase, SCUpgradeResult* outResult)
+    {
+        if (path == nullptr)
+        {
+            return SC_E_POINTER;
+        }
+
+        outDatabase.Reset();
+        if (outResult != nullptr)
+        {
+            *outResult = SCUpgradeResult{};
+        }
+
+        try
+        {
+            const std::filesystem::path filePath(path);
+            if (!std::filesystem::exists(filePath))
+            {
+                if (outResult != nullptr)
+                {
+                    outResult->status = SCUpgradeStatus::Unsupported;
+                    outResult->failureReason = L"Database file does not exist.";
+                }
+                return SC_E_INVALIDARG;
+            }
+
+            {
+                sqlite3* probeDb = nullptr;
+                const std::string probePath = ToUtf8(std::wstring{path});
+                if (sqlite3_open_v2(probePath.c_str(), &probeDb, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK)
+                {
+                    if (probeDb != nullptr)
+                    {
+                        sqlite3_close(probeDb);
+                    }
+                    if (outResult != nullptr)
+                    {
+                        outResult->status = SCUpgradeStatus::Unsupported;
+                        outResult->failureReason = L"Database file could not be opened for inspection.";
+                    }
+                    return SC_E_INVALIDARG;
+                }
+
+                bool hasMetadataTable = false;
+                sqlite3_stmt* probeStmt = nullptr;
+                if (sqlite3_prepare_v2(
+                        probeDb,
+                        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'metadata' LIMIT 1;",
+                        -1,
+                        &probeStmt,
+                        nullptr) == SQLITE_OK)
+                {
+                    hasMetadataTable = sqlite3_step(probeStmt) == SQLITE_ROW;
+                }
+                if (probeStmt != nullptr)
+                {
+                    sqlite3_finalize(probeStmt);
+                }
+                sqlite3_close(probeDb);
+
+                if (!hasMetadataTable)
+                {
+                    if (outResult != nullptr)
+                    {
+                        outResult->status = SCUpgradeStatus::Unsupported;
+                        outResult->failureReason = L"Database file does not contain the metadata table.";
+                    }
+                    return SC_E_INVALIDARG;
+                }
+            }
+
+            SCOpenDatabaseOptions openOptions;
+            openOptions.openMode = SCDatabaseOpenMode::Normal;
+
+            SCDbPtr database;
+            const ErrorCode openRc = [&]() -> ErrorCode {
+                try
+                {
+                    database = SCMakeRef<SqliteDatabase>(std::wstring{path}, openOptions);
+                    EnsureSqliteQueryDispatchRegistered(database.Get());
+                    return SC_OK;
+                } catch (...)
+                {
+                    if (database.Get() != nullptr)
+                    {
+                        if (auto* sqliteDb = dynamic_cast<SqliteDatabase*>(database.Get()))
+                        {
+                            sqliteDb->SuppressCleanShutdownOnDestroy();
+                        }
+                    }
+                    database.Reset();
+                    return SC_E_FAIL;
+                }
+            }();
+            if (Failed(openRc))
+            {
+                if (outResult != nullptr)
+                {
+                    outResult->status = SCUpgradeStatus::Failed;
+                    outResult->failureReason = L"Failed to open database for upgrade.";
+                }
+                return openRc;
+            }
+
+            auto* sqliteDb = dynamic_cast<SqliteDatabase*>(database.Get());
+            if (sqliteDb == nullptr)
+            {
+                if (outResult != nullptr)
+                {
+                    outResult->status = SCUpgradeStatus::Unsupported;
+                    outResult->failureReason = L"Database backend does not support upgrade.";
+                }
+                return SC_E_NOTIMPL;
+            }
+
+            const std::int32_t currentVersion = sqliteDb->GetSchemaVersion();
+            const std::int32_t targetVersion = GetLatestSupportedSchemaVersion();
+            if (currentVersion == targetVersion)
+            {
+                if (outResult != nullptr)
+                {
+                    outResult->status = SCUpgradeStatus::NotRequired;
+                    outResult->sourceVersion = currentVersion;
+                    outResult->targetVersion = targetVersion;
+                    outResult->failureReason = L"Database schema is already up to date.";
+                }
+                outDatabase = std::move(database);
+                return SC_OK;
+            }
+
+            SCUpgradeResult upgradeResult;
+            const ErrorCode upgradeRc = UpgradeOpenedSqliteDatabase(database.Get(), &upgradeResult);
+            if (Failed(upgradeRc))
+            {
+                if (outResult != nullptr)
+                {
+                    *outResult = upgradeResult;
+                }
+                outDatabase.Reset();
+                return upgradeRc;
+            }
+
+            if (outResult != nullptr)
+            {
+                *outResult = upgradeResult;
+            }
+            outDatabase = std::move(database);
+            return SC_OK;
+        } catch (...)
+        {
+            outDatabase.Reset();
+            if (outResult != nullptr)
+            {
+                outResult->status = SCUpgradeStatus::Failed;
+                outResult->failureReason = L"Unexpected failure while upgrading database.";
+            }
             return SC_E_FAIL;
         }
     }

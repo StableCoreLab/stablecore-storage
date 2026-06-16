@@ -8,40 +8,7 @@ namespace StableCore::Storage
     {
 
         constexpr std::int32_t kMinimumSupportedSchemaVersion = 1;
-
-        std::vector<SCMigrationStep> GetDefaultMigrationSteps()
-        {
-            return {
-                SCMigrationStep{
-                    1,
-                    2,
-                    L"sqlite-schema-v2",
-                    L"Add startup diagnostics table and field-value record "
-                    L"lookup index.",
-                },
-                SCMigrationStep{
-                    2,
-                    3,
-                    L"sqlite-schema-v3",
-                    L"Persist table-level metadata, primary keys and "
-                    L"indexes.",
-                },
-                SCMigrationStep{
-                    3,
-                    4,
-                    L"sqlite-schema-v4",
-                    L"Add binary storage columns for field values, schema "
-                    L"defaults and journal entries.",
-                },
-                SCMigrationStep{
-                    4,
-                    5,
-                    L"sqlite-schema-v5",
-                    L"Add logical composite query-index metadata and entry "
-                    L"storage.",
-                },
-            };
-        }
+        constexpr std::int32_t kLatestSupportedSchemaVersion = 6;
 
         std::int32_t ResolveLatestSupportedVersion(const std::vector<SCMigrationStep>& steps)
         {
@@ -130,12 +97,12 @@ namespace StableCore::Storage
 
     std::int32_t GetLatestSupportedSchemaVersion() noexcept
     {
-        return ResolveLatestSupportedVersion(GetDefaultMigrationSteps());
+        return kLatestSupportedSchemaVersion;
     }
 
     ErrorCode BuildDefaultVersionGraph(SCVersionGraph* outGraph)
     {
-        return BuildVersionGraph(0, GetLatestSupportedSchemaVersion(), GetDefaultMigrationSteps(), outGraph);
+        return BuildVersionGraph(0, kLatestSupportedSchemaVersion, {}, outGraph);
     }
 
     ErrorCode BuildVersionGraph(std::int32_t currentVersion,

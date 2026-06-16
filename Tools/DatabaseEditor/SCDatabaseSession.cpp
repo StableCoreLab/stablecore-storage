@@ -408,6 +408,66 @@ namespace StableCore::Storage::Editor
             }
         }
 
+        QVariant ValueToVariant(const sc::SCValue& SCValue)
+        {
+            switch (SCValue.GetKind())
+            {
+                case sc::ValueKind::Null:
+                    return QVariant{};
+                case sc::ValueKind::Int64: {
+                    std::int64_t v = 0;
+                    if (SCValue.AsInt64(&v) == sc::SC_OK)
+                    {
+                        return QVariant::fromValue<qlonglong>(v);
+                    }
+                    break;
+                }
+                case sc::ValueKind::Double: {
+                    double v = 0.0;
+                    if (SCValue.AsDouble(&v) == sc::SC_OK)
+                    {
+                        return v;
+                    }
+                    break;
+                }
+                case sc::ValueKind::Bool: {
+                    bool v = false;
+                    if (SCValue.AsBool(&v) == sc::SC_OK)
+                    {
+                        return v;
+                    }
+                    break;
+                }
+                case sc::ValueKind::String: {
+                    std::wstring v;
+                    if (SCValue.AsStringCopy(&v) == sc::SC_OK)
+                    {
+                        return ToQString(v);
+                    }
+                    break;
+                }
+                case sc::ValueKind::RecordId: {
+                    sc::RecordId v = 0;
+                    if (SCValue.AsRecordId(&v) == sc::SC_OK)
+                    {
+                        return QVariant::fromValue<qlonglong>(v);
+                    }
+                    break;
+                }
+                case sc::ValueKind::Enum: {
+                    std::wstring v;
+                    if (SCValue.AsEnumCopy(&v) == sc::SC_OK)
+                    {
+                        return ToQString(v);
+                    }
+                    break;
+                }
+                default:
+                    break;
+            }
+            return QVariant{};
+        }
+
         QString PickRecordLabel(
             const QVector<QPair<QString, QString>>& previewFields,
             sc::RecordId recordId)
@@ -1275,7 +1335,7 @@ namespace StableCore::Storage::Editor
         }
 
         return ApplyColumnMutation(
-            L"Add Column",
+            L"添加字段",
             [this, column](sc::SCSchemaPtr& schema,
                            sc::SCComputedTableViewPtr* outPreviewView,
                            QString* outError) -> sc::ErrorCode {
@@ -1339,7 +1399,7 @@ namespace StableCore::Storage::Editor
         }
 
         return ApplyColumnMutation(
-            L"Remove Column",
+            L"删除字段",
             [this, requestedNameW](sc::SCSchemaPtr& schema,
                                    sc::SCComputedTableViewPtr* outPreviewView,
                                    QString* outError) -> sc::ErrorCode {
@@ -1415,7 +1475,7 @@ namespace StableCore::Storage::Editor
             return false;
         }
         return ApplyColumnMutation(
-            L"Edit Column",
+            L"编辑字段",
             [this, column](sc::SCSchemaPtr& schema,
                            sc::SCComputedTableViewPtr* outPreviewView,
                            QString* outError) -> sc::ErrorCode {
@@ -2169,6 +2229,7 @@ namespace StableCore::Storage::Editor
 
     bool SCDatabaseSession::BuildRelationCandidates(
         const QString& targetTableName,
+        const sc::SCColumnDef& relationColumn,
         QVector<RelationCandidate>* outCandidates, QString* outError) const
     {
         if (outCandidates == nullptr)
@@ -2256,12 +2317,55 @@ namespace StableCore::Storage::Editor
         {
             RelationCandidate candidate;
             candidate.recordId = record->GetId();
-            candidate.previewFields.push_back(
-                qMakePair(QStringLiteral("RecordId"),
-                          QString::number(candidate.recordId)));
+            candidate.previewFields.push_back(qMakePair(
+                QStringLiteral("RecordId"),
+                QString::number(candidate.recordId)));
+
+            const QString storageColumnName =
+                relationColumn.referenceStorageColumn.empty()
+                    ? QString()
+                    : ToQString(relationColumn.referenceStorageColumn);
+            const QString displayColumnName =
+                relationColumn.referenceDisplayColumn.empty()
+                    ? storageColumnName
+                    : ToQString(relationColumn.referenceDisplayColumn);
+
+            if (storageColumnName.isEmpty())
+            {
+                candidate.previewFields.push_back(qMakePair(
+                    QStringLiteral("StoredValue"),
+                    QString::number(candidate.recordId)));
+            } else
+            {
+                sc::SCValue storageValue;
+                if (record->GetValue(storageColumnName.toStdWString().c_str(),
+                                     &storageValue) == sc::SC_OK)
+                {
+                    candidate.previewFields.push_back(qMakePair(
+                        storageColumnName, ValueToDisplayString(storageValue)));
+                }
+            }
+
+            if (!displayColumnName.isEmpty() &&
+                displayColumnName.compare(storageColumnName, Qt::CaseInsensitive) != 0)
+            {
+                sc::SCValue displayValue;
+                if (record->GetValue(displayColumnName.toStdWString().c_str(),
+                                     &displayValue) == sc::SC_OK)
+                {
+                    candidate.previewFields.push_back(qMakePair(
+                        displayColumnName, ValueToDisplayString(displayValue)));
+                }
+            }
 
             for (const sc::SCColumnDef& column : columns)
             {
+                const QString columnName = ToQString(column.name);
+                if (columnName.compare(storageColumnName, Qt::CaseInsensitive) == 0 ||
+                    columnName.compare(displayColumnName, Qt::CaseInsensitive) == 0)
+                {
+                    continue;
+                }
                 if (column.valueKind == sc::ValueKind::Null)
                 {
                     continue;
@@ -2280,13 +2384,11 @@ namespace StableCore::Storage::Editor
                 }
 
                 candidate.previewFields.push_back(qMakePair(
-                    ToQString(column.displayName.empty() ? column.name
-                                                         : column.displayName),
+                    ToQString(column.displayName.empty() ? column.name : column.displayName),
                     ValueToDisplayString(SCValue)));
             }
 
-            candidate.label =
-                PickRecordLabel(candidate.previewFields, candidate.recordId);
+            candidate.label = PickRecordLabel(candidate.previewFields, candidate.recordId);
             outCandidates->push_back(candidate);
         }
 
@@ -2488,6 +2590,152 @@ namespace StableCore::Storage::Editor
                 "The selected computed column no longer exists.");
         }
         return false;
+    }
+
+    bool SCDatabaseSession::GetTableColumnNames(const QString& tableName,
+                                                QStringList* outColumns,
+                                                QString* outError) const
+    {
+        if (outColumns == nullptr)
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("Output columns is null.");
+            }
+            return false;
+        }
+        outColumns->clear();
+
+        if (!db_)
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("未打开数据库。");
+            }
+            return false;
+        }
+
+        sc::SCTablePtr table;
+        const sc::ErrorCode tableRc =
+            db_->GetTable(tableName.toStdWString().c_str(), table);
+        if (sc::Failed(tableRc))
+        {
+            if (outError != nullptr)
+            {
+                *outError = ErrorToString(tableRc);
+            }
+            return false;
+        }
+
+        sc::SCSchemaPtr schema;
+        const sc::ErrorCode schemaRc = table->GetSchema(schema);
+        if (sc::Failed(schemaRc))
+        {
+            if (outError != nullptr)
+            {
+                *outError = ErrorToString(schemaRc);
+            }
+            return false;
+        }
+
+        std::int32_t columnCount = 0;
+        const sc::ErrorCode countRc = schema->GetColumnCount(&columnCount);
+        if (sc::Failed(countRc))
+        {
+            if (outError != nullptr)
+            {
+                *outError = ErrorToString(countRc);
+            }
+            return false;
+        }
+
+        for (std::int32_t index = 0; index < columnCount; ++index)
+        {
+            sc::SCColumnDef column;
+            const sc::ErrorCode columnRc = schema->GetColumn(index, &column);
+            if (sc::Failed(columnRc))
+            {
+                if (outError != nullptr)
+                {
+                    *outError = ErrorToString(columnRc);
+                }
+                return false;
+            }
+            if (!column.name.empty())
+            {
+                outColumns->push_back(ToQString(column.name));
+            }
+        }
+
+        return true;
+    }
+
+    bool SCDatabaseSession::GetTableSchemaSnapshot(
+        const QString& tableName, sc::SCTableSchemaSnapshot* outSnapshot,
+        QString* outError) const
+    {
+        if (outSnapshot == nullptr)
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("Output snapshot is null.");
+            }
+            return false;
+        }
+
+        outSnapshot->columns.clear();
+        outSnapshot->constraints.clear();
+        outSnapshot->indexes.clear();
+        outSnapshot->table = sc::SCTableDef{};
+
+        if (!db_)
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("未打开数据库。");
+            }
+            return false;
+        }
+
+        sc::SCTablePtr table;
+        const sc::ErrorCode tableRc =
+            db_->GetTable(tableName.toStdWString().c_str(), table);
+        if (sc::Failed(tableRc))
+        {
+            if (outError != nullptr)
+            {
+                *outError = ErrorToString(tableRc);
+            }
+            return false;
+        }
+
+        sc::SCSchemaPtr schema;
+        const sc::ErrorCode schemaRc = table->GetSchema(schema);
+        if (sc::Failed(schemaRc))
+        {
+            if (outError != nullptr)
+            {
+                *outError = ErrorToString(schemaRc);
+            }
+            return false;
+        }
+
+        const sc::ErrorCode snapshotRc = schema->GetSchemaSnapshot(outSnapshot);
+        if (sc::Failed(snapshotRc))
+        {
+            if (outError != nullptr)
+            {
+                *outError = ErrorToString(snapshotRc);
+            }
+            return false;
+        }
+
+        if (outSnapshot->table.name.empty())
+        {
+            outSnapshot->table.name = tableName.toStdWString();
+        }
+
+        return true;
     }
 
     bool SCDatabaseSession::GetSessionComputedColumn(
@@ -2968,24 +3216,362 @@ namespace StableCore::Storage::Editor
 
         for (const sc::SCColumnDef& column : columns)
         {
-            sc::SCValue SCValue;
-            rc = record->GetValue(column.name.c_str(), &SCValue);
-            if (rc == sc::SC_E_VALUE_IS_NULL)
+            QVariant displayValue;
+            if (!GetCellDisplayValue(recordId, ToQString(column.name),
+                                     &displayValue, outError))
             {
-                outFields->push_back(
-                    qMakePair(ToQString(column.name), QString()));
-                continue;
+                return false;
             }
-            if (sc::Failed(rc))
-            {
-                outFields->push_back(qMakePair(ToQString(column.name),
-                                               QStringLiteral("<error>")));
-                continue;
-            }
-            outFields->push_back(qMakePair(ToQString(column.name),
-                                           ValueToDisplayString(SCValue)));
+            outFields->push_back(
+                qMakePair(ToQString(column.name), displayValue.toString()));
         }
 
+        return true;
+    }
+
+    bool SCDatabaseSession::GetRelationStoredValue(
+        sc::RecordId recordId, const sc::SCColumnDef& relationColumn,
+        QVariant* outValue, QString* outError) const
+    {
+        if (outValue == nullptr)
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("Output value is null.");
+            }
+            return false;
+        }
+        outValue->clear();
+
+        if (relationColumn.referenceTable.empty())
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("关系字段缺少引用表。");
+            }
+            return false;
+        }
+
+        sc::SCTablePtr table;
+        const sc::ErrorCode tableRc =
+            db_->GetTable(relationColumn.referenceTable.c_str(), table);
+        if (sc::Failed(tableRc))
+        {
+            if (outError != nullptr)
+            {
+                *outError = ErrorToString(tableRc);
+            }
+            return false;
+        }
+
+        sc::SCRecordPtr record;
+        const sc::ErrorCode recordRc = table->GetRecord(recordId, record);
+        if (sc::Failed(recordRc))
+        {
+            if (outError != nullptr)
+            {
+                *outError = ErrorToString(recordRc);
+            }
+            return false;
+        }
+
+        if (relationColumn.referenceStorageColumn.empty())
+        {
+            *outValue = QVariant::fromValue<qlonglong>(recordId);
+            return true;
+        }
+
+        sc::SCValue value;
+        const sc::ErrorCode valueRc =
+            record->GetValue(relationColumn.referenceStorageColumn.c_str(), &value);
+        if (valueRc == sc::SC_E_VALUE_IS_NULL)
+        {
+            return true;
+        }
+        if (sc::Failed(valueRc))
+        {
+            if (outError != nullptr)
+            {
+                *outError = ErrorToString(valueRc);
+            }
+            return false;
+        }
+
+        *outValue = ValueToVariant(value);
+        return true;
+    }
+
+    bool SCDatabaseSession::GetCellDisplayValue(
+        sc::RecordId recordId, const QString& columnName, QVariant* outValue,
+        QString* outError) const
+    {
+        if (outValue == nullptr)
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("Output value is null.");
+            }
+            return false;
+        }
+        outValue->clear();
+
+        if (!currentTable_)
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("No table is selected.");
+            }
+            return false;
+        }
+
+        sc::SCSchemaPtr schema;
+        const sc::ErrorCode schemaRc = currentTable_->GetSchema(schema);
+        if (sc::Failed(schemaRc))
+        {
+            if (outError != nullptr)
+            {
+                *outError = ErrorToString(schemaRc);
+            }
+            return false;
+        }
+
+        sc::SCColumnDef column;
+        const sc::ErrorCode columnRc =
+            schema->FindColumn(columnName.toStdWString().c_str(), &column);
+        if (sc::Failed(columnRc))
+        {
+            if (outError != nullptr)
+            {
+                *outError = ErrorToString(columnRc);
+            }
+            return false;
+        }
+
+        sc::SCRecordPtr record;
+        const sc::ErrorCode recordRc = currentTable_->GetRecord(recordId, record);
+        if (sc::Failed(recordRc))
+        {
+            if (outError != nullptr)
+            {
+                *outError = ErrorToString(recordRc);
+            }
+            return false;
+        }
+
+        if (column.columnKind != sc::ColumnKind::Relation ||
+            column.referenceTable.empty() ||
+            column.referenceStorageColumn.empty())
+        {
+            sc::SCValue value;
+            const sc::ErrorCode valueRc =
+                record->GetValue(column.name.c_str(), &value);
+            if (valueRc == sc::SC_E_VALUE_IS_NULL)
+            {
+                return true;
+            }
+            if (sc::Failed(valueRc))
+            {
+                if (outError != nullptr)
+                {
+                    *outError = ErrorToString(valueRc);
+                }
+                return false;
+            }
+
+            *outValue = ValueToVariant(value);
+            return true;
+        }
+
+        sc::SCValue storedValue;
+        const sc::ErrorCode storedRc =
+            record->GetValue(column.name.c_str(), &storedValue);
+        if (storedRc == sc::SC_E_VALUE_IS_NULL)
+        {
+            return true;
+        }
+        if (sc::Failed(storedRc))
+        {
+            if (outError != nullptr)
+            {
+                *outError = ErrorToString(storedRc);
+            }
+            return false;
+        }
+
+        const QString storedText = ValueToDisplayString(storedValue);
+
+        sc::SCTablePtr targetTable;
+        const sc::ErrorCode tableRc =
+            db_->GetTable(column.referenceTable.c_str(), targetTable);
+        if (sc::Failed(tableRc))
+        {
+            if (outError != nullptr)
+            {
+                *outError = ErrorToString(tableRc);
+            }
+            return false;
+        }
+
+        const QString storageColumnName =
+            QString::fromStdWString(column.referenceStorageColumn);
+        const QString displayColumnName = column.referenceDisplayColumn.empty()
+                                              ? storageColumnName
+                                              : QString::fromStdWString(column.referenceDisplayColumn);
+
+        bool found = false;
+        sc::SCRecordPtr targetRecord;
+        sc::SCRecordCursorPtr cursor;
+        const sc::ErrorCode cursorRc = targetTable->EnumerateRecords(cursor);
+        if (sc::Failed(cursorRc))
+        {
+            if (outError != nullptr)
+            {
+                *outError = ErrorToString(cursorRc);
+            }
+            return false;
+        }
+
+        while (cursor->Next(targetRecord) == sc::SC_OK && targetRecord)
+        {
+            sc::SCValue candidateStoredValue;
+            const sc::ErrorCode candidateStoredRc =
+                targetRecord->GetValue(storageColumnName.toStdWString().c_str(),
+                                       &candidateStoredValue);
+            if (candidateStoredRc == sc::SC_E_VALUE_IS_NULL)
+            {
+                continue;
+            }
+            if (sc::Failed(candidateStoredRc))
+            {
+                continue;
+            }
+
+            if (candidateStoredValue != storedValue)
+            {
+                continue;
+            }
+
+            found = true;
+            break;
+        }
+
+        if (!found)
+        {
+            return false;
+        }
+
+        if (displayColumnName.compare(storageColumnName, Qt::CaseInsensitive) == 0)
+        {
+            *outValue = ValueToVariant(storedValue);
+            return true;
+        }
+
+        sc::SCValue displayValue;
+        const sc::ErrorCode displayRc =
+            targetRecord->GetValue(displayColumnName.toStdWString().c_str(), &displayValue);
+        if (displayRc == sc::SC_E_VALUE_IS_NULL)
+        {
+            *outValue = storedText;
+            return true;
+        }
+        if (sc::Failed(displayRc))
+        {
+            if (outError != nullptr)
+            {
+                *outError = ErrorToString(displayRc);
+            }
+            return false;
+        }
+
+        const QString displayText = ValueToDisplayString(displayValue);
+        if (displayText.isEmpty())
+        {
+            *outValue = storedText;
+            return true;
+        }
+        if (storedText.isEmpty())
+        {
+            *outValue = displayText;
+            return true;
+        }
+        *outValue = displayText + QStringLiteral(" (") + storedText +
+                    QStringLiteral(")");
+        return true;
+    }
+
+    bool SCDatabaseSession::GetCellStoredValue(
+        sc::RecordId recordId, const QString& columnName, QVariant* outValue,
+        QString* outError) const
+    {
+        if (outValue == nullptr)
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("Output value is null.");
+            }
+            return false;
+        }
+        outValue->clear();
+
+        if (!currentTable_)
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("No table is selected.");
+            }
+            return false;
+        }
+
+        sc::SCSchemaPtr schema;
+        const sc::ErrorCode schemaRc = currentTable_->GetSchema(schema);
+        if (sc::Failed(schemaRc))
+        {
+            if (outError != nullptr)
+            {
+                *outError = ErrorToString(schemaRc);
+            }
+            return false;
+        }
+
+        sc::SCColumnDef column;
+        const sc::ErrorCode columnRc =
+            schema->FindColumn(columnName.toStdWString().c_str(), &column);
+        if (sc::Failed(columnRc))
+        {
+            if (outError != nullptr)
+            {
+                *outError = ErrorToString(columnRc);
+            }
+            return false;
+        }
+
+        sc::SCRecordPtr record;
+        const sc::ErrorCode recordRc = currentTable_->GetRecord(recordId, record);
+        if (sc::Failed(recordRc))
+        {
+            if (outError != nullptr)
+            {
+                *outError = ErrorToString(recordRc);
+            }
+            return false;
+        }
+
+        sc::SCValue value;
+        const sc::ErrorCode valueRc = record->GetValue(column.name.c_str(), &value);
+        if (valueRc == sc::SC_E_VALUE_IS_NULL)
+        {
+            return true;
+        }
+        if (sc::Failed(valueRc))
+        {
+            if (outError != nullptr)
+            {
+                *outError = ErrorToString(valueRc);
+            }
+            return false;
+        }
+
+        *outValue = ValueToVariant(value);
         return true;
     }
 
@@ -3608,6 +4194,10 @@ namespace StableCore::Storage::Editor
 
     QString SCDatabaseSession::ErrorToString(sc::ErrorCode error) const
     {
+        if (error == sc::SC_E_NOTIMPL)
+        {
+            return QStringLiteral("当前版本尚未支持该数据库格式的自动升级。");
+        }
         return QStringLiteral("Storage error: 0x") +
                QString::number(static_cast<qulonglong>(error), 16);
     }

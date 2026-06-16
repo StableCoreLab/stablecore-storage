@@ -49,6 +49,293 @@ TEST_F(FileDbTest, SchemaRejectsInvalidReferenceTableUsage)
     EXPECT_EQ(schema->AddColumn(relationWithoutRef), sc::SC_E_SCHEMA_VIOLATION);
 }
 
+// 新增测试：关系字段支持显式存储列和显示列
+TEST_F(FileDbTest, SchemaAcceptsRelationStorageAndDisplayColumns)
+{
+    sc::SCTablePtr floorTable;
+    EXPECT_EQ(db()->CreateTable(L"Floor", floorTable), sc::SC_OK);
+
+    sc::SCSchemaPtr floorSchema;
+    EXPECT_EQ(floorTable->GetSchema(floorSchema), sc::SC_OK);
+
+    sc::SCColumnDef code;
+    code.name = L"Code";
+    code.displayName = L"Code";
+    code.valueKind = sc::ValueKind::String;
+    code.nullable = false;
+    code.defaultValue = sc::SCValue::FromString(L"");
+    EXPECT_EQ(floorSchema->AddColumn(code), sc::SC_OK);
+
+    sc::SCConstraintDef codeUnique;
+    codeUnique.kind = sc::SCConstraintKind::Unique;
+    codeUnique.name = L"uq_Floor_Code";
+    codeUnique.columns.push_back(L"Code");
+    EXPECT_EQ(floorSchema->AddConstraint(codeUnique), sc::SC_OK);
+
+    sc::SCColumnDef name;
+    name.name = L"Name";
+    name.displayName = L"Name";
+    name.valueKind = sc::ValueKind::String;
+    name.nullable = false;
+    name.defaultValue = sc::SCValue::FromString(L"");
+    EXPECT_EQ(floorSchema->AddColumn(name), sc::SC_OK);
+
+    sc::SCTablePtr beamTable;
+    EXPECT_EQ(db()->CreateTable(L"Beam", beamTable), sc::SC_OK);
+
+    sc::SCSchemaPtr beamSchema;
+    EXPECT_EQ(beamTable->GetSchema(beamSchema), sc::SC_OK);
+
+    sc::SCColumnDef floorRef;
+    floorRef.name = L"FloorRef";
+    floorRef.displayName = L"FloorRef";
+    floorRef.valueKind = sc::ValueKind::String;
+    floorRef.columnKind = sc::ColumnKind::Relation;
+    floorRef.referenceTable = L"Floor";
+    floorRef.referenceStorageColumn = L"Code";
+    floorRef.referenceDisplayColumn = L"Name";
+    EXPECT_EQ(beamSchema->AddColumn(floorRef), sc::SC_OK);
+}
+
+// 新增测试：关系字段存储列类型必须与字段值类型一致
+TEST_F(FileDbTest, SchemaRejectsRelationValueKindMismatchWithStorageColumn)
+{
+    sc::SCTablePtr floorTable;
+    EXPECT_EQ(db()->CreateTable(L"Floor", floorTable), sc::SC_OK);
+
+    sc::SCSchemaPtr floorSchema;
+    EXPECT_EQ(floorTable->GetSchema(floorSchema), sc::SC_OK);
+
+    sc::SCColumnDef code;
+    code.name = L"Code";
+    code.displayName = L"Code";
+    code.valueKind = sc::ValueKind::String;
+    code.nullable = false;
+    code.defaultValue = sc::SCValue::FromString(L"");
+    EXPECT_EQ(floorSchema->AddColumn(code), sc::SC_OK);
+
+    sc::SCConstraintDef codeUnique;
+    codeUnique.kind = sc::SCConstraintKind::Unique;
+    codeUnique.name = L"uq_Floor_Code";
+    codeUnique.columns.push_back(L"Code");
+    EXPECT_EQ(floorSchema->AddConstraint(codeUnique), sc::SC_OK);
+
+    sc::SCTablePtr beamTable;
+    EXPECT_EQ(db()->CreateTable(L"Beam", beamTable), sc::SC_OK);
+
+    sc::SCSchemaPtr beamSchema;
+    EXPECT_EQ(beamTable->GetSchema(beamSchema), sc::SC_OK);
+
+    sc::SCColumnDef floorRef;
+    floorRef.name = L"FloorRef";
+    floorRef.displayName = L"FloorRef";
+    floorRef.valueKind = sc::ValueKind::RecordId;
+    floorRef.columnKind = sc::ColumnKind::Relation;
+    floorRef.referenceTable = L"Floor";
+    floorRef.referenceStorageColumn = L"Code";
+    floorRef.referenceDisplayColumn = L"Name";
+
+    EXPECT_EQ(beamSchema->AddColumn(floorRef), sc::SC_E_SCHEMA_VIOLATION);
+}
+
+// 新增测试：显示列不能单独存在
+TEST_F(FileDbTest, SchemaRejectsRelationDisplayColumnWithoutStorageColumn)
+{
+    sc::SCTablePtr table;
+    EXPECT_EQ(db()->CreateTable(L"Beam", table), sc::SC_OK);
+
+    sc::SCSchemaPtr schema;
+    EXPECT_EQ(table->GetSchema(schema), sc::SC_OK);
+
+    sc::SCColumnDef relation;
+    relation.name = L"FloorRef";
+    relation.displayName = L"FloorRef";
+    relation.valueKind = sc::ValueKind::String;
+    relation.columnKind = sc::ColumnKind::Relation;
+    relation.referenceTable = L"Floor";
+    relation.referenceDisplayColumn = L"Name";
+
+    EXPECT_EQ(schema->AddColumn(relation), sc::SC_E_SCHEMA_VIOLATION);
+}
+
+// 新增测试：关系字段引用不存在的表时应被拒绝
+TEST_F(FileDbTest, SchemaRejectsMissingRelationTargetTable)
+{
+    sc::SCTablePtr table;
+    EXPECT_EQ(db()->CreateTable(L"Beam", table), sc::SC_OK);
+
+    sc::SCSchemaPtr schema;
+    EXPECT_EQ(table->GetSchema(schema), sc::SC_OK);
+
+    sc::SCColumnDef relation;
+    relation.name = L"FloorRef";
+    relation.displayName = L"FloorRef";
+    relation.valueKind = sc::ValueKind::String;
+    relation.columnKind = sc::ColumnKind::Relation;
+    relation.referenceTable = L"MissingFloor";
+    relation.referenceStorageColumn = L"Code";
+    relation.referenceDisplayColumn = L"Name";
+
+    EXPECT_EQ(schema->AddColumn(relation), sc::SC_E_TABLE_NOT_FOUND);
+}
+
+// 新增测试：关系字段引用不存在的存储列时应被拒绝
+TEST_F(FileDbTest, SchemaRejectsMissingRelationStorageColumn)
+{
+    sc::SCTablePtr floorTable;
+    EXPECT_EQ(db()->CreateTable(L"Floor", floorTable), sc::SC_OK);
+
+    sc::SCSchemaPtr floorSchema;
+    EXPECT_EQ(floorTable->GetSchema(floorSchema), sc::SC_OK);
+
+    sc::SCColumnDef code;
+    code.name = L"Code";
+    code.displayName = L"Code";
+    code.valueKind = sc::ValueKind::String;
+    code.nullable = false;
+    code.defaultValue = sc::SCValue::FromString(L"");
+    EXPECT_EQ(floorSchema->AddColumn(code), sc::SC_OK);
+
+    sc::SCConstraintDef codeUnique;
+    codeUnique.kind = sc::SCConstraintKind::Unique;
+    codeUnique.name = L"uq_Floor_Code";
+    codeUnique.columns.push_back(L"Code");
+    EXPECT_EQ(floorSchema->AddConstraint(codeUnique), sc::SC_OK);
+
+    sc::SCTablePtr beamTable;
+    EXPECT_EQ(db()->CreateTable(L"Beam", beamTable), sc::SC_OK);
+
+    sc::SCSchemaPtr schema;
+    EXPECT_EQ(beamTable->GetSchema(schema), sc::SC_OK);
+
+    sc::SCColumnDef relation;
+    relation.name = L"FloorRef";
+    relation.displayName = L"FloorRef";
+    relation.valueKind = sc::ValueKind::String;
+    relation.columnKind = sc::ColumnKind::Relation;
+    relation.referenceTable = L"Floor";
+    relation.referenceStorageColumn = L"MissingCode";
+    relation.referenceDisplayColumn = L"Code";
+
+    EXPECT_EQ(schema->AddColumn(relation), sc::SC_E_COLUMN_NOT_FOUND);
+}
+
+// 新增测试：关系字段引用不存在的显示列时应被拒绝
+TEST_F(FileDbTest, SchemaRejectsMissingRelationDisplayColumn)
+{
+    sc::SCTablePtr floorTable;
+    EXPECT_EQ(db()->CreateTable(L"Floor", floorTable), sc::SC_OK);
+
+    sc::SCSchemaPtr floorSchema;
+    EXPECT_EQ(floorTable->GetSchema(floorSchema), sc::SC_OK);
+
+    sc::SCColumnDef code;
+    code.name = L"Code";
+    code.displayName = L"Code";
+    code.valueKind = sc::ValueKind::String;
+    code.nullable = false;
+    code.defaultValue = sc::SCValue::FromString(L"");
+    EXPECT_EQ(floorSchema->AddColumn(code), sc::SC_OK);
+
+    sc::SCConstraintDef codeUnique;
+    codeUnique.kind = sc::SCConstraintKind::Unique;
+    codeUnique.name = L"uq_Floor_Code";
+    codeUnique.columns.push_back(L"Code");
+    EXPECT_EQ(floorSchema->AddConstraint(codeUnique), sc::SC_OK);
+
+    sc::SCTablePtr beamTable;
+    EXPECT_EQ(db()->CreateTable(L"Beam", beamTable), sc::SC_OK);
+
+    sc::SCSchemaPtr schema;
+    EXPECT_EQ(beamTable->GetSchema(schema), sc::SC_OK);
+
+    sc::SCColumnDef relation;
+    relation.name = L"FloorRef";
+    relation.displayName = L"FloorRef";
+    relation.valueKind = sc::ValueKind::String;
+    relation.columnKind = sc::ColumnKind::Relation;
+    relation.referenceTable = L"Floor";
+    relation.referenceStorageColumn = L"Code";
+    relation.referenceDisplayColumn = L"MissingName";
+
+    EXPECT_EQ(schema->AddColumn(relation), sc::SC_E_COLUMN_NOT_FOUND);
+}
+
+// 新增测试：关系字段存储列不能为空列
+TEST_F(FileDbTest, SchemaRejectsNullableRelationStorageColumn)
+{
+    sc::SCTablePtr floorTable;
+    EXPECT_EQ(db()->CreateTable(L"Floor", floorTable), sc::SC_OK);
+
+    sc::SCSchemaPtr floorSchema;
+    EXPECT_EQ(floorTable->GetSchema(floorSchema), sc::SC_OK);
+
+    sc::SCColumnDef code;
+    code.name = L"Code";
+    code.displayName = L"Code";
+    code.valueKind = sc::ValueKind::String;
+    code.nullable = true;
+    EXPECT_EQ(floorSchema->AddColumn(code), sc::SC_OK);
+
+    sc::SCConstraintDef codeUnique;
+    codeUnique.kind = sc::SCConstraintKind::Unique;
+    codeUnique.name = L"uq_Floor_Code";
+    codeUnique.columns.push_back(L"Code");
+    EXPECT_EQ(floorSchema->AddConstraint(codeUnique), sc::SC_OK);
+
+    sc::SCTablePtr beamTable;
+    EXPECT_EQ(db()->CreateTable(L"Beam", beamTable), sc::SC_OK);
+
+    sc::SCSchemaPtr beamSchema;
+    EXPECT_EQ(beamTable->GetSchema(beamSchema), sc::SC_OK);
+
+    sc::SCColumnDef relation;
+    relation.name = L"FloorRef";
+    relation.displayName = L"FloorRef";
+    relation.valueKind = sc::ValueKind::String;
+    relation.columnKind = sc::ColumnKind::Relation;
+    relation.referenceTable = L"Floor";
+    relation.referenceStorageColumn = L"Code";
+    relation.referenceDisplayColumn = L"Code";
+
+    EXPECT_EQ(beamSchema->AddColumn(relation), sc::SC_E_SCHEMA_VIOLATION);
+}
+
+// 新增测试：关系字段存储列必须唯一
+TEST_F(FileDbTest, SchemaRejectsNonUniqueRelationStorageColumn)
+{
+    sc::SCTablePtr floorTable;
+    EXPECT_EQ(db()->CreateTable(L"Floor", floorTable), sc::SC_OK);
+
+    sc::SCSchemaPtr floorSchema;
+    EXPECT_EQ(floorTable->GetSchema(floorSchema), sc::SC_OK);
+
+    sc::SCColumnDef code;
+    code.name = L"Code";
+    code.displayName = L"Code";
+    code.valueKind = sc::ValueKind::String;
+    code.nullable = false;
+    code.defaultValue = sc::SCValue::FromString(L"");
+    EXPECT_EQ(floorSchema->AddColumn(code), sc::SC_OK);
+
+    sc::SCTablePtr beamTable;
+    EXPECT_EQ(db()->CreateTable(L"Beam", beamTable), sc::SC_OK);
+
+    sc::SCSchemaPtr beamSchema;
+    EXPECT_EQ(beamTable->GetSchema(beamSchema), sc::SC_OK);
+
+    sc::SCColumnDef relation;
+    relation.name = L"FloorRef";
+    relation.displayName = L"FloorRef";
+    relation.valueKind = sc::ValueKind::String;
+    relation.columnKind = sc::ColumnKind::Relation;
+    relation.referenceTable = L"Floor";
+    relation.referenceStorageColumn = L"Code";
+    relation.referenceDisplayColumn = L"Code";
+
+    EXPECT_EQ(beamSchema->AddColumn(relation), sc::SC_E_SCHEMA_VIOLATION);
+}
+
 // 新增测试：模式允许有效的列定义
 TEST_F(FileDbTest, SchemaAcceptsValidColumnDefinition)
 {

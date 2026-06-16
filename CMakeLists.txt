@@ -96,6 +96,8 @@ set(SCSTORAGE_LIBRARY_SOURCES
     Src/Diagnostics/SCDiagnostics.cpp
     Src/Diagnostics/SCDebugPackage.cpp
     Src/Migration/SCMigration.cpp
+    Src/Sqlite/SqliteUpgradeRegistry.cpp
+    Src/Sqlite/SqliteUpgradeV5ToV6.cpp
     Src/Query/SCQueryBridge.cpp
     Src/Query/SCQueryExecutor.cpp
     Src/Query/SCQuerySqliteExecutor.cpp
@@ -107,6 +109,8 @@ set(SCSTORAGE_LIBRARY_SOURCES
 set(SCSTORAGE_LIBRARY_PRIVATE_HEADERS
     Src/Query/SCQuerySqliteExecutor.h
     Src/Query/SCQuerySqliteIndexAccess.h
+    Src/Sqlite/SqliteUpgradeInterfaces.h
+    Src/Sqlite/SqliteUpgradeRegistry.h
 )
 
 set(SCSTORAGE_PUBLIC_HEADERS

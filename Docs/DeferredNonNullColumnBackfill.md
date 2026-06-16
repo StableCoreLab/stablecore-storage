@@ -5,6 +5,7 @@ Current minimal rule:
 - Empty tables may add a non-null column without a default.
 - Tables with existing live records must still require a default for that case.
 - Commit-time validation must reject new records that leave required columns unset.
+- Tables with zero columns are schema scaffolds only and must not accept new records.
 
 新增记录时的当前 API 约定：
 

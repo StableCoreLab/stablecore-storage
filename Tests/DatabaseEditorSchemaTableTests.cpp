@@ -209,12 +209,14 @@ TEST(DatabaseEditorSchemaTable, BuildsCurrentTableSchemaCode)
     category.defaultValue = sc::SCValue::FromEnum(L"Primary");
     snapshot.columns.push_back(category);
 
-    sc::SCColumnDef floorId = MakeColumn(L"FloorId", sc::ValueKind::RecordId);
-    floorId.displayName = L"Belongs to floor";
-    floorId.nullable = false;
-    floorId.referenceTable = L"Floor";
-    floorId.defaultValue = sc::SCValue::FromRecordId(42);
-    snapshot.columns.push_back(floorId);
+    sc::SCColumnDef floorCode = MakeColumn(L"FloorCode", sc::ValueKind::String);
+    floorCode.displayName = L"Belongs to floor";
+    floorCode.nullable = false;
+    floorCode.referenceTable = L"Floor";
+    floorCode.referenceStorageColumn = L"Code";
+    floorCode.referenceDisplayColumn = L"Name";
+    floorCode.defaultValue = sc::SCValue::FromString(L"F-001");
+    snapshot.columns.push_back(floorCode);
 
     sc::SCConstraintDef primaryKey;
     primaryKey.kind = sc::SCConstraintKind::PrimaryKey;
@@ -222,8 +224,8 @@ TEST(DatabaseEditorSchemaTable, BuildsCurrentTableSchemaCode)
     snapshot.constraints.push_back(primaryKey);
 
     sc::SCIndexDef index;
-    index.name = L"idx_Element_FloorId";
-    index.columns.push_back(sc::SCIndexColumnDef{L"FloorId", false});
+    index.name = L"idx_Element_FloorCode";
+    index.columns.push_back(sc::SCIndexColumnDef{L"FloorCode", false});
     snapshot.indexes.push_back(index);
 
     const QString code = editor::BuildSchemaTableCode(snapshot);
@@ -257,13 +259,53 @@ TEST(DatabaseEditorSchemaTable, BuildsCurrentTableSchemaCode)
         "        .Column(\"Category\", SCType::Enum)\n"
         "            .NotNull()\n"
         "            .Default(\"Primary\")\n"
-        "        .Column(\"FloorId\", SCType::RecordId)\n"
+        "        .Column(\"FloorCode\", SCType::String)\n"
         "            .NotNull()\n"
-        "            .Default(42)\n"
-        "            .Ref(\"Floor\", \"Id\")\n"
+        "            .Default(\"F-001\")\n"
+        "            .Ref(\"Floor\", \"Code\", \"Name\")\n"
         "            .Description(\"Belongs to floor\")\n"
-        "        .Index(\"idx_Element_FloorId\").Columns(\"FloorId\");\n"
+        "        .Index(\"idx_Element_FloorCode\").Columns(\"FloorCode\");\n"
         "}\n");
 
     EXPECT_EQ(code, expected);
+}
+
+TEST(DatabaseEditorSchemaTable, ParsesRelationReferenceStorageAndDisplayColumns)
+{
+    const QString schemaText = QStringLiteral(R"(SC_SCHEMA_TABLE(Beam)
+{
+    Table("Beam")
+        .Column("FloorRef", SCType::String)
+            .Ref("Floor", "Code", "Name");
+})");
+
+    editor::SCSchemaTableImportResult result;
+    QString error;
+    EXPECT_TRUE(editor::ParseSchemaTableDescription(schemaText, &result, &error)) << error.toStdString();
+
+    ASSERT_EQ(result.columns.size(), 1);
+    EXPECT_EQ(result.columns[0].columnKind, sc::ColumnKind::Relation);
+    EXPECT_EQ(result.columns[0].referenceTable, L"Floor");
+    EXPECT_EQ(result.columns[0].referenceStorageColumn, L"Code");
+    EXPECT_EQ(result.columns[0].referenceDisplayColumn, L"Name");
+}
+
+TEST(DatabaseEditorSchemaTable, ParsesRelationReferenceStorageColumnOnly)
+{
+    const QString schemaText = QStringLiteral(R"(SC_SCHEMA_TABLE(Beam)
+{
+    Table("Beam")
+        .Column("FloorRef", SCType::String)
+            .Ref("Floor", "Code");
+})");
+
+    editor::SCSchemaTableImportResult result;
+    QString error;
+    EXPECT_TRUE(editor::ParseSchemaTableDescription(schemaText, &result, &error)) << error.toStdString();
+
+    ASSERT_EQ(result.columns.size(), 1);
+    EXPECT_EQ(result.columns[0].columnKind, sc::ColumnKind::Relation);
+    EXPECT_EQ(result.columns[0].referenceTable, L"Floor");
+    EXPECT_EQ(result.columns[0].referenceStorageColumn, L"Code");
+    EXPECT_EQ(result.columns[0].referenceDisplayColumn, L"Code");
 }

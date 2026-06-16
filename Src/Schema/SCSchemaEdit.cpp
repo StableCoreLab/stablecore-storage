@@ -41,21 +41,44 @@ namespace StableCore::Storage
 
             if (def.columnKind == ColumnKind::Relation)
             {
-                if (def.valueKind != ValueKind::RecordId)
-                {
-                    return SC_E_SCHEMA_VIOLATION;
-                }
                 if (def.referenceTable.empty())
                 {
                     return SC_E_SCHEMA_VIOLATION;
                 }
-                if (!def.defaultValue.IsNull() && def.defaultValue.GetKind() != ValueKind::RecordId)
+
+                if (def.referenceStorageColumn.empty() &&
+                    !def.referenceDisplayColumn.empty())
                 {
                     return SC_E_SCHEMA_VIOLATION;
+                }
+
+                if (def.referenceStorageColumn.empty())
+                {
+                    if (def.valueKind != ValueKind::RecordId)
+                    {
+                        return SC_E_SCHEMA_VIOLATION;
+                    }
+                    if (!def.defaultValue.IsNull() &&
+                        def.defaultValue.GetKind() != ValueKind::RecordId)
+                    {
+                        return SC_E_SCHEMA_VIOLATION;
+                    }
+                } else
+                {
+                    if (!def.defaultValue.IsNull() &&
+                        def.defaultValue.GetKind() != def.valueKind)
+                    {
+                        return SC_E_SCHEMA_VIOLATION;
+                    }
                 }
             } else
             {
                 if (!def.referenceTable.empty())
+                {
+                    return SC_E_SCHEMA_VIOLATION;
+                }
+                if (!def.referenceStorageColumn.empty() ||
+                    !def.referenceDisplayColumn.empty())
                 {
                     return SC_E_SCHEMA_VIOLATION;
                 }
@@ -228,6 +251,103 @@ namespace StableCore::Storage
             return SC_OK;
         }
 
+        ErrorCode ValidateRelationColumnMetadata(const ISCDatabase* database, const SCColumnDef& def)
+        {
+            if (database == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+
+            if (def.columnKind != ColumnKind::Relation || def.referenceTable.empty())
+            {
+                return SC_OK;
+            }
+
+            auto* mutableDatabase = const_cast<ISCDatabase*>(database);
+
+            SCTablePtr targetTable;
+            const ErrorCode tableRc = mutableDatabase->GetTable(def.referenceTable.c_str(), targetTable);
+            if (Failed(tableRc))
+            {
+                return tableRc;
+            }
+
+            if (def.referenceStorageColumn.empty())
+            {
+                return SC_OK;
+            }
+
+            SCSchemaPtr targetSchema;
+            const ErrorCode schemaRc = targetTable->GetSchema(targetSchema);
+            if (Failed(schemaRc))
+            {
+                return schemaRc;
+            }
+
+            SCColumnDef storageColumn;
+            const ErrorCode storageRc = targetSchema->FindColumn(def.referenceStorageColumn.c_str(), &storageColumn);
+            if (Failed(storageRc))
+            {
+                return storageRc;
+            }
+
+            if (storageColumn.valueKind != def.valueKind || storageColumn.nullable)
+            {
+                return SC_E_SCHEMA_VIOLATION;
+            }
+
+            bool uniqueStorageColumn = false;
+            std::int32_t constraintCount = 0;
+            const ErrorCode constraintCountRc = targetSchema->GetConstraintCount(&constraintCount);
+            if (Failed(constraintCountRc))
+            {
+                return constraintCountRc;
+            }
+
+            for (std::int32_t index = 0; index < constraintCount; ++index)
+            {
+                SCConstraintDef constraint;
+                const ErrorCode constraintRc = targetSchema->GetConstraint(index, &constraint);
+                if (Failed(constraintRc))
+                {
+                    return constraintRc;
+                }
+
+                if (constraint.columns.size() != 1)
+                {
+                    continue;
+                }
+                if (constraint.kind != SCConstraintKind::PrimaryKey &&
+                    constraint.kind != SCConstraintKind::Unique)
+                {
+                    continue;
+                }
+                if (EqualsNormalized(constraint.columns.front(), def.referenceStorageColumn))
+                {
+                    uniqueStorageColumn = true;
+                    break;
+                }
+            }
+
+            if (!uniqueStorageColumn)
+            {
+                return SC_E_SCHEMA_VIOLATION;
+            }
+
+            if (!def.referenceDisplayColumn.empty())
+            {
+                SCColumnDef displayColumn;
+                const ErrorCode displayRc =
+                    targetSchema->FindColumn(def.referenceDisplayColumn.c_str(), &displayColumn);
+                if (Failed(displayRc))
+                {
+                    return displayRc;
+                }
+            }
+
+            return SC_OK;
+        }
+
         ErrorCode ValidateIndexDefs(const SCTableSchemaSnapshot& schema)
         {
             for (const SCIndexDef& index : schema.indexes)
@@ -288,6 +408,15 @@ namespace StableCore::Storage
             if (Failed(rc))
             {
                 return rc;
+            }
+
+            for (const SCColumnDef& column : schema.columns)
+            {
+                rc = ValidateRelationColumnMetadata(database, column);
+                if (Failed(rc))
+                {
+                    return rc;
+                }
             }
 
             return ValidateIndexDefs(schema);
@@ -559,7 +688,8 @@ namespace StableCore::Storage
                 return rc;
             }
 
-            return ValidateCreateSchema(database, projected);
+            rc = ValidateCreateSchema(database, projected);
+            return rc;
         }
 
         void ResetResult(SCSchemaEditResult* outResult)
@@ -845,6 +975,11 @@ namespace StableCore::Storage
         }
 
         return SC_OK;
+    }
+
+    ErrorCode ValidateRelationColumnDef(const ISCDatabase* database, const SCColumnDef& def)
+    {
+        return ValidateRelationColumnMetadata(database, def);
     }
 
 }  // namespace StableCore::Storage

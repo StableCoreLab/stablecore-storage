@@ -100,7 +100,7 @@ namespace StableCore::Storage::Editor
             {
                 if (outError != nullptr)
                 {
-                    *outError = QStringLiteral("Index column list is empty.");
+                    *outError = QStringLiteral("Quoted value list is empty.");
                 }
                 return false;
             }
@@ -619,15 +619,40 @@ namespace StableCore::Storage::Editor
                 }
 
                 const QRegularExpression refRegex(QStringLiteral(
-                    "^\\s*\\.Ref\\(\\s*\"((?:\\\\.|[^\"])*)\"\\s*,\\s*\"((?:"
-                    "\\\\.|[^\"])*)\"\\s*\\)\\s*;?\\s*$"));
+                    "^\\s*\\.Ref\\((.*)\\)\\s*;?\\s*$"));
                 const auto refMatch = refRegex.match(line);
                 if (refMatch.hasMatch())
                 {
+                    QStringList refParts;
+                    if (!ParseQuotedList(refMatch.captured(1), &refParts, outError))
+                    {
+                        return false;
+                    }
+                    if (refParts.size() < 1 || refParts.size() > 3)
+                    {
+                        if (outError != nullptr)
+                        {
+                            *outError = QStringLiteral(
+                                "Relation reference must have 1 to 3 quoted values.");
+                        }
+                        return false;
+                    }
                     currentColumn.columnKind = sc::ColumnKind::Relation;
-                    currentColumn.valueKind = sc::ValueKind::RecordId;
-                    currentColumn.referenceTable =
-                        UnescapeCppString(refMatch.captured(1)).toStdWString();
+                    currentColumn.referenceTable = refParts[0].toStdWString();
+                    if (refParts.size() >= 2)
+                    {
+                        currentColumn.referenceStorageColumn =
+                            refParts[1].toStdWString();
+                    }
+                    if (refParts.size() >= 3)
+                    {
+                        currentColumn.referenceDisplayColumn =
+                            refParts[2].toStdWString();
+                    } else if (refParts.size() == 2)
+                    {
+                        currentColumn.referenceDisplayColumn =
+                            currentColumn.referenceStorageColumn;
+                    }
                     continue;
                 }
             }

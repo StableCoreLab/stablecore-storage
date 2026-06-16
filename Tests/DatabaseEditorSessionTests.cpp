@@ -1,6 +1,7 @@
 #include <filesystem>
 
 #include <gtest/gtest.h>
+#include <QStringList>
 #include <QVariant>
 
 #include "SCBatch.h"
@@ -70,6 +71,33 @@ namespace
         column.expression = expression;
         column.dependencies.factFields = {{L"Beam", dependencyField}};
         return column;
+    }
+
+    sc::SCColumnDef MakeBusinessKeyRelationColumn(const wchar_t* name,
+                                                  const wchar_t* referenceTable,
+                                                  const wchar_t* storageColumn,
+                                                  const wchar_t* displayColumn)
+    {
+        sc::SCColumnDef column;
+        column.name = name;
+        column.displayName = name;
+        column.valueKind = sc::ValueKind::String;
+        column.columnKind = sc::ColumnKind::Relation;
+        column.referenceTable = referenceTable;
+        column.referenceStorageColumn = storageColumn;
+        column.referenceDisplayColumn = displayColumn;
+        column.defaultValue = sc::SCValue::FromString(L"");
+        return column;
+    }
+
+    void AddUniqueConstraint(sc::SCSchemaPtr schema, const wchar_t* name,
+                             const wchar_t* columnName)
+    {
+        sc::SCConstraintDef constraint;
+        constraint.kind = sc::SCConstraintKind::Unique;
+        constraint.name = name;
+        constraint.columns.push_back(columnName);
+        EXPECT_EQ(schema->AddConstraint(constraint), sc::SC_OK);
     }
 
     std::vector<std::wstring> CollectColumnNames(const QVector<sc::SCColumnDef>& columns)
@@ -220,6 +248,96 @@ TEST(DatabaseEditorSession, AddRecordAllowsExplicitRequiredValuesBeforeSave)
     std::int64_t width = 0;
     ASSERT_EQ(record->GetInt64(L"Width", &width), sc::SC_OK);
     EXPECT_EQ(width, 42);
+}
+
+TEST(DatabaseEditorSession, RelationFieldUsesConfiguredStorageAndDisplayColumns)
+{
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_DbEditor_RelationBusinessKey.sqlite");
+
+    editor::SCDatabaseSession session;
+    QString error;
+
+    ASSERT_TRUE(session.CreateDatabase(QString::fromStdWString(dbPath.wstring()), &error)) << error.toStdString();
+    ASSERT_TRUE(session.CreateTable(QStringLiteral("Floor"), &error)) << error.toStdString();
+    {
+        sc::SCColumnDef code;
+        code.name = L"Code";
+        code.displayName = L"Code";
+        code.valueKind = sc::ValueKind::String;
+        code.nullable = false;
+        code.defaultValue = sc::SCValue::FromString(L"");
+        ASSERT_TRUE(session.AddColumn(code, &error)) << error.toStdString();
+    }
+    ASSERT_TRUE(session.AddColumn(MakeStringColumn(L"Name"), &error)) << error.toStdString();
+    ASSERT_TRUE(session.CurrentTable() != nullptr);
+    sc::SCSchemaPtr floorSchema;
+    ASSERT_EQ(session.CurrentTable()->GetSchema(floorSchema), sc::SC_OK);
+    AddUniqueConstraint(floorSchema, L"uq_Floor_Code", L"Code");
+
+    ASSERT_TRUE(session.CreateTable(QStringLiteral("Beam"), &error)) << error.toStdString();
+    ASSERT_TRUE(session.AddColumn(MakeStringColumn(L"Name"), &error)) << error.toStdString();
+    ASSERT_TRUE(session.AddColumn(
+                    MakeBusinessKeyRelationColumn(L"FloorRef", L"Floor", L"Code",
+                                                  L"Name"),
+                    &error))
+        << error.toStdString();
+
+    ASSERT_TRUE(session.SelectTable(QStringLiteral("Floor"), &error)) << error.toStdString();
+    ASSERT_TRUE(session.AddRecord(&error)) << error.toStdString();
+
+    sc::SCRecordCursorPtr cursor;
+    ASSERT_EQ(session.CurrentTable()->EnumerateRecords(cursor), sc::SC_OK);
+    sc::SCRecordPtr floorRecord;
+    ASSERT_EQ(cursor->Next(floorRecord), sc::SC_OK);
+    ASSERT_TRUE(static_cast<bool>(floorRecord));
+    ASSERT_TRUE(session.SetCellValue(floorRecord->GetId(), QStringLiteral("Code"),
+                                     QStringLiteral("F-001"), &error))
+        << error.toStdString();
+    ASSERT_TRUE(session.SetCellValue(floorRecord->GetId(), QStringLiteral("Name"),
+                                     QStringLiteral("1F"), &error))
+        << error.toStdString();
+
+    const sc::RecordId floorRecordId = floorRecord->GetId();
+    ASSERT_TRUE(session.SavePendingChanges(&error)) << error.toStdString();
+
+    ASSERT_TRUE(session.SelectTable(QStringLiteral("Beam"), &error)) << error.toStdString();
+    ASSERT_TRUE(session.AddRecord(&error)) << error.toStdString();
+    ASSERT_EQ(session.CurrentTable()->EnumerateRecords(cursor), sc::SC_OK);
+    sc::SCRecordPtr beamRecord;
+    ASSERT_EQ(cursor->Next(beamRecord), sc::SC_OK);
+    ASSERT_TRUE(static_cast<bool>(beamRecord));
+    ASSERT_TRUE(session.SetCellValue(beamRecord->GetId(), QStringLiteral("Name"),
+                                     QStringLiteral("B-1"), &error))
+        << error.toStdString();
+    ASSERT_TRUE(session.SetCellValue(beamRecord->GetId(), QStringLiteral("FloorRef"),
+                                     QStringLiteral("F-001"), &error))
+        << error.toStdString();
+
+    ASSERT_TRUE(session.SavePendingChanges(&error)) << error.toStdString();
+
+    QVariant displayValue;
+    const sc::RecordId beamRecordId = beamRecord->GetId();
+    ASSERT_TRUE(session.GetCellDisplayValue(beamRecordId,
+                                            QStringLiteral("FloorRef"),
+                                            &displayValue, &error))
+        << error.toStdString();
+    EXPECT_EQ(displayValue.toString(), QStringLiteral("1F (F-001)"));
+
+    QVariant storedCellValue;
+    ASSERT_TRUE(session.GetCellStoredValue(beamRecordId,
+                                           QStringLiteral("FloorRef"),
+                                           &storedCellValue, &error))
+        << error.toStdString();
+    EXPECT_EQ(storedCellValue.toString(), QStringLiteral("F-001"));
+
+    sc::SCColumnDef relationColumn = MakeBusinessKeyRelationColumn(
+        L"FloorRef", L"Floor", L"Code", L"Name");
+    QVariant storedValue;
+    ASSERT_TRUE(session.GetRelationStoredValue(floorRecordId,
+                                               relationColumn, &storedValue,
+                                               &error))
+        << error.toStdString();
+    EXPECT_EQ(storedValue.toString(), QStringLiteral("F-001"));
 }
 
 TEST(DatabaseEditorSession, PendingRequiredEditBlocksTableSwitchUntilSaved)
@@ -398,6 +516,29 @@ TEST(DatabaseEditorSession, SchemaSnapshotKeepsFieldNameAndDisplayNameDistinct)
     ASSERT_EQ(columns.size(), 1);
     EXPECT_EQ(columns[0].name, L"Width");
     EXPECT_EQ(columns[0].displayName, L"Beam Width");
+}
+
+TEST(DatabaseEditorSession, GetTableColumnNamesReturnsLiveSchemaColumns)
+{
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_DbEditor_GetTableColumnNames.sqlite");
+
+    editor::SCDatabaseSession session;
+    QString error;
+
+    ASSERT_TRUE(session.CreateDatabase(QString::fromStdWString(dbPath.wstring()), &error)) << error.toStdString();
+    ASSERT_TRUE(session.CreateTable(QStringLiteral("Floor"), &error)) << error.toStdString();
+    ASSERT_TRUE(session.AddColumn(MakeStringColumn(L"Code"), &error)) << error.toStdString();
+    ASSERT_TRUE(session.AddColumn(MakeStringColumn(L"Name"), &error)) << error.toStdString();
+    ASSERT_TRUE(session.CurrentTable() != nullptr);
+
+    QStringList columns;
+    ASSERT_TRUE(session.GetTableColumnNames(QStringLiteral("Floor"), &columns, &error))
+        << error.toStdString();
+    EXPECT_EQ(columns, (QStringList{QStringLiteral("Code"), QStringLiteral("Name")}));
+
+    QStringList missingColumns;
+    EXPECT_FALSE(session.GetTableColumnNames(QStringLiteral("Missing"), &missingColumns, &error));
+    EXPECT_FALSE(error.isEmpty());
 }
 
 TEST(DatabaseEditorSession, CloseDatabaseClearsOpenState)

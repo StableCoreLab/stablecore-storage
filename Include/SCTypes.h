@@ -385,6 +385,8 @@ namespace StableCore::Storage
         bool participatesInCalc{false};
         std::wstring unit;
         std::wstring referenceTable;
+        std::wstring referenceStorageColumn;
+        std::wstring referenceDisplayColumn;
         SCValue defaultValue;
     };
 

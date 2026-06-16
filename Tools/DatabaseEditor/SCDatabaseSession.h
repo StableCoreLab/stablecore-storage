@@ -102,9 +102,25 @@ namespace StableCore::Storage::Editor
         bool GetColumnDef(const QString& columnName,
                           StableCore::Storage::SCColumnDef* outColumn,
                           QString* outError) const;
+        bool GetTableColumnNames(const QString& tableName, QStringList* outColumns,
+                                 QString* outError) const;
+        bool GetTableSchemaSnapshot(
+            const QString& tableName,
+            StableCore::Storage::SCTableSchemaSnapshot* outSnapshot,
+            QString* outError) const;
         bool BuildRelationCandidates(const QString& targetTableName,
+                                     const StableCore::Storage::SCColumnDef& relationColumn,
                                      QVector<RelationCandidate>* outCandidates,
                                      QString* outError) const;
+        bool GetCellDisplayValue(StableCore::Storage::RecordId recordId,
+                                 const QString& columnName, QVariant* outValue,
+                                 QString* outError) const;
+        bool GetCellStoredValue(StableCore::Storage::RecordId recordId,
+                                const QString& columnName, QVariant* outValue,
+                                QString* outError) const;
+        bool GetRelationStoredValue(StableCore::Storage::RecordId recordId,
+                                    const StableCore::Storage::SCColumnDef& relationColumn,
+                                    QVariant* outValue, QString* outError) const;
         bool AddSessionComputedColumn(
             const StableCore::Storage::SCComputedColumnDef& column,
             QString* outError);

@@ -1326,7 +1326,7 @@ namespace StableCore::Storage::Editor
             return;
         }
 
-        SCAddColumnDialog dialog(this);
+        SCAddColumnDialog dialog(session_, this);
         bool tableHasRecords = false;
         QString stateError;
         if (!session_->CurrentTableHasRecords(&tableHasRecords, &stateError))
@@ -1558,7 +1558,7 @@ namespace StableCore::Storage::Editor
             return;
         }
 
-        SCAddColumnDialog dialog(existing, this);
+        SCAddColumnDialog dialog(session_, existing, this);
         bool tableHasRecords = false;
         QString stateError;
         if (!session_->CurrentTableHasRecords(&tableHasRecords, &stateError))
@@ -1765,7 +1765,7 @@ namespace StableCore::Storage::Editor
             return;
         }
 
-        SCAddColumnDialog dialog(BuildColumnTemplate(existing), this);
+        SCAddColumnDialog dialog(session_, BuildColumnTemplate(existing), this);
         dialog.setWindowTitle(QStringLiteral("Convert Computed To Column"));
         bool tableHasRecords = false;
         QString stateError;
@@ -1973,9 +1973,8 @@ namespace StableCore::Storage::Editor
             recordModel_->ColumnAt(index.column());
         if (tableColumn.layer != sc::TableColumnLayer::Fact)
         {
-            ShowError(QStringLiteral("Pick Relation Failed"),
-                      QStringLiteral(
-                          "Computed columns cannot store relation values."));
+            ShowError(QStringLiteral("选择关系失败"),
+                      QStringLiteral("计算列不能存储关系值。"));
             return;
         }
 
@@ -1984,22 +1983,21 @@ namespace StableCore::Storage::Editor
         if (!session_->GetColumnDef(ToQString(tableColumn.name), &column,
                                     &error))
         {
-            ShowError(QStringLiteral("Pick Relation Failed"), error);
+            ShowError(QStringLiteral("选择关系失败"), error);
             return;
         }
         if (column.columnKind != sc::ColumnKind::Relation)
         {
-            ShowError(
-                QStringLiteral("Pick Relation Failed"),
-                QStringLiteral("The selected column is not a relation field."));
+            ShowError(QStringLiteral("选择关系失败"),
+                      QStringLiteral("所选列不是关系字段。"));
             return;
         }
 
         QVector<SCDatabaseSession::RelationCandidate> candidates;
         if (!session_->BuildRelationCandidates(ToQString(column.referenceTable),
-                                               &candidates, &error))
+                                               column, &candidates, &error))
         {
-            ShowError(QStringLiteral("Pick Relation Failed"), error);
+            ShowError(QStringLiteral("选择关系失败"), error);
             return;
         }
 
@@ -2010,18 +2008,24 @@ namespace StableCore::Storage::Editor
             return;
         }
 
-        if (!session_->SetCellValue(
-                recordModel_->RecordIdAt(index.row()),
-                ToQString(tableColumn.name),
-                QVariant::fromValue<qlonglong>(dialog.SelectedRecordId()),
-                &error))
+        QVariant storedValue;
+        if (!session_->GetRelationStoredValue(dialog.SelectedRecordId(), column,
+                                              &storedValue, &error))
         {
-            ShowError(QStringLiteral("Pick Relation Failed"), error);
+            ShowError(QStringLiteral("选择关系失败"), error);
+            return;
+        }
+
+        if (!session_->SetCellValue(recordModel_->RecordIdAt(index.row()),
+                                    ToQString(tableColumn.name), storedValue,
+                                    &error))
+        {
+            ShowError(QStringLiteral("选择关系失败"), error);
             return;
         }
 
         recordModel_->Refresh();
-        SetStatusMessage(QStringLiteral("Relation updated."));
+        SetStatusMessage(QStringLiteral("关系已更新。"));
     }
 
     void SCDatabaseEditorMainWindow::OnSchemaContextMenuRequested(

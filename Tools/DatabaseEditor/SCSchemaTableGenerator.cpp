@@ -76,6 +76,38 @@ namespace StableCore::Storage::Editor
             return displayName;
         }
 
+        QString RelationRefLiteral(const sc::SCColumnDef& column)
+        {
+            const QString referenceTable = ToQString(column.referenceTable).trimmed();
+            if (referenceTable.isEmpty())
+            {
+                return {};
+            }
+
+            const QString storageColumn =
+                ToQString(column.referenceStorageColumn).trimmed();
+            const QString displayColumn =
+                ToQString(column.referenceDisplayColumn).trimmed();
+            if (storageColumn.isEmpty())
+            {
+                return QStringLiteral("            .Ref(\"") +
+                       EscapeCppString(referenceTable) + QStringLiteral("\")\n");
+            }
+
+            if (displayColumn.isEmpty() ||
+                displayColumn.compare(storageColumn, Qt::CaseInsensitive) == 0)
+            {
+                return QStringLiteral("            .Ref(\"") +
+                       EscapeCppString(referenceTable) + QStringLiteral("\", \"") +
+                       EscapeCppString(storageColumn) + QStringLiteral("\")\n");
+            }
+
+            return QStringLiteral("            .Ref(\"") +
+                   EscapeCppString(referenceTable) + QStringLiteral("\", \"") +
+                   EscapeCppString(storageColumn) + QStringLiteral("\", \"") +
+                   EscapeCppString(displayColumn) + QStringLiteral("\")\n");
+        }
+
         QString DefaultValueLiteral(const sc::SCColumnDef& column)
         {
             if (column.defaultValue.IsNull())
@@ -281,11 +313,10 @@ namespace StableCore::Storage::Editor
                 line += QStringLiteral("            .Default(") + defaultValue +
                         QStringLiteral(")\n");
             }
-            if (!ToQString(column.referenceTable).isEmpty())
+            const QString relationRef = RelationRefLiteral(column);
+            if (!relationRef.isEmpty())
             {
-                line += QStringLiteral("            .Ref(\"") +
-                        EscapeCppString(ToQString(column.referenceTable)) +
-                        QStringLiteral("\", \"Id\")\n");
+                line += relationRef;
             }
             const QString description = ColumnDescription(column);
             if (!description.isEmpty())
