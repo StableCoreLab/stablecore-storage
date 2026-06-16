@@ -124,7 +124,7 @@ namespace StableCore::Storage
                 {
                     *outResult = localResult;
                 }
-                return SC_E_NOTIMPL;
+                return SC_E_UPGRADE_PATH_NOT_FOUND;
             }
 
             localResult.status = SCUpgradeStatus::Failed;
@@ -136,11 +136,101 @@ namespace StableCore::Storage
             return upgradeRc;
         }
 
+        ErrorCode MapSqliteError(int code);
+        std::string ToUtf8(const std::wstring& text);
+        bool HasTableRaw(sqlite3* db, const char* tableName);
+        bool HasTableColumnRaw(sqlite3* db, const char* tableName, const char* columnName);
+        ErrorCode ReadSchemaVersionRaw(sqlite3* db, std::int32_t* outVersion);
+        bool IsInspectableFile(const std::filesystem::path& filePath);
+        ErrorCode ReadSchemaVersionFromFile(const std::filesystem::path& filePath, std::int32_t* outVersion);
+
+        struct UpgradeOpenInspection
+        {
+            std::int32_t schemaVersion{0};
+            bool hasMetadataTable{false};
+            bool hasJournalTransactionsTable{false};
+            bool hasJournalEntriesTable{false};
+            bool hasJournalSchemaEntriesTable{false};
+        };
+
+        ErrorCode InspectDatabaseForOpenOrUpgrade(const std::filesystem::path& filePath,
+                                                  UpgradeOpenInspection* outInspection)
+        {
+            if (outInspection == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+
+            *outInspection = UpgradeOpenInspection{};
+
+            sqlite3* probeDb = nullptr;
+            const std::string probePath = ToUtf8(filePath.wstring());
+            if (sqlite3_open_v2(probePath.c_str(), &probeDb, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK)
+            {
+                if (probeDb != nullptr)
+                {
+                    sqlite3_close(probeDb);
+                }
+                return SC_E_INVALIDARG;
+            }
+
+            UpgradeOpenInspection inspection;
+            inspection.hasMetadataTable = HasTableRaw(probeDb, "metadata");
+            inspection.hasJournalTransactionsTable = HasTableRaw(probeDb, "journal_transactions");
+            inspection.hasJournalEntriesTable = HasTableRaw(probeDb, "journal_entries");
+            inspection.hasJournalSchemaEntriesTable = HasTableRaw(probeDb, "journal_schema_entries");
+
+            if (inspection.hasMetadataTable)
+            {
+                const ErrorCode versionRc = ReadSchemaVersionRaw(probeDb, &inspection.schemaVersion);
+                if (Failed(versionRc))
+                {
+                    sqlite3_close(probeDb);
+                    return versionRc;
+                }
+            }
+
+            sqlite3_close(probeDb);
+            *outInspection = inspection;
+            return SC_OK;
+        }
+
+        ErrorCode ReadSchemaVersionFromFile(const std::filesystem::path& filePath, std::int32_t* outVersion)
+        {
+            if (outVersion == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+            if (!IsInspectableFile(filePath))
+            {
+                return SC_E_INVALIDARG;
+            }
+
+            sqlite3* probeDb = nullptr;
+            const std::string probePath = ToUtf8(filePath.wstring());
+            if (sqlite3_open_v2(probePath.c_str(), &probeDb, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK)
+            {
+                if (probeDb != nullptr)
+                {
+                    sqlite3_close(probeDb);
+                }
+                return SC_E_INVALIDARG;
+            }
+
+            const ErrorCode rc = ReadSchemaVersionRaw(probeDb, outVersion);
+            sqlite3_close(probeDb);
+            return rc;
+        }
+
+        bool IsInspectableFile(const std::filesystem::path& filePath)
+        {
+            std::error_code ec;
+            return std::filesystem::exists(filePath, ec) && !ec && std::filesystem::is_regular_file(filePath, ec) &&
+                   !ec;
+        }
+
         constexpr int kStackUndo = 0;
         constexpr int kStackRedo = 1;
-
-        ErrorCode MapSqliteError(int code);
-        bool HasTableColumnRaw(sqlite3* db, const char* tableName, const char* columnName);
 
         std::string ToUtf8(const std::wstring& text)
         {
@@ -195,6 +285,102 @@ namespace StableCore::Storage
                 return {};
             }
             return std::wstring(first, last);
+        }
+
+        bool HasTableRaw(sqlite3* db, const char* tableName)
+        {
+            if (db == nullptr || tableName == nullptr || *tableName == '\0')
+            {
+                return false;
+            }
+
+            sqlite3_stmt* stmt = nullptr;
+            const int prepareRc = sqlite3_prepare_v2(
+                db,
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1;",
+                -1,
+                &stmt,
+                nullptr);
+            if (prepareRc != SQLITE_OK)
+            {
+                if (stmt != nullptr)
+                {
+                    sqlite3_finalize(stmt);
+                }
+                return false;
+            }
+
+            const std::string utf8Name = tableName;
+            sqlite3_bind_text(stmt, 1, utf8Name.c_str(), static_cast<int>(utf8Name.size()), SQLITE_TRANSIENT);
+            bool hasRow = false;
+            const int stepRc = sqlite3_step(stmt);
+            hasRow = (stepRc == SQLITE_ROW);
+            sqlite3_finalize(stmt);
+            return hasRow;
+        }
+
+        ErrorCode ReadSchemaVersionRaw(sqlite3* db, std::int32_t* outVersion)
+        {
+            if (db == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+            if (outVersion == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+
+            if (!HasTableRaw(db, "metadata"))
+            {
+                return SC_E_TABLE_NOT_FOUND;
+            }
+
+            sqlite3_stmt* stmt = nullptr;
+            const int prepareRc = sqlite3_prepare_v2(
+                db,
+                "SELECT value FROM metadata WHERE key = 'schema_version' LIMIT 1;",
+                -1,
+                &stmt,
+                nullptr);
+            if (prepareRc != SQLITE_OK)
+            {
+                if (stmt != nullptr)
+                {
+                    sqlite3_finalize(stmt);
+                }
+                return MapSqliteError(prepareRc);
+            }
+
+            bool hasRow = false;
+            const int stepRc = sqlite3_step(stmt);
+            hasRow = (stepRc == SQLITE_ROW);
+            if (stepRc != SQLITE_ROW && stepRc != SQLITE_DONE)
+            {
+                sqlite3_finalize(stmt);
+                return MapSqliteError(stepRc);
+            }
+            if (!hasRow)
+            {
+                sqlite3_finalize(stmt);
+                return SC_E_RECORD_NOT_FOUND;
+            }
+
+            try
+            {
+                const unsigned char* text = sqlite3_column_text(stmt, 0);
+                if (text == nullptr)
+                {
+                    sqlite3_finalize(stmt);
+                    return SC_E_INVALIDARG;
+                }
+                *outVersion = std::stoi(reinterpret_cast<const char*>(text));
+                sqlite3_finalize(stmt);
+                return SC_OK;
+            } catch (...)
+            {
+                sqlite3_finalize(stmt);
+                return SC_E_INVALIDARG;
+            }
         }
 
         bool TryParseInt64Strict(const std::wstring& text, std::int64_t* outValue)
@@ -4385,7 +4571,59 @@ namespace StableCore::Storage
 
         void SqliteDatabase::LoadJournalStacks()
         {
+            if (!HasTable(L"journal_transactions") || !HasTable(L"journal_entries") ||
+                !HasTable(L"journal_schema_entries"))
+            {
+                return;
+            }
+
             const bool supportsBinaryStorage = schemaVersion_ >= 4;
+            const bool supportsExtendedSchemaJournalColumns =
+                HasTableColumn("journal_schema_entries", "old_reference_storage_column") &&
+                HasTableColumn("journal_schema_entries", "old_reference_display_column") &&
+                HasTableColumn("journal_schema_entries", "new_reference_storage_column") &&
+                HasTableColumn("journal_schema_entries", "new_reference_display_column");
+            constexpr int kJournalSchemaSequenceIndex = 0;
+            constexpr int kJournalSchemaOpIndex = 1;
+            constexpr int kJournalSchemaTableNameIndex = 2;
+            constexpr int kJournalSchemaColumnNameIndex = 3;
+            constexpr int kJournalSchemaColumnRowIdIndex = 4;
+            constexpr int kJournalSchemaOldDisplayNameIndex = 5;
+            constexpr int kJournalSchemaOldValueKindIndex = 6;
+            constexpr int kJournalSchemaOldColumnKindIndex = 7;
+            constexpr int kJournalSchemaOldNullableIndex = 8;
+            constexpr int kJournalSchemaOldEditableIndex = 9;
+            constexpr int kJournalSchemaOldUserDefinedIndex = 10;
+            constexpr int kJournalSchemaOldIndexedIndex = 11;
+            constexpr int kJournalSchemaOldParticipatesIndex = 12;
+            constexpr int kJournalSchemaOldUnitIndex = 13;
+            constexpr int kJournalSchemaOldReferenceTableIndex = 14;
+            constexpr int kJournalSchemaOldReferenceStorageColumnIndex = 15;
+            constexpr int kJournalSchemaOldReferenceDisplayColumnIndex = 16;
+            constexpr int kJournalSchemaOldDefaultKindIndex = 17;
+            constexpr int kJournalSchemaOldDefaultInt64Index = 18;
+            constexpr int kJournalSchemaOldDefaultDoubleIndex = 19;
+            constexpr int kJournalSchemaOldDefaultBoolIndex = 20;
+            constexpr int kJournalSchemaOldDefaultTextIndex = 21;
+            constexpr int kJournalSchemaOldDefaultBlobIndex = 22;
+            constexpr int kJournalSchemaNewDisplayNameIndex = 23;
+            constexpr int kJournalSchemaNewValueKindIndex = 24;
+            constexpr int kJournalSchemaNewColumnKindIndex = 25;
+            constexpr int kJournalSchemaNewNullableIndex = 26;
+            constexpr int kJournalSchemaNewEditableIndex = 27;
+            constexpr int kJournalSchemaNewUserDefinedIndex = 28;
+            constexpr int kJournalSchemaNewIndexedIndex = 29;
+            constexpr int kJournalSchemaNewParticipatesIndex = 30;
+            constexpr int kJournalSchemaNewUnitIndex = 31;
+            constexpr int kJournalSchemaNewReferenceTableIndex = 32;
+            constexpr int kJournalSchemaNewReferenceStorageColumnIndex = 33;
+            constexpr int kJournalSchemaNewReferenceDisplayColumnIndex = 34;
+            constexpr int kJournalSchemaNewDefaultKindIndex = 35;
+            constexpr int kJournalSchemaNewDefaultInt64Index = 36;
+            constexpr int kJournalSchemaNewDefaultDoubleIndex = 37;
+            constexpr int kJournalSchemaNewDefaultBoolIndex = 38;
+            constexpr int kJournalSchemaNewDefaultTextIndex = 39;
+            constexpr int kJournalSchemaNewDefaultBlobIndex = 40;
             SqliteStmt txStmt = db_.Prepare(
                 "SELECT tx_id, action_name, committed_version, stack_kind FROM "
                 "journal_transactions ORDER BY stack_kind, stack_order;");
@@ -4490,65 +4728,174 @@ namespace StableCore::Storage
                     entries.push_back(std::move(persistedEntry));
                 }
 
-                SqliteStmt schemaStmt =
-                    db_.Prepare(supportsBinaryStorage ? "SELECT sequence_index, op, table_name, column_name, "
-                                                        "column_rowid, old_display_name, old_value_kind, "
-                                                        "old_column_kind, old_nullable, old_editable, "
-                                                        "old_user_defined, old_indexed, "
-                                                        "old_participates_in_calc, old_unit, "
-                                                        "old_reference_table, old_reference_storage_column, "
-                                                        "old_reference_display_column, old_default_kind, "
-                                                        "old_default_int64, old_default_double, "
-                                                        "old_default_bool, old_default_text, "
-                                                        "old_default_blob, new_display_name, "
-                                                        "new_value_kind, new_column_kind, new_nullable, "
-                                                        "new_editable, new_user_defined, new_indexed, "
-                                                        "new_participates_in_calc, new_unit, "
-                                                        "new_reference_table, new_reference_storage_column, "
-                                                        "new_reference_display_column, new_default_kind, "
-                                                        "new_default_int64, new_default_double, "
-                                                        "new_default_bool, new_default_text, "
-                                                        "new_default_blob FROM journal_schema_entries "
-                                                        "WHERE tx_id = ?;"
-                                                      : "SELECT sequence_index, op, table_name, column_name, "
-                                                        "column_rowid, old_display_name, old_value_kind, "
-                                                        "old_column_kind, old_nullable, old_editable, "
-                                                        "old_user_defined, old_indexed, "
-                                                        "old_participates_in_calc, old_unit, "
-                                                        "old_reference_table, old_reference_storage_column, "
-                                                        "old_reference_display_column, old_default_kind, "
-                                                        "old_default_int64, old_default_double, "
-                                                        "old_default_bool, old_default_text, "
-                                                        "new_display_name, new_value_kind, new_column_kind, "
-                                                        "new_nullable, new_editable, new_user_defined, "
-                                                        "new_indexed, new_participates_in_calc, new_unit, "
-                                                        "new_reference_table, new_reference_storage_column, "
-                                                        "new_reference_display_column, new_default_kind, "
-                                                        "new_default_int64, new_default_double, "
-                                                        "new_default_bool, new_default_text FROM "
-                                                        "journal_schema_entries WHERE tx_id = ?;");
+                SqliteStmt schemaStmt = db_.Prepare(
+                    supportsBinaryStorage
+                        ? (supportsExtendedSchemaJournalColumns
+                               ? "SELECT sequence_index, op, table_name, column_name, "
+                                 "column_rowid, old_display_name, old_value_kind, "
+                                 "old_column_kind, old_nullable, old_editable, "
+                                 "old_user_defined, old_indexed, "
+                                 "old_participates_in_calc, old_unit, "
+                                 "old_reference_table, old_reference_storage_column, "
+                                 "old_reference_display_column, old_default_kind, "
+                                 "old_default_int64, old_default_double, "
+                                 "old_default_bool, old_default_text, "
+                                 "old_default_blob, new_display_name, "
+                                 "new_value_kind, new_column_kind, new_nullable, "
+                                 "new_editable, new_user_defined, new_indexed, "
+                                 "new_participates_in_calc, new_unit, "
+                                 "new_reference_table, new_reference_storage_column, "
+                                 "new_reference_display_column, new_default_kind, "
+                                 "new_default_int64, new_default_double, "
+                                 "new_default_bool, new_default_text, "
+                                 "new_default_blob FROM journal_schema_entries WHERE tx_id = ?;"
+                               : "SELECT sequence_index, op, table_name, column_name, "
+                                 "column_rowid, old_display_name, old_value_kind, "
+                                 "old_column_kind, old_nullable, old_editable, "
+                                 "old_user_defined, old_indexed, "
+                                 "old_participates_in_calc, old_unit, "
+                                 "old_reference_table, '' AS old_reference_storage_column, "
+                                 "'' AS old_reference_display_column, old_default_kind, "
+                                 "old_default_int64, old_default_double, "
+                                 "old_default_bool, old_default_text, "
+                                 "old_default_blob, new_display_name, "
+                                 "new_value_kind, new_column_kind, new_nullable, "
+                                 "new_editable, new_user_defined, new_indexed, "
+                                 "new_participates_in_calc, new_unit, "
+                                 "new_reference_table, '' AS new_reference_storage_column, "
+                                 "'' AS new_reference_display_column, new_default_kind, "
+                                 "new_default_int64, new_default_double, "
+                                 "new_default_bool, new_default_text, "
+                                 "new_default_blob FROM journal_schema_entries WHERE tx_id = ?;")
+                        : (supportsExtendedSchemaJournalColumns
+                               ? "SELECT sequence_index, op, table_name, column_name, "
+                                 "column_rowid, old_display_name, old_value_kind, "
+                                 "old_column_kind, old_nullable, old_editable, "
+                                 "old_user_defined, old_indexed, "
+                                 "old_participates_in_calc, old_unit, "
+                                 "old_reference_table, old_reference_storage_column, "
+                                 "old_reference_display_column, old_default_kind, "
+                                 "old_default_int64, old_default_double, "
+                                 "old_default_bool, old_default_text, "
+                                 "new_display_name, new_value_kind, new_column_kind, "
+                                 "new_nullable, new_editable, new_user_defined, "
+                                 "new_indexed, new_participates_in_calc, new_unit, "
+                                 "new_reference_table, new_reference_storage_column, "
+                                 "new_reference_display_column, new_default_kind, "
+                                 "new_default_int64, new_default_double, "
+                                 "new_default_bool, new_default_text FROM "
+                                 "journal_schema_entries WHERE tx_id = ?;"
+                               : "SELECT sequence_index, op, table_name, column_name, "
+                                 "column_rowid, old_display_name, old_value_kind, "
+                                 "old_column_kind, old_nullable, old_editable, "
+                                 "old_user_defined, old_indexed, "
+                                 "old_participates_in_calc, old_unit, "
+                                 "old_reference_table, '' AS old_reference_storage_column, "
+                                 "'' AS old_reference_display_column, old_default_kind, "
+                                 "old_default_int64, old_default_double, "
+                                 "old_default_bool, old_default_text, "
+                                 "new_display_name, new_value_kind, new_column_kind, "
+                                 "new_nullable, new_editable, new_user_defined, "
+                                 "new_indexed, new_participates_in_calc, new_unit, "
+                                 "new_reference_table, '' AS new_reference_storage_column, "
+                                 "'' AS new_reference_display_column, new_default_kind, "
+                                 "new_default_int64, new_default_double, "
+                                 "new_default_bool, new_default_text FROM "
+                                 "journal_schema_entries WHERE tx_id = ?;"));
                 schemaStmt.BindInt64(1, persisted.txId);
                 hasEntry = false;
                 while (schemaStmt.Step(&hasEntry) == SC_OK && hasEntry)
                 {
                     SqlitePersistedJournalEntry persistedEntry;
-                    persistedEntry.sequenceIndex = schemaStmt.ColumnInt(0);
+                    persistedEntry.sequenceIndex = schemaStmt.ColumnInt(kJournalSchemaSequenceIndex);
                     JournalEntry entry;
-                    entry.op = FromSqliteJournalOp(schemaStmt.ColumnInt(1));
-                    entry.tableName = schemaStmt.ColumnText(2);
-                    entry.fieldName = schemaStmt.ColumnText(3);
-                    entry.columnRowId = schemaStmt.ColumnInt64(4);
+                    entry.op = FromSqliteJournalOp(schemaStmt.ColumnInt(kJournalSchemaOpIndex));
+                    entry.tableName = schemaStmt.ColumnText(kJournalSchemaTableNameIndex);
+                    entry.fieldName = schemaStmt.ColumnText(kJournalSchemaColumnNameIndex);
+                    entry.columnRowId = schemaStmt.ColumnInt64(kJournalSchemaColumnRowIdIndex);
                     entry.oldColumn = supportsBinaryStorage
                                           ? ReadColumnDefFromStorage(
-                                                schemaStmt, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22)
+                                                schemaStmt,
+                                                kJournalSchemaOldDisplayNameIndex,
+                                                kJournalSchemaOldValueKindIndex,
+                                                kJournalSchemaOldColumnKindIndex,
+                                                kJournalSchemaOldNullableIndex,
+                                                kJournalSchemaOldEditableIndex,
+                                                kJournalSchemaOldUserDefinedIndex,
+                                                kJournalSchemaOldIndexedIndex,
+                                                kJournalSchemaOldParticipatesIndex,
+                                                kJournalSchemaOldUnitIndex,
+                                                kJournalSchemaOldReferenceTableIndex,
+                                                kJournalSchemaOldReferenceStorageColumnIndex,
+                                                kJournalSchemaOldReferenceDisplayColumnIndex,
+                                                kJournalSchemaOldDefaultKindIndex,
+                                                kJournalSchemaOldDefaultInt64Index,
+                                                kJournalSchemaOldDefaultDoubleIndex,
+                                                kJournalSchemaOldDefaultBoolIndex,
+                                                kJournalSchemaOldDefaultTextIndex,
+                                                kJournalSchemaOldDefaultBlobIndex)
                                           : ReadColumnDefFromStorage(
-                                                schemaStmt, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 21);
+                                                schemaStmt,
+                                                kJournalSchemaOldDisplayNameIndex,
+                                                kJournalSchemaOldValueKindIndex,
+                                                kJournalSchemaOldColumnKindIndex,
+                                                kJournalSchemaOldNullableIndex,
+                                                kJournalSchemaOldEditableIndex,
+                                                kJournalSchemaOldUserDefinedIndex,
+                                                kJournalSchemaOldIndexedIndex,
+                                                kJournalSchemaOldParticipatesIndex,
+                                                kJournalSchemaOldUnitIndex,
+                                                kJournalSchemaOldReferenceTableIndex,
+                                                kJournalSchemaOldReferenceStorageColumnIndex,
+                                                kJournalSchemaOldReferenceDisplayColumnIndex,
+                                                kJournalSchemaOldDefaultKindIndex,
+                                                kJournalSchemaOldDefaultInt64Index,
+                                                kJournalSchemaOldDefaultDoubleIndex,
+                                                kJournalSchemaOldDefaultBoolIndex,
+                                                kJournalSchemaOldDefaultTextIndex,
+                                                kJournalSchemaOldDefaultTextIndex);
                     entry.newColumn =
                         supportsBinaryStorage
                             ? ReadColumnDefFromStorage(
-                                  schemaStmt, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40)
+                                  schemaStmt,
+                                  kJournalSchemaNewDisplayNameIndex,
+                                  kJournalSchemaNewValueKindIndex,
+                                  kJournalSchemaNewColumnKindIndex,
+                                  kJournalSchemaNewNullableIndex,
+                                  kJournalSchemaNewEditableIndex,
+                                  kJournalSchemaNewUserDefinedIndex,
+                                  kJournalSchemaNewIndexedIndex,
+                                  kJournalSchemaNewParticipatesIndex,
+                                  kJournalSchemaNewUnitIndex,
+                                  kJournalSchemaNewReferenceTableIndex,
+                                  kJournalSchemaNewReferenceStorageColumnIndex,
+                                  kJournalSchemaNewReferenceDisplayColumnIndex,
+                                  kJournalSchemaNewDefaultKindIndex,
+                                  kJournalSchemaNewDefaultInt64Index,
+                                  kJournalSchemaNewDefaultDoubleIndex,
+                                  kJournalSchemaNewDefaultBoolIndex,
+                                  kJournalSchemaNewDefaultTextIndex,
+                                  kJournalSchemaNewDefaultBlobIndex)
                             : ReadColumnDefFromStorage(
-                                  schemaStmt, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 38);
+                                  schemaStmt,
+                                  kJournalSchemaNewDisplayNameIndex,
+                                  kJournalSchemaNewValueKindIndex,
+                                  kJournalSchemaNewColumnKindIndex,
+                                  kJournalSchemaNewNullableIndex,
+                                  kJournalSchemaNewEditableIndex,
+                                  kJournalSchemaNewUserDefinedIndex,
+                                  kJournalSchemaNewIndexedIndex,
+                                  kJournalSchemaNewParticipatesIndex,
+                                  kJournalSchemaNewUnitIndex,
+                                  kJournalSchemaNewReferenceTableIndex,
+                                  kJournalSchemaNewReferenceStorageColumnIndex,
+                                  kJournalSchemaNewReferenceDisplayColumnIndex,
+                                  kJournalSchemaNewDefaultKindIndex,
+                                  kJournalSchemaNewDefaultInt64Index,
+                                  kJournalSchemaNewDefaultDoubleIndex,
+                                  kJournalSchemaNewDefaultBoolIndex,
+                                  kJournalSchemaNewDefaultTextIndex,
+                                  kJournalSchemaNewDefaultTextIndex);
                     persistedEntry.entry = std::move(entry);
                     entries.push_back(std::move(persistedEntry));
                 }
@@ -10489,8 +10836,24 @@ namespace StableCore::Storage
                 }
             };
 
+            const std::filesystem::path filePath(path);
+
             if (options.openMode == SCDatabaseOpenMode::ReadOnly)
             {
+                std::int32_t currentVersion = 0;
+                if (IsInspectableFile(filePath))
+                {
+                    const ErrorCode versionRc = ReadSchemaVersionFromFile(filePath, &currentVersion);
+                    if (Failed(versionRc))
+                    {
+                        return versionRc;
+                    }
+
+                    if (currentVersion != GetLatestSupportedSchemaVersion())
+                    {
+                        return SC_E_NOTIMPL;
+                    }
+                }
                 SCOpenDatabaseOptions readOnlyOptions = options;
                 readOnlyOptions.openMode = SCDatabaseOpenMode::ReadOnly;
 
@@ -10501,13 +10864,29 @@ namespace StableCore::Storage
                     return rc;
                 }
 
-                const std::int32_t currentVersion = readOnlyDatabase->GetSchemaVersion();
-                if (currentVersion != GetLatestSupportedSchemaVersion())
-                {
-                    return SC_E_NOTIMPL;
-                }
                 outDatabase = std::move(readOnlyDatabase);
                 return SC_OK;
+            }
+
+            if (IsInspectableFile(filePath))
+            {
+                UpgradeOpenInspection inspection;
+                const ErrorCode inspectRc = InspectDatabaseForOpenOrUpgrade(filePath, &inspection);
+                if (Failed(inspectRc))
+                {
+                    return inspectRc;
+                }
+
+                if (!inspection.hasMetadataTable)
+                {
+                    return SC_E_INVALIDARG;
+                }
+
+                if (!inspection.hasJournalTransactionsTable || !inspection.hasJournalEntriesTable ||
+                    !inspection.hasJournalSchemaEntriesTable)
+                {
+                    return SC_E_JOURNAL_TABLE_MISSING;
+                }
             }
 
             SCDbPtr database;
@@ -10567,48 +10946,57 @@ namespace StableCore::Storage
                 return SC_E_INVALIDARG;
             }
 
+            UpgradeOpenInspection inspection;
+            const ErrorCode inspectRc = InspectDatabaseForOpenOrUpgrade(filePath, &inspection);
+            if (Failed(inspectRc))
             {
-                sqlite3* probeDb = nullptr;
-                const std::string probePath = ToUtf8(std::wstring{path});
-                if (sqlite3_open_v2(probePath.c_str(), &probeDb, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK)
+                if (outResult != nullptr)
                 {
-                    if (probeDb != nullptr)
-                    {
-                        sqlite3_close(probeDb);
-                    }
+                    outResult->status = SCUpgradeStatus::Failed;
+                    outResult->failureReason = L"Failed to inspect database for upgrade.";
+                }
+                return inspectRc;
+            }
+
+            if (!inspection.hasMetadataTable)
+            {
+                if (outResult != nullptr)
+                {
+                    outResult->status = SCUpgradeStatus::Unsupported;
+                    outResult->failureReason = L"Database file does not contain the metadata table.";
+                }
+                return SC_E_INVALIDARG;
+            }
+
+            if (!inspection.hasJournalTransactionsTable || !inspection.hasJournalEntriesTable ||
+                !inspection.hasJournalSchemaEntriesTable)
+            {
+                if (outResult != nullptr)
+                {
+                    outResult->status = SCUpgradeStatus::Unsupported;
+                    outResult->sourceVersion = inspection.schemaVersion;
+                    outResult->targetVersion = GetLatestSupportedSchemaVersion();
+                    outResult->failureReason = L"Database is missing required journal tables.";
+                }
+                return SC_E_JOURNAL_TABLE_MISSING;
+            }
+
+            const std::int32_t targetVersion = GetLatestSupportedSchemaVersion();
+            if (inspection.schemaVersion != targetVersion)
+            {
+                SCUpgradePlan upgradePlan;
+                const ErrorCode planRc =
+                    BuildRegisteredUpgradePlan(inspection.schemaVersion, targetVersion, &upgradePlan);
+                if (Failed(planRc))
+                {
                     if (outResult != nullptr)
                     {
                         outResult->status = SCUpgradeStatus::Unsupported;
-                        outResult->failureReason = L"Database file could not be opened for inspection.";
+                        outResult->sourceVersion = inspection.schemaVersion;
+                        outResult->targetVersion = targetVersion;
+                        outResult->failureReason = L"No registered upgrade path was found.";
                     }
-                    return SC_E_INVALIDARG;
-                }
-
-                bool hasMetadataTable = false;
-                sqlite3_stmt* probeStmt = nullptr;
-                if (sqlite3_prepare_v2(
-                        probeDb,
-                        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'metadata' LIMIT 1;",
-                        -1,
-                        &probeStmt,
-                        nullptr) == SQLITE_OK)
-                {
-                    hasMetadataTable = sqlite3_step(probeStmt) == SQLITE_ROW;
-                }
-                if (probeStmt != nullptr)
-                {
-                    sqlite3_finalize(probeStmt);
-                }
-                sqlite3_close(probeDb);
-
-                if (!hasMetadataTable)
-                {
-                    if (outResult != nullptr)
-                    {
-                        outResult->status = SCUpgradeStatus::Unsupported;
-                        outResult->failureReason = L"Database file does not contain the metadata table.";
-                    }
-                    return SC_E_INVALIDARG;
+                    return SC_E_UPGRADE_PATH_NOT_FOUND;
                 }
             }
 
@@ -10657,7 +11045,6 @@ namespace StableCore::Storage
             }
 
             const std::int32_t currentVersion = sqliteDb->GetSchemaVersion();
-            const std::int32_t targetVersion = GetLatestSupportedSchemaVersion();
             if (currentVersion == targetVersion)
             {
                 if (outResult != nullptr)

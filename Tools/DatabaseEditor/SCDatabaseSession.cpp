@@ -4198,6 +4198,14 @@ namespace StableCore::Storage::Editor
         {
             return QStringLiteral("当前版本尚未支持该数据库格式的自动升级。");
         }
+        if (error == sc::SC_E_UPGRADE_PATH_NOT_FOUND)
+        {
+            return QStringLiteral("数据库版本过旧，且没有可用的升级路径。");
+        }
+        if (error == sc::SC_E_JOURNAL_TABLE_MISSING)
+        {
+            return QStringLiteral("数据库缺少必要的 journal 表，无法继续打开。");
+        }
         return QStringLiteral("Storage error: 0x") +
                QString::number(static_cast<qulonglong>(error), 16);
     }

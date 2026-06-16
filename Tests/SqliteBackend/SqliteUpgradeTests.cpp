@@ -7,92 +7,10 @@
 #include "SCStorage.h"
 
 #include "Support/TestPaths.h"
+#include "Support/TestSqliteHelpers.h"
 
 namespace sc = StableCore::Storage;
 namespace fs = std::filesystem;
-
-namespace
-{
-    sc::ErrorCode CreateFileDb(const wchar_t* path, sc::SCDbPtr& db)
-    {
-        return sc::CreateFileDatabase(path, sc::SCOpenDatabaseOptions{}, db);
-    }
-
-    sc::ErrorCode CreateReadOnlyFileDb(const wchar_t* path, sc::SCDbPtr& db)
-    {
-        sc::SCOpenDatabaseOptions options;
-        options.openMode = sc::SCDatabaseOpenMode::ReadOnly;
-        return sc::CreateFileDatabase(path, options, db);
-    }
-
-    bool ExecSqliteScript(const fs::path& dbPath, const char* sql)
-    {
-        sqlite3* db = nullptr;
-        const std::string narrowPath = dbPath.string();
-        if (sqlite3_open_v2(narrowPath.c_str(), &db, SQLITE_OPEN_READWRITE, nullptr) != SQLITE_OK)
-        {
-            if (db != nullptr)
-            {
-                sqlite3_close(db);
-            }
-            return false;
-        }
-
-        char* error = nullptr;
-        const int rc = sqlite3_exec(db, sql, nullptr, nullptr, &error);
-        if (error != nullptr)
-        {
-            sqlite3_free(error);
-        }
-        sqlite3_close(db);
-        return rc == SQLITE_OK;
-    }
-
-    bool QuerySqliteInt64(const fs::path& dbPath, const char* sql, std::int64_t* outValue)
-    {
-        if (outValue == nullptr)
-        {
-            return false;
-        }
-
-        sqlite3* db = nullptr;
-        const std::string narrowPath = dbPath.string();
-        if (sqlite3_open_v2(narrowPath.c_str(), &db, SQLITE_OPEN_READWRITE, nullptr) != SQLITE_OK)
-        {
-            if (db != nullptr)
-            {
-                sqlite3_close(db);
-            }
-            return false;
-        }
-
-        sqlite3_stmt* stmt = nullptr;
-        const int prepareRc = sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
-        if (prepareRc != SQLITE_OK)
-        {
-            sqlite3_close(db);
-            return false;
-        }
-
-        const int stepRc = sqlite3_step(stmt);
-        bool ok = false;
-        if (stepRc == SQLITE_ROW)
-        {
-            *outValue = sqlite3_column_int64(stmt, 0);
-            ok = true;
-        }
-
-        sqlite3_finalize(stmt);
-        sqlite3_close(db);
-        return ok;
-    }
-
-    bool SetMetadataValue(const fs::path& dbPath, const char* key, const char* value)
-    {
-        const std::string sql = std::string("UPDATE metadata SET value='") + value + "' WHERE key='" + key + "';";
-        return ExecSqliteScript(dbPath, sql.c_str());
-    }
-}
 
 // 改写自 VersionGraphReportsUpgradeWindow
 // 新语义：低于发布基线的版本应被明确拒绝，不进入 upgrade required
@@ -235,6 +153,77 @@ TEST(SqliteUpgrade, CreateFileDatabaseAutoUpgradesRegisteredRelationVersion)
 
     std::int64_t schemaVersionAfterOpen = 0;
     EXPECT_TRUE(
-        QuerySqliteInt64(dbPath, "SELECT value FROM metadata WHERE key='schema_version'", &schemaVersionAfterOpen));
+    QuerySqliteInt64(dbPath, "SELECT value FROM metadata WHERE key='schema_version'", &schemaVersionAfterOpen));
     EXPECT_EQ(schemaVersionAfterOpen, 6);
+}
+
+TEST(SqliteUpgrade, MissingJournalTablesAreReportedExplicitly)
+{
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_MissingJournalTables.sqlite");
+
+    sc::SCDbPtr seedDb;
+    EXPECT_EQ(sc::CreateFileDatabase(dbPath.c_str(), sc::SCOpenDatabaseOptions{}, seedDb), sc::SC_OK);
+    seedDb.Reset();
+
+    EXPECT_TRUE(ExecSqliteScript(dbPath, "DROP TABLE journal_entries;"));
+    EXPECT_TRUE(ExecSqliteScript(dbPath, "DROP TABLE journal_schema_entries;"));
+    EXPECT_TRUE(ExecSqliteScript(dbPath, "DROP TABLE journal_transactions;"));
+    EXPECT_TRUE(SetMetadataValue(dbPath, "schema_version", "5"));
+
+    sc::SCDbPtr reopenedDb;
+    const sc::ErrorCode openRc = sc::CreateFileDatabase(dbPath.c_str(), sc::SCOpenDatabaseOptions{}, reopenedDb);
+    EXPECT_EQ(openRc, sc::SC_E_JOURNAL_TABLE_MISSING);
+    EXPECT_FALSE(reopenedDb);
+}
+
+TEST(SqliteUpgrade, MissingUpgradePathIsReportedExplicitly)
+{
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_MissingUpgradePath.sqlite");
+
+    sc::SCDbPtr seedDb;
+    EXPECT_EQ(sc::CreateFileDatabase(dbPath.c_str(), sc::SCOpenDatabaseOptions{}, seedDb), sc::SC_OK);
+    seedDb.Reset();
+
+    EXPECT_TRUE(SetMetadataValue(dbPath, "schema_version", "1"));
+
+    sc::SCDbPtr reopenedDb;
+    const sc::ErrorCode openRc = sc::CreateFileDatabase(dbPath.c_str(), sc::SCOpenDatabaseOptions{}, reopenedDb);
+    EXPECT_EQ(openRc, sc::SC_E_UPGRADE_PATH_NOT_FOUND);
+    EXPECT_FALSE(reopenedDb);
+}
+
+TEST(SqliteUpgrade, SchemaVersionFiveWithLegacyJournalSchemaOpensAndUpgrades)
+{
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_LegacyJournalSchema.sqlite");
+
+    sc::SCDbPtr seedDb;
+    EXPECT_EQ(sc::CreateFileDatabase(dbPath.c_str(), sc::SCOpenDatabaseOptions{}, seedDb), sc::SC_OK);
+    seedDb.Reset();
+
+    EXPECT_TRUE(ExecSqliteScript(
+        dbPath,
+        "DROP TABLE journal_schema_entries;"
+        "CREATE TABLE journal_schema_entries ("
+        "tx_id INTEGER NOT NULL, sequence_index INTEGER NOT NULL, op INTEGER NOT NULL, "
+        "table_name TEXT NOT NULL, column_name TEXT NOT NULL, column_rowid INTEGER NOT NULL, "
+        "old_display_name TEXT, old_value_kind INTEGER, old_column_kind INTEGER, old_nullable INTEGER, "
+        "old_editable INTEGER, old_user_defined INTEGER, old_indexed INTEGER, "
+        "old_participates_in_calc INTEGER, old_unit TEXT, old_reference_table TEXT, "
+        "old_default_kind INTEGER, old_default_int64 INTEGER, old_default_double REAL, "
+        "old_default_bool INTEGER, old_default_text TEXT, old_default_blob BLOB, "
+        "new_display_name TEXT, new_value_kind INTEGER, new_column_kind INTEGER, new_nullable INTEGER, "
+        "new_editable INTEGER, new_user_defined INTEGER, new_indexed INTEGER, "
+        "new_participates_in_calc INTEGER, new_unit TEXT, new_reference_table TEXT, "
+        "new_default_kind INTEGER, new_default_int64 INTEGER, new_default_double REAL, "
+        "new_default_bool INTEGER, new_default_text TEXT, new_default_blob BLOB, "
+        "PRIMARY KEY(tx_id, sequence_index));"));
+    EXPECT_TRUE(SetMetadataValue(dbPath, "schema_version", "5"));
+
+    sc::SCDbPtr reopenedDb;
+    const sc::ErrorCode openRc = sc::CreateFileDatabase(dbPath.c_str(), sc::SCOpenDatabaseOptions{}, reopenedDb);
+    EXPECT_EQ(openRc, sc::SC_OK);
+    ASSERT_TRUE(reopenedDb);
+    EXPECT_EQ(reopenedDb->GetSchemaVersion(), 6);
+    EXPECT_TRUE(SqliteTableHasColumn(dbPath, "journal_schema_entries", "old_reference_storage_column"));
+    EXPECT_TRUE(SqliteTableHasColumn(dbPath, "journal_schema_entries", "new_reference_storage_column"));
 }

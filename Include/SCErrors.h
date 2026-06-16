@@ -43,6 +43,8 @@ namespace StableCore::Storage
     constexpr ErrorCode SC_E_FILE_EXISTS = 0xA0010308L;
     constexpr ErrorCode SC_E_VALIDATION_FAILED = 0xA0010309L;
     constexpr ErrorCode SC_E_IO_ERROR = 0xA001030AL;
+    constexpr ErrorCode SC_E_UPGRADE_PATH_NOT_FOUND = 0xA001030BL;
+    constexpr ErrorCode SC_E_JOURNAL_TABLE_MISSING = 0xA001030CL;
 
     inline bool Succeeded(ErrorCode code) noexcept
     {
