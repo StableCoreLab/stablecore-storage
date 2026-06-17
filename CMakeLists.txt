@@ -202,7 +202,7 @@ if (SCSTORAGE_BUILD_DB_EDITOR)
     set(CMAKE_AUTOUIC OFF)
     set(CMAKE_AUTORCC OFF)
 
-    find_package(Qt6 6.8 REQUIRED COMPONENTS Widgets)
+    find_package(Qt6 6.8 REQUIRED COMPONENTS Widgets Svg)
     add_subdirectory(Tools/DatabaseEditor)
 endif()
 
@@ -431,3 +431,5 @@ install(FILES
     ${CMAKE_CURRENT_BINARY_DIR}/SCStorageConfigVersion.cmake
     DESTINATION ${SCSTORAGE_INSTALL_CMAKE_DIR}
 )
+
+

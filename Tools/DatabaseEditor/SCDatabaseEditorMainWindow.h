@@ -5,20 +5,18 @@
 #include <QLineEdit>
 #include <QLabel>
 #include <QMainWindow>
-#include <QModelIndex>
 #include <QPoint>
 #include <QPlainTextEdit>
-#include <QTableView>
 #include <QToolBar>
 #include <QTabWidget>
 #include <QTreeWidgetItem>
 #include <QTreeWidget>
 
+#include <SCTreeGrid/SCTreeGridCtrl.h>
+
 #include "SCAddColumnDialog.h"
 #include "SCComputedColumnDialog.h"
 #include "SCDatabaseSession.h"
-#include "SCRecordFilterProxyModel.h"
-#include "SCRecordTableModel.h"
 #include "SCRelationPickerDialog.h"
 
 namespace StableCore::Storage::Editor
@@ -65,8 +63,7 @@ namespace StableCore::Storage::Editor
         void OnSchemaContextMenuRequested(const QPoint& pos);
         void OnGridContextMenuRequested(const QPoint& pos);
         void OnTableSelectionChanged();
-        void OnGridSelectionChanged();
-        void OnGridHeaderClicked(int logicalIndex);
+        void OnGridCellSelected(int row, int col);
         void OnFilterTextChanged(const QString& text);
         void UpdateSchemaInspector();
         void UpdateRecordInspector();
@@ -79,13 +76,26 @@ namespace StableCore::Storage::Editor
         void RefreshObjectExplorer();
 
     private:
-        QModelIndex CurrentSourceIndex() const;
+        struct GridRowData
+        {
+            StableCore::Storage::RecordId recordId{0};
+            QString filterText;
+        };
+
+        int CurrentRow() const;
+        int CurrentColumn() const;
+        StableCore::Storage::RecordId RecordIdAt(int row) const;
+        StableCore::Storage::SCTableViewColumnDef ColumnAt(int col) const;
+
         QString CurrentSchemaColumnName() const;
         QString CurrentComputedColumnName() const;
         void SelectSchemaColumnByName(const QString& name);
         void SelectComputedColumnByName(const QString& name);
         void BuildUi();
         void BuildMenus();
+        void WireGridCallbacks();
+        void RefreshGridData();
+        bool RowPassesQuickFilter(int row) const;
         void ShowError(const QString& title, const QString& message);
         void SetStatusMessage(const QString& text);
         bool ExportCurrentTableCsvFile(const QString& filePath,
@@ -94,8 +104,13 @@ namespace StableCore::Storage::Editor
                                            QString* outError);
 
         SCDatabaseSession* session_{nullptr};
-        SCRecordTableModel* recordModel_{nullptr};
-        SCRecordFilterProxyModel* filterModel_{nullptr};
+
+        // Grid state
+        SCTreeGrid* dataTable_{nullptr};
+        QVector<StableCore::Storage::SCTableViewColumnDef> columns_;
+        QVector<GridRowData> visibleRows_;
+        int currentRow_{-1};
+        int currentColumn_{-1};
 
         QDockWidget* objectExplorerDock_{nullptr};
         QTreeWidget* objectTree_{nullptr};
@@ -111,7 +126,6 @@ namespace StableCore::Storage::Editor
         QAction* redoAction_{nullptr};
         QAction* savePendingChangesAction_{nullptr};
         QAction* discardPendingChangesAction_{nullptr};
-        QTableView* dataTable_{nullptr};
         QLineEdit* filterEdit_{nullptr};
         QDockWidget* inspectorDock_{nullptr};
         QTabWidget* inspectorTabs_{nullptr};
