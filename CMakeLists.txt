@@ -198,12 +198,40 @@ target_link_libraries(${SCSTORAGE_SCHEMA_EDIT_EXAMPLE_TARGET}
 SCStorageSourceGroupTree("${CMAKE_CURRENT_SOURCE_DIR}" Examples/SchemaEditExample.cpp)
 
 if (SCSTORAGE_BUILD_DB_EDITOR)
-    set(CMAKE_AUTOMOC ON)
-    set(CMAKE_AUTOUIC OFF)
-    set(CMAKE_AUTORCC OFF)
+    list(APPEND CMAKE_PREFIX_PATH "${CMAKE_CURRENT_SOURCE_DIR}/Extern/stablecore")
 
-    find_package(Qt6 6.8 REQUIRED COMPONENTS Widgets Svg)
-    add_subdirectory(Tools/DatabaseEditor)
+    set(_SCSTORAGE_STABLECORE_UI_DIR
+        "${CMAKE_CURRENT_SOURCE_DIR}/Extern/stablecore/Lib/cmake/stablecore_ui"
+    )
+
+    if (EXISTS "${_SCSTORAGE_STABLECORE_UI_DIR}/stablecore_uiConfig.cmake")
+        set(stablecore_ui_DIR
+            "${_SCSTORAGE_STABLECORE_UI_DIR}"
+            CACHE PATH "stablecore_ui CMake directory"
+            FORCE
+        )
+    endif()
+
+    # DatabaseEditor is optional; missing UI dependencies must not block core solution generation.
+    find_package(stablecore_ui CONFIG QUIET)
+
+    if (stablecore_ui_FOUND)
+        find_package(Qt6 6.8 QUIET COMPONENTS Widgets Svg)
+    endif()
+
+    if (stablecore_ui_FOUND AND Qt6_FOUND)
+        set(CMAKE_AUTOMOC ON)
+        set(CMAKE_AUTOUIC OFF)
+        set(CMAKE_AUTORCC OFF)
+
+        add_subdirectory(Tools/DatabaseEditor)
+    else()
+        set(SCSTORAGE_BUILD_DB_EDITOR OFF CACHE BOOL "Build the Qt database editor tool" FORCE)
+        message(WARNING
+            "Skipping SCStorageDatabaseEditor because optional dependencies are missing "
+            "(stablecore_ui and/or Qt6 Widgets/Svg)."
+        )
+    endif()
 endif()
 
 option(SCSTORAGE_BUILD_TESTS "Build tests" ON)
@@ -431,5 +459,3 @@ install(FILES
     ${CMAKE_CURRENT_BINARY_DIR}/SCStorageConfigVersion.cmake
     DESTINATION ${SCSTORAGE_INSTALL_CMAKE_DIR}
 )
-
-
