@@ -1,3 +1,4 @@
+pushd
 @echo off
 setlocal
 
@@ -23,4 +24,4 @@ echo Solution generated successfully:
 echo   %BUILD_DIR%\SCStorage.sln
 
 endlocal
-
+popd
