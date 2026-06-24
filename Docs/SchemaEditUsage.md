@@ -191,3 +191,44 @@ Design direction is documented in:
 
 Callers that need to modify an existing constraint or index should currently
 express that as `remove + add` within one patch request.
+
+`Unique` and `PrimaryKey` constraints are enforced during record creation,
+value writes, commit, undo, redo, and when adding the constraint to an
+existing table. Violations return `SC_E_CONSTRAINT_VIOLATION`.
+
+Semantic notes:
+
+- `Unique` uses tuple comparison across the declared column order.
+- `Unique` follows NULL-friendly behavior: if any participating column is
+  NULL, that row does not participate in duplicate comparison.
+- `PrimaryKey` is strict: all participating columns must be non-NULL.
+- Deleted records do not participate in uniqueness checks.
+- When adding a `Unique` or `PrimaryKey` constraint to an existing table, the
+  backend scans current live rows first; if duplicates or NULL primary-key
+  values already exist, the add operation is rejected and no partial schema
+  change is kept.
+- Constraint enforcement is checked both during writes and again at commit /
+  undo / redo, so the final stored state must always satisfy the constraint.
+- `Check` constraints are parsed into a backend AST and evaluated against the
+  row values at write time and again during commit / undo / redo. Invalid
+  syntax or unknown column references are treated as schema violations.
+- The current check-expression subset supports literals, column references,
+  parentheses, arithmetic operators, comparison operators, and `AND` / `OR`
+  / `NOT`.
+- `ForeignKey` constraints now support action metadata:
+  - `Restrict` / `NoAction`
+  - `Cascade`
+  - `SetNull`
+  - `SetDefault`
+- `Restrict` and `NoAction` reject any change that would break the reference.
+- `Cascade` propagates the parent delete/update to referencing rows.
+- `SetNull` clears the referencing columns.
+- `SetDefault` restores the referencing columns to their default values.
+- `SetNull` requires the referencing columns to be nullable.
+- `SetDefault` requires the referencing columns to have schema defaults that
+  are compatible with the column types.
+- Foreign key checks still run during writes and again during commit / undo /
+  redo, so the final stored state must always satisfy referential integrity.
+- The backend now exposes the last constraint violation details through
+  `GetLastConstraintViolationInfo(...)`, including the table, constraint name,
+  kind, involved columns, and the record ids involved in the conflict.

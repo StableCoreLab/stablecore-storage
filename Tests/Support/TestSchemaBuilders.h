@@ -10,10 +10,22 @@ sc::SCColumnDef MakeStringColumn(const wchar_t* name, bool nullable = false);
 
 // Constraint builder helpers
 sc::SCConstraintDef MakeUniqueConstraint(const wchar_t* name, const wchar_t* columnName);
+sc::SCConstraintDef MakePrimaryKeyConstraint(const wchar_t* name, const wchar_t* columnName);
+sc::SCConstraintDef MakeCompositeUniqueConstraint(const wchar_t* name,
+                                                  const wchar_t* firstColumn,
+                                                  const wchar_t* secondColumn);
+sc::SCConstraintDef MakeCompositePrimaryKeyConstraint(const wchar_t* name,
+                                                      const wchar_t* firstColumn,
+                                                      const wchar_t* secondColumn);
+sc::SCConstraintDef MakeCheckConstraint(const wchar_t* name,
+                                        const wchar_t* columnName,
+                                        const wchar_t* expression);
 sc::SCConstraintDef MakeForeignKeyConstraint(const wchar_t* name,
                                              const wchar_t* columnName,
                                              const wchar_t* targetTable,
-                                             const wchar_t* targetColumn);
+                                             const wchar_t* targetColumn,
+                                             sc::SCForeignKeyAction onDelete = sc::SCForeignKeyAction::Restrict,
+                                             sc::SCForeignKeyAction onUpdate = sc::SCForeignKeyAction::Restrict);
 
 // Index builder helpers
 sc::SCIndexDef MakeIndex(const wchar_t* name, const wchar_t* columnName);

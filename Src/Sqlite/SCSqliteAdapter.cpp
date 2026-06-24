@@ -11,11 +11,13 @@
 #include <mutex>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -36,6 +38,10 @@ namespace StableCore::Storage
 {
     namespace
     {
+        bool AppendToken(std::wstring* out, const std::wstring& token);
+        int ToSqliteForeignKeyAction(SCForeignKeyAction action) noexcept;
+        SCForeignKeyAction FromSqliteForeignKeyAction(int action) noexcept;
+        bool IsForeignKeyActionValid(SCForeignKeyAction action) noexcept;
 
         void EnsureSqliteQueryDispatchRegistered(ISCDatabase* database)
         {
@@ -1037,6 +1043,69 @@ namespace StableCore::Storage
             return ss.str();
         }
 
+        std::wstring SerializeConstraintKeyValue(const SCValue& value)
+        {
+            std::wstring payload;
+            switch (value.GetKind())
+            {
+                case ValueKind::Null:
+                    AppendToken(&payload, L"null");
+                    break;
+                case ValueKind::Int64: {
+                    std::int64_t v = 0;
+                    value.AsInt64(&v);
+                    AppendToken(&payload, L"i64");
+                    AppendToken(&payload, std::to_wstring(v));
+                    break;
+                }
+                case ValueKind::Double: {
+                    double v = 0.0;
+                    value.AsDouble(&v);
+                    std::wstringstream ss;
+                    ss << std::setprecision(17) << v;
+                    AppendToken(&payload, L"f64");
+                    AppendToken(&payload, ss.str());
+                    break;
+                }
+                case ValueKind::Bool: {
+                    bool v = false;
+                    value.AsBool(&v);
+                    AppendToken(&payload, L"bool");
+                    AppendToken(&payload, v ? L"1" : L"0");
+                    break;
+                }
+                case ValueKind::String: {
+                    std::wstring v;
+                    value.AsStringCopy(&v);
+                    AppendToken(&payload, L"str");
+                    AppendToken(&payload, v);
+                    break;
+                }
+                case ValueKind::RecordId: {
+                    RecordId v = 0;
+                    value.AsRecordId(&v);
+                    AppendToken(&payload, L"rid");
+                    AppendToken(&payload, std::to_wstring(v));
+                    break;
+                }
+                case ValueKind::Enum: {
+                    std::wstring v;
+                    value.AsEnumCopy(&v);
+                    AppendToken(&payload, L"enum");
+                    AppendToken(&payload, v);
+                    break;
+                }
+                case ValueKind::Binary: {
+                    std::vector<std::uint8_t> v;
+                    value.AsBinaryCopy(&v);
+                    AppendToken(&payload, L"bin");
+                    AppendToken(&payload, BytesToHex(v));
+                    break;
+                }
+            }
+            return payload;
+        }
+
         bool AppendToken(std::wstring* out, const std::wstring& token)
         {
             if (out == nullptr)
@@ -1044,7 +1113,7 @@ namespace StableCore::Storage
                 return false;
             }
 
-            *out += std::to_wstring(token.size());
+            *out += std::to_wstring(static_cast<unsigned long long>(token.size()));
             *out += L':';
             *out += token;
             return true;
@@ -1097,18 +1166,18 @@ namespace StableCore::Storage
             AppendToken(&payload, std::to_wstring(session.baseVersion));
             AppendToken(&payload, std::to_wstring(session.chunkSize));
             AppendToken(&payload, std::to_wstring(static_cast<int>(session.state)));
-            AppendToken(&payload, std::to_wstring(session.chunks.size()));
+            AppendToken(&payload, std::to_wstring(static_cast<unsigned long long>(session.chunks.size())));
             for (const auto& chunk : session.chunks)
             {
                 AppendToken(&payload, std::to_wstring(chunk.chunkId));
-                AppendToken(&payload, std::to_wstring(chunk.requests.size()));
+                AppendToken(&payload, std::to_wstring(static_cast<unsigned long long>(chunk.requests.size())));
                 for (const auto& request : chunk.requests)
                 {
                     AppendToken(&payload, request.tableName);
-                    AppendToken(&payload, std::to_wstring(request.creates.size()));
+                    AppendToken(&payload, std::to_wstring(static_cast<unsigned long long>(request.creates.size())));
                     for (const auto& create : request.creates)
                     {
-                        AppendToken(&payload, std::to_wstring(create.values.size()));
+                    AppendToken(&payload, std::to_wstring(static_cast<unsigned long long>(create.values.size())));
                         for (const auto& assignment : create.values)
                         {
                             AppendToken(&payload, assignment.fieldName);
@@ -1116,11 +1185,11 @@ namespace StableCore::Storage
                         }
                     }
 
-                    AppendToken(&payload, std::to_wstring(request.updates.size()));
+                    AppendToken(&payload, std::to_wstring(static_cast<unsigned long long>(request.updates.size())));
                     for (const auto& update : request.updates)
                     {
                         AppendToken(&payload, std::to_wstring(update.recordId));
-                        AppendToken(&payload, std::to_wstring(update.values.size()));
+                        AppendToken(&payload, std::to_wstring(static_cast<unsigned long long>(update.values.size())));
                         for (const auto& assignment : update.values)
                         {
                             AppendToken(&payload, assignment.fieldName);
@@ -1128,7 +1197,7 @@ namespace StableCore::Storage
                         }
                     }
 
-                    AppendToken(&payload, std::to_wstring(request.deletes.size()));
+                    AppendToken(&payload, std::to_wstring(static_cast<unsigned long long>(request.deletes.size())));
                     for (RecordId recordId : request.deletes)
                     {
                         AppendToken(&payload, std::to_wstring(recordId));
@@ -1222,16 +1291,18 @@ namespace StableCore::Storage
             AppendToken(&payload, std::to_wstring(static_cast<int>(def.sourceKind)));
             AppendToken(&payload, def.referencedTable);
             AppendToken(&payload, def.checkExpression);
-            AppendToken(&payload, std::to_wstring(def.columns.size()));
+            AppendToken(&payload, std::to_wstring(static_cast<unsigned long long>(def.columns.size())));
             for (const std::wstring& column : def.columns)
             {
                 AppendToken(&payload, column);
             }
-            AppendToken(&payload, std::to_wstring(def.referencedColumns.size()));
+            AppendToken(&payload, std::to_wstring(static_cast<unsigned long long>(def.referencedColumns.size())));
             for (const std::wstring& column : def.referencedColumns)
             {
                 AppendToken(&payload, column);
             }
+            AppendToken(&payload, std::to_wstring(static_cast<int>(ToSqliteForeignKeyAction(def.onDelete))));
+            AppendToken(&payload, std::to_wstring(static_cast<int>(ToSqliteForeignKeyAction(def.onUpdate))));
             return payload;
         }
 
@@ -1274,9 +1345,60 @@ namespace StableCore::Storage
             }
 
             if (!ReadToken(payload, &cursor, &def.referencedTable) ||
-                !ReadToken(payload, &cursor, &def.checkExpression) || !ReadToken(payload, &cursor, &token))
+                !ReadToken(payload, &cursor, &token))
             {
                 return false;
+            }
+
+            def.onDelete = SCForeignKeyAction::Restrict;
+            def.onUpdate = SCForeignKeyAction::Restrict;
+            bool hasForeignKeyActionTokens = false;
+            try
+            {
+                const std::size_t probe = static_cast<std::size_t>(std::stoull(token));
+                if (probe <= static_cast<std::size_t>(SCForeignKeyAction::SetDefault))
+                {
+                    hasForeignKeyActionTokens = true;
+                }
+            } catch (...)
+            {
+                hasForeignKeyActionTokens = false;
+            }
+
+            if (hasForeignKeyActionTokens)
+            {
+                try
+                {
+                    def.onDelete = FromSqliteForeignKeyAction(std::stoi(token));
+                } catch (...)
+                {
+                    return false;
+                }
+
+                if (!ReadToken(payload, &cursor, &token))
+                {
+                    return false;
+                }
+
+                try
+                {
+                    def.onUpdate = FromSqliteForeignKeyAction(std::stoi(token));
+                } catch (...)
+                {
+                    return false;
+                }
+
+                if (!ReadToken(payload, &cursor, &def.checkExpression) || !ReadToken(payload, &cursor, &token))
+                {
+                    return false;
+                }
+            } else
+            {
+                def.checkExpression = token;
+                if (!ReadToken(payload, &cursor, &token))
+                {
+                    return false;
+                }
             }
 
             std::size_t columnCount = 0;
@@ -1320,6 +1442,35 @@ namespace StableCore::Storage
                 def.referencedColumns.push_back(token);
             }
 
+            def.onDelete = SCForeignKeyAction::Restrict;
+            def.onUpdate = SCForeignKeyAction::Restrict;
+            if (cursor < payload.size())
+            {
+                if (!ReadToken(payload, &cursor, &token))
+                {
+                    return false;
+                }
+                try
+                {
+                    def.onDelete = FromSqliteForeignKeyAction(std::stoi(token));
+                } catch (...)
+                {
+                    return false;
+                }
+
+                if (!ReadToken(payload, &cursor, &token))
+                {
+                    return false;
+                }
+                try
+                {
+                    def.onUpdate = FromSqliteForeignKeyAction(std::stoi(token));
+                } catch (...)
+                {
+                    return false;
+                }
+            }
+
             *outDef = std::move(def);
             return cursor == payload.size();
         }
@@ -1329,7 +1480,7 @@ namespace StableCore::Storage
             std::wstring payload;
             AppendToken(&payload, def.name);
             AppendToken(&payload, std::to_wstring(static_cast<int>(def.sourceKind)));
-            AppendToken(&payload, std::to_wstring(def.columns.size()));
+            AppendToken(&payload, std::to_wstring(static_cast<unsigned long long>(def.columns.size())));
             for (const SCIndexColumnDef& column : def.columns)
             {
                 AppendToken(&payload, column.columnName);
@@ -2059,9 +2210,17 @@ namespace StableCore::Storage
                     {
                         return SC_E_SCHEMA_VIOLATION;
                     }
+                    if (def.onDelete != SCForeignKeyAction::Restrict || def.onUpdate != SCForeignKeyAction::Restrict)
+                    {
+                        return SC_E_SCHEMA_VIOLATION;
+                    }
                     break;
                 case SCConstraintKind::ForeignKey:
                     if (def.referencedTable.empty())
+                    {
+                        return SC_E_SCHEMA_VIOLATION;
+                    }
+                    if (!IsForeignKeyActionValid(def.onDelete) || !IsForeignKeyActionValid(def.onUpdate))
                     {
                         return SC_E_SCHEMA_VIOLATION;
                     }
@@ -2080,6 +2239,10 @@ namespace StableCore::Storage
                         return SC_E_SCHEMA_VIOLATION;
                     }
                     if (!def.referencedTable.empty() || !def.referencedColumns.empty())
+                    {
+                        return SC_E_SCHEMA_VIOLATION;
+                    }
+                    if (def.onDelete != SCForeignKeyAction::Restrict || def.onUpdate != SCForeignKeyAction::Restrict)
                     {
                         return SC_E_SCHEMA_VIOLATION;
                     }
@@ -2173,6 +2336,980 @@ namespace StableCore::Storage
                 }
             }
             return true;
+        }
+
+        std::wstring ToUpperCopy(std::wstring text)
+        {
+            std::transform(text.begin(), text.end(), text.begin(), [](wchar_t ch) {
+                return static_cast<wchar_t>(std::towupper(ch));
+            });
+            return text;
+        }
+
+        int ToSqliteForeignKeyAction(SCForeignKeyAction action) noexcept
+        {
+            return static_cast<int>(action);
+        }
+
+        SCForeignKeyAction FromSqliteForeignKeyAction(int action) noexcept
+        {
+            switch (action)
+            {
+                case static_cast<int>(SCForeignKeyAction::NoAction):
+                    return SCForeignKeyAction::NoAction;
+                case static_cast<int>(SCForeignKeyAction::Cascade):
+                    return SCForeignKeyAction::Cascade;
+                case static_cast<int>(SCForeignKeyAction::SetNull):
+                    return SCForeignKeyAction::SetNull;
+                case static_cast<int>(SCForeignKeyAction::SetDefault):
+                    return SCForeignKeyAction::SetDefault;
+                case static_cast<int>(SCForeignKeyAction::Restrict):
+                default:
+                    return SCForeignKeyAction::Restrict;
+            }
+        }
+
+        bool IsForeignKeyActionValid(SCForeignKeyAction action) noexcept
+        {
+            switch (action)
+            {
+                case SCForeignKeyAction::Restrict:
+                case SCForeignKeyAction::NoAction:
+                case SCForeignKeyAction::Cascade:
+                case SCForeignKeyAction::SetNull:
+                case SCForeignKeyAction::SetDefault:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        std::wstring ResolveForeignKeyReferencedColumn(const SCConstraintDef& constraint, std::size_t index)
+        {
+            if (index < constraint.referencedColumns.size() && !constraint.referencedColumns[index].empty())
+            {
+                return constraint.referencedColumns[index];
+            }
+            return index < constraint.columns.size() ? constraint.columns[index] : std::wstring{};
+        }
+
+        bool ForeignKeyConstraintReferencesColumn(const SCConstraintDef& constraint, const std::wstring& columnName)
+        {
+            for (std::size_t index = 0; index < constraint.columns.size(); ++index)
+            {
+                if (EqualsIgnoreCase(ResolveForeignKeyReferencedColumn(constraint, index), columnName))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        struct ForeignKeyReferenceEntry
+        {
+            std::wstring sourceTableName;
+            SCConstraintDef constraint;
+        };
+
+        std::wstring MakeForeignKeyReferenceCacheKey(const std::wstring& tableName, const std::wstring& columnName)
+        {
+            return ToUpperCopy(tableName) + L"|" + ToUpperCopy(columnName);
+        }
+
+        struct ConstraintExpressionNode
+        {
+            enum class Kind
+            {
+                Literal,
+                Column,
+                Unary,
+                Binary,
+            };
+
+            enum class UnaryOp
+            {
+                Negate,
+                Not,
+            };
+
+            enum class BinaryOp
+            {
+                Add,
+                Subtract,
+                Multiply,
+                Divide,
+                Equal,
+                NotEqual,
+                Less,
+                LessEqual,
+                Greater,
+                GreaterEqual,
+                And,
+                Or,
+            };
+
+            Kind kind{Kind::Literal};
+            SCValue literal;
+            std::wstring identifier;
+            UnaryOp unaryOp{UnaryOp::Negate};
+            BinaryOp binaryOp{BinaryOp::Add};
+            std::unique_ptr<ConstraintExpressionNode> left;
+            std::unique_ptr<ConstraintExpressionNode> right;
+        };
+
+        struct ConstraintExpressionAst
+        {
+            std::unique_ptr<ConstraintExpressionNode> root;
+            std::vector<std::wstring> identifiers;
+        };
+
+        class ConstraintExpressionParser
+        {
+        public:
+            ConstraintExpressionParser(std::wstring source, std::set<std::wstring> allowedColumns)
+                : source_(std::move(source)), allowedColumns_(std::move(allowedColumns))
+            {
+                token_ = NextToken();
+            }
+
+            ErrorCode Parse(ConstraintExpressionAst* outAst)
+            {
+                if (outAst == nullptr)
+                {
+                    return SC_E_POINTER;
+                }
+
+                auto root = ParseOr();
+                if (Failed(lastError_))
+                {
+                    return lastError_;
+                }
+                if (token_.kind != TokenKind::End)
+                {
+                    return SC_E_VALIDATION_FAILED;
+                }
+
+                outAst->root = std::move(root);
+                outAst->identifiers = std::move(identifiers_);
+                return SC_OK;
+            }
+
+        private:
+            enum class TokenKind
+            {
+                End,
+                Identifier,
+                Number,
+                String,
+                LParen,
+                RParen,
+                Comma,
+                Plus,
+                Minus,
+                Star,
+                Slash,
+                Equal,
+                NotEqual,
+                Less,
+                LessEqual,
+                Greater,
+                GreaterEqual,
+                And,
+                Or,
+                Not,
+                Null,
+                True,
+                False,
+            };
+
+            struct Token
+            {
+                TokenKind kind{TokenKind::End};
+                std::wstring text;
+            };
+
+            Token NextToken()
+            {
+                SkipWhitespace();
+                if (index_ >= source_.size())
+                {
+                    return {};
+                }
+
+                const wchar_t ch = source_[index_];
+                if (std::iswdigit(ch) != 0 || ch == L'.')
+                {
+                    return ReadNumber();
+                }
+                if (std::iswalpha(ch) != 0 || ch == L'_')
+                {
+                    return ReadIdentifier();
+                }
+                if (ch == L'\'')
+                {
+                    return ReadString();
+                }
+
+                ++index_;
+                switch (ch)
+                {
+                    case L'(':
+                        return {TokenKind::LParen, L"("};
+                    case L')':
+                        return {TokenKind::RParen, L")"};
+                    case L',':
+                        return {TokenKind::Comma, L","};
+                    case L'+':
+                        return {TokenKind::Plus, L"+"};
+                    case L'-':
+                        return {TokenKind::Minus, L"-"};
+                    case L'*':
+                        return {TokenKind::Star, L"*"};
+                    case L'/':
+                        return {TokenKind::Slash, L"/"};
+                    case L'=':
+                        return {TokenKind::Equal, L"="};
+                    case L'!':
+                        if (index_ < source_.size() && source_[index_] == L'=')
+                        {
+                            ++index_;
+                            return {TokenKind::NotEqual, L"!="};
+                        }
+                        return {TokenKind::Not, L"!"};
+                    case L'<':
+                        if (index_ < source_.size() && source_[index_] == L'>')
+                        {
+                            ++index_;
+                            return {TokenKind::NotEqual, L"<>",};
+                        }
+                        if (index_ < source_.size() && source_[index_] == L'=')
+                        {
+                            ++index_;
+                            return {TokenKind::LessEqual, L"<="};
+                        }
+                        return {TokenKind::Less, L"<"};
+                    case L'>':
+                        if (index_ < source_.size() && source_[index_] == L'=')
+                        {
+                            ++index_;
+                            return {TokenKind::GreaterEqual, L">="};
+                        }
+                        return {TokenKind::Greater, L">"};
+                    default:
+                        return {};
+                }
+            }
+
+            void SkipWhitespace()
+            {
+                while (index_ < source_.size() && std::iswspace(source_[index_]) != 0)
+                {
+                    ++index_;
+                }
+            }
+
+            Token ReadNumber()
+            {
+                const std::size_t start = index_;
+                bool sawDot = false;
+                while (index_ < source_.size())
+                {
+                    const wchar_t current = source_[index_];
+                    if (std::iswdigit(current) != 0)
+                    {
+                        ++index_;
+                        continue;
+                    }
+                    if (current == L'.' && !sawDot)
+                    {
+                        sawDot = true;
+                        ++index_;
+                        continue;
+                    }
+                    break;
+                }
+                return {TokenKind::Number, source_.substr(start, index_ - start)};
+            }
+
+            Token ReadIdentifier()
+            {
+                const std::size_t start = index_;
+                while (index_ < source_.size())
+                {
+                    const wchar_t current = source_[index_];
+                    if (std::iswalnum(current) != 0 || current == L'_' || current == L'.')
+                    {
+                        ++index_;
+                        continue;
+                    }
+                    break;
+                }
+
+                const std::wstring text = source_.substr(start, index_ - start);
+                const std::wstring upper = ToUpperCopy(text);
+                if (upper == L"AND")
+                {
+                    return {TokenKind::And, text};
+                }
+                if (upper == L"OR")
+                {
+                    return {TokenKind::Or, text};
+                }
+                if (upper == L"NOT")
+                {
+                    return {TokenKind::Not, text};
+                }
+                if (upper == L"NULL")
+                {
+                    return {TokenKind::Null, text};
+                }
+                if (upper == L"TRUE")
+                {
+                    return {TokenKind::True, text};
+                }
+                if (upper == L"FALSE")
+                {
+                    return {TokenKind::False, text};
+                }
+                return {TokenKind::Identifier, text};
+            }
+
+            Token ReadString()
+            {
+                ++index_;
+                std::wstring text;
+                while (index_ < source_.size())
+                {
+                    const wchar_t current = source_[index_++];
+                    if (current == L'\'')
+                    {
+                        if (index_ < source_.size() && source_[index_] == L'\'')
+                        {
+                            text.push_back(L'\'');
+                            ++index_;
+                            continue;
+                        }
+                        return {TokenKind::String, text};
+                    }
+                    text.push_back(current);
+                }
+                lastError_ = SC_E_VALIDATION_FAILED;
+                return {};
+            }
+
+            std::unique_ptr<ConstraintExpressionNode> ParseOr()
+            {
+                auto node = ParseAnd();
+                if (Failed(lastError_))
+                {
+                    return nullptr;
+                }
+                while (token_.kind == TokenKind::Or)
+                {
+                    Advance();
+                    auto right = ParseAnd();
+                    if (Failed(lastError_))
+                    {
+                        return nullptr;
+                    }
+                    node = MakeBinaryNode(ConstraintExpressionNode::BinaryOp::Or, std::move(node), std::move(right));
+                }
+                return node;
+            }
+
+            std::unique_ptr<ConstraintExpressionNode> ParseAnd()
+            {
+                auto node = ParseEquality();
+                if (Failed(lastError_))
+                {
+                    return nullptr;
+                }
+                while (token_.kind == TokenKind::And)
+                {
+                    Advance();
+                    auto right = ParseEquality();
+                    if (Failed(lastError_))
+                    {
+                        return nullptr;
+                    }
+                    node = MakeBinaryNode(ConstraintExpressionNode::BinaryOp::And, std::move(node), std::move(right));
+                }
+                return node;
+            }
+
+            std::unique_ptr<ConstraintExpressionNode> ParseEquality()
+            {
+                auto node = ParseComparison();
+                if (Failed(lastError_))
+                {
+                    return nullptr;
+                }
+                while (token_.kind == TokenKind::Equal || token_.kind == TokenKind::NotEqual)
+                {
+                    const TokenKind op = token_.kind;
+                    Advance();
+                    auto right = ParseComparison();
+                    if (Failed(lastError_))
+                    {
+                        return nullptr;
+                    }
+                    node = MakeBinaryNode(op == TokenKind::Equal ? ConstraintExpressionNode::BinaryOp::Equal
+                                                                 : ConstraintExpressionNode::BinaryOp::NotEqual,
+                                          std::move(node),
+                                          std::move(right));
+                }
+                return node;
+            }
+
+            std::unique_ptr<ConstraintExpressionNode> ParseComparison()
+            {
+                auto node = ParseTerm();
+                if (Failed(lastError_))
+                {
+                    return nullptr;
+                }
+                while (token_.kind == TokenKind::Less || token_.kind == TokenKind::LessEqual ||
+                       token_.kind == TokenKind::Greater || token_.kind == TokenKind::GreaterEqual)
+                {
+                    const TokenKind op = token_.kind;
+                    Advance();
+                    auto right = ParseTerm();
+                    if (Failed(lastError_))
+                    {
+                        return nullptr;
+                    }
+                    ConstraintExpressionNode::BinaryOp binaryOp = ConstraintExpressionNode::BinaryOp::Less;
+                    switch (op)
+                    {
+                        case TokenKind::Less:
+                            binaryOp = ConstraintExpressionNode::BinaryOp::Less;
+                            break;
+                        case TokenKind::LessEqual:
+                            binaryOp = ConstraintExpressionNode::BinaryOp::LessEqual;
+                            break;
+                        case TokenKind::Greater:
+                            binaryOp = ConstraintExpressionNode::BinaryOp::Greater;
+                            break;
+                        case TokenKind::GreaterEqual:
+                            binaryOp = ConstraintExpressionNode::BinaryOp::GreaterEqual;
+                            break;
+                        default:
+                            break;
+                    }
+                    node = MakeBinaryNode(binaryOp, std::move(node), std::move(right));
+                }
+                return node;
+            }
+
+            std::unique_ptr<ConstraintExpressionNode> ParseTerm()
+            {
+                auto node = ParseFactor();
+                if (Failed(lastError_))
+                {
+                    return nullptr;
+                }
+                while (token_.kind == TokenKind::Plus || token_.kind == TokenKind::Minus)
+                {
+                    const TokenKind op = token_.kind;
+                    Advance();
+                    auto right = ParseFactor();
+                    if (Failed(lastError_))
+                    {
+                        return nullptr;
+                    }
+                    node = MakeBinaryNode(op == TokenKind::Plus ? ConstraintExpressionNode::BinaryOp::Add
+                                                                 : ConstraintExpressionNode::BinaryOp::Subtract,
+                                          std::move(node),
+                                          std::move(right));
+                }
+                return node;
+            }
+
+            std::unique_ptr<ConstraintExpressionNode> ParseFactor()
+            {
+                auto node = ParseUnary();
+                if (Failed(lastError_))
+                {
+                    return nullptr;
+                }
+                while (token_.kind == TokenKind::Star || token_.kind == TokenKind::Slash)
+                {
+                    const TokenKind op = token_.kind;
+                    Advance();
+                    auto right = ParseUnary();
+                    if (Failed(lastError_))
+                    {
+                        return nullptr;
+                    }
+                    node = MakeBinaryNode(op == TokenKind::Star ? ConstraintExpressionNode::BinaryOp::Multiply
+                                                                 : ConstraintExpressionNode::BinaryOp::Divide,
+                                          std::move(node),
+                                          std::move(right));
+                }
+                return node;
+            }
+
+            std::unique_ptr<ConstraintExpressionNode> ParseUnary()
+            {
+                if (token_.kind == TokenKind::Minus)
+                {
+                    Advance();
+                    auto node = ParseUnary();
+                    if (Failed(lastError_))
+                    {
+                        return nullptr;
+                    }
+                    return MakeUnaryNode(ConstraintExpressionNode::UnaryOp::Negate, std::move(node));
+                }
+                if (token_.kind == TokenKind::Not)
+                {
+                    Advance();
+                    auto node = ParseUnary();
+                    if (Failed(lastError_))
+                    {
+                        return nullptr;
+                    }
+                    return MakeUnaryNode(ConstraintExpressionNode::UnaryOp::Not, std::move(node));
+                }
+                return ParsePrimary();
+            }
+
+            std::unique_ptr<ConstraintExpressionNode> ParsePrimary()
+            {
+                switch (token_.kind)
+                {
+                    case TokenKind::Number: {
+                        const std::wstring number = token_.text;
+                        Advance();
+                        auto node = std::make_unique<ConstraintExpressionNode>();
+                        node->kind = ConstraintExpressionNode::Kind::Literal;
+                        try
+                        {
+                            node->literal = number.find(L'.') == std::wstring::npos
+                                                ? SCValue::FromInt64(std::stoll(number))
+                                                : SCValue::FromDouble(std::stod(number));
+                        } catch (...)
+                        {
+                            lastError_ = SC_E_VALIDATION_FAILED;
+                            return {};
+                        }
+                        return node;
+                    }
+                    case TokenKind::String: {
+                        auto node = std::make_unique<ConstraintExpressionNode>();
+                        node->kind = ConstraintExpressionNode::Kind::Literal;
+                        node->literal = SCValue::FromString(token_.text);
+                        Advance();
+                        return node;
+                    }
+                    case TokenKind::True: {
+                        auto node = std::make_unique<ConstraintExpressionNode>();
+                        node->kind = ConstraintExpressionNode::Kind::Literal;
+                        node->literal = SCValue::FromBool(true);
+                        Advance();
+                        return node;
+                    }
+                    case TokenKind::False: {
+                        auto node = std::make_unique<ConstraintExpressionNode>();
+                        node->kind = ConstraintExpressionNode::Kind::Literal;
+                        node->literal = SCValue::FromBool(false);
+                        Advance();
+                        return node;
+                    }
+                    case TokenKind::Null: {
+                        auto node = std::make_unique<ConstraintExpressionNode>();
+                        node->kind = ConstraintExpressionNode::Kind::Literal;
+                        node->literal = SCValue::Null();
+                        Advance();
+                        return node;
+                    }
+                    case TokenKind::Identifier: {
+                        const std::wstring identifier = token_.text;
+                        if (!allowedColumns_.empty() &&
+                            std::none_of(allowedColumns_.begin(),
+                                         allowedColumns_.end(),
+                                         [&identifier](const std::wstring& candidate) {
+                                             return EqualsIgnoreCase(candidate, identifier);
+                                         }))
+                        {
+                            lastError_ = SC_E_COLUMN_NOT_FOUND;
+                            return {};
+                        }
+                        identifiers_.push_back(identifier);
+                        auto node = std::make_unique<ConstraintExpressionNode>();
+                        node->kind = ConstraintExpressionNode::Kind::Column;
+                        node->identifier = identifier;
+                        Advance();
+                        return node;
+                    }
+                    case TokenKind::LParen: {
+                        Advance();
+                        auto node = ParseOr();
+                        if (Failed(lastError_))
+                        {
+                            return nullptr;
+                        }
+                        if (token_.kind != TokenKind::RParen)
+                        {
+                            lastError_ = SC_E_VALIDATION_FAILED;
+                            return {};
+                        }
+                        Advance();
+                        return node;
+                    }
+                    default:
+                        lastError_ = SC_E_VALIDATION_FAILED;
+                        return {};
+                }
+            }
+
+            static std::unique_ptr<ConstraintExpressionNode> MakeUnaryNode(
+                ConstraintExpressionNode::UnaryOp op,
+                std::unique_ptr<ConstraintExpressionNode> child)
+            {
+                auto node = std::make_unique<ConstraintExpressionNode>();
+                node->kind = ConstraintExpressionNode::Kind::Unary;
+                node->unaryOp = op;
+                node->left = std::move(child);
+                return node;
+            }
+
+            static std::unique_ptr<ConstraintExpressionNode> MakeBinaryNode(
+                ConstraintExpressionNode::BinaryOp op,
+                std::unique_ptr<ConstraintExpressionNode> left,
+                std::unique_ptr<ConstraintExpressionNode> right)
+            {
+                auto node = std::make_unique<ConstraintExpressionNode>();
+                node->kind = ConstraintExpressionNode::Kind::Binary;
+                node->binaryOp = op;
+                node->left = std::move(left);
+                node->right = std::move(right);
+                return node;
+            }
+
+            void Advance()
+            {
+                token_ = NextToken();
+            }
+
+            std::wstring source_;
+            std::set<std::wstring> allowedColumns_;
+            std::size_t index_{0};
+            Token token_;
+            ErrorCode lastError_{SC_OK};
+            std::vector<std::wstring> identifiers_;
+        };
+
+        bool IsNumericValue(const SCValue& value) noexcept
+        {
+            switch (value.GetKind())
+            {
+                case ValueKind::Int64:
+                case ValueKind::Double:
+                case ValueKind::Bool:
+                case ValueKind::RecordId:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        bool TryAsDouble(const SCValue& value, double* outValue) noexcept
+        {
+            if (outValue == nullptr)
+            {
+                return false;
+            }
+
+            switch (value.GetKind())
+            {
+                case ValueKind::Int64: {
+                    std::int64_t typed = 0;
+                    if (Failed(value.AsInt64(&typed)))
+                    {
+                        return false;
+                    }
+                    *outValue = static_cast<double>(typed);
+                    return true;
+                }
+                case ValueKind::Double:
+                    return Succeeded(value.AsDouble(outValue));
+                case ValueKind::Bool: {
+                    bool flag = false;
+                    if (Failed(value.AsBool(&flag)))
+                    {
+                        return false;
+                    }
+                    *outValue = flag ? 1.0 : 0.0;
+                    return true;
+                }
+                case ValueKind::RecordId: {
+                    RecordId id = 0;
+                    if (Failed(value.AsRecordId(&id)))
+                    {
+                        return false;
+                    }
+                    *outValue = static_cast<double>(id);
+                    return true;
+                }
+                default:
+                    return false;
+            }
+        }
+
+        bool TryAsText(const SCValue& value, std::wstring* outValue) noexcept
+        {
+            if (outValue == nullptr)
+            {
+                return false;
+            }
+
+            switch (value.GetKind())
+            {
+                case ValueKind::String:
+                case ValueKind::Enum:
+                    return Succeeded(value.AsStringCopy(outValue)) || Succeeded(value.AsEnumCopy(outValue));
+                default:
+                    return false;
+            }
+        }
+
+        bool IsTruthyValue(const SCValue& value) noexcept
+        {
+            if (value.IsNull())
+            {
+                return false;
+            }
+
+            switch (value.GetKind())
+            {
+                case ValueKind::Bool: {
+                    bool flag = false;
+                    return Succeeded(value.AsBool(&flag)) && flag;
+                }
+                case ValueKind::Int64: {
+                    std::int64_t typed = 0;
+                    return Succeeded(value.AsInt64(&typed)) && typed != 0;
+                }
+                case ValueKind::Double: {
+                    double typed = 0.0;
+                    return Succeeded(value.AsDouble(&typed)) && typed != 0.0;
+                }
+                case ValueKind::RecordId: {
+                    RecordId typed = 0;
+                    return Succeeded(value.AsRecordId(&typed)) && typed != 0;
+                }
+                case ValueKind::String:
+                case ValueKind::Enum: {
+                    std::wstring text;
+                    return Succeeded(value.AsStringCopy(&text)) && !text.empty();
+                }
+                default:
+                    return false;
+            }
+        }
+
+        ErrorCode EvaluateConstraintExpressionNode(const ConstraintExpressionNode& node,
+                                                   const std::unordered_map<std::wstring, SCValue>& values,
+                                                   SCValue* outValue)
+        {
+            if (outValue == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+
+            switch (node.kind)
+            {
+                case ConstraintExpressionNode::Kind::Literal:
+                    *outValue = node.literal;
+                    return SC_OK;
+                case ConstraintExpressionNode::Kind::Column: {
+                    const auto it = std::find_if(values.begin(),
+                                                 values.end(),
+                                                 [&node](const auto& entry) {
+                                                     return EqualsIgnoreCase(entry.first, node.identifier);
+                                                 });
+                    if (it == values.end())
+                    {
+                        return SC_E_COLUMN_NOT_FOUND;
+                    }
+                    *outValue = it->second;
+                    return SC_OK;
+                }
+                case ConstraintExpressionNode::Kind::Unary: {
+                    SCValue child;
+                    const ErrorCode rc = EvaluateConstraintExpressionNode(*node.left, values, &child);
+                    if (Failed(rc))
+                    {
+                        return rc;
+                    }
+                    if (node.unaryOp == ConstraintExpressionNode::UnaryOp::Not)
+                    {
+                        *outValue = SCValue::FromBool(!IsTruthyValue(child));
+                        return SC_OK;
+                    }
+                    double numeric = 0.0;
+                    if (!TryAsDouble(child, &numeric))
+                    {
+                        return SC_E_TYPE_MISMATCH;
+                    }
+                    *outValue = SCValue::FromDouble(-numeric);
+                    return SC_OK;
+                }
+                case ConstraintExpressionNode::Kind::Binary: {
+                    SCValue left;
+                    SCValue right;
+                    const ErrorCode leftRc = EvaluateConstraintExpressionNode(*node.left, values, &left);
+                    if (Failed(leftRc))
+                    {
+                        return leftRc;
+                    }
+                    const ErrorCode rightRc = EvaluateConstraintExpressionNode(*node.right, values, &right);
+                    if (Failed(rightRc))
+                    {
+                        return rightRc;
+                    }
+
+                    switch (node.binaryOp)
+                    {
+                        case ConstraintExpressionNode::BinaryOp::Add:
+                        case ConstraintExpressionNode::BinaryOp::Subtract:
+                        case ConstraintExpressionNode::BinaryOp::Multiply:
+                        case ConstraintExpressionNode::BinaryOp::Divide: {
+                            double leftNumber = 0.0;
+                            double rightNumber = 0.0;
+                            if (!TryAsDouble(left, &leftNumber) || !TryAsDouble(right, &rightNumber))
+                            {
+                                return SC_E_TYPE_MISMATCH;
+                            }
+                            if (node.binaryOp == ConstraintExpressionNode::BinaryOp::Divide && rightNumber == 0.0)
+                            {
+                                return SC_E_INVALIDARG;
+                            }
+                            switch (node.binaryOp)
+                            {
+                                case ConstraintExpressionNode::BinaryOp::Add:
+                                    *outValue = SCValue::FromDouble(leftNumber + rightNumber);
+                                    break;
+                                case ConstraintExpressionNode::BinaryOp::Subtract:
+                                    *outValue = SCValue::FromDouble(leftNumber - rightNumber);
+                                    break;
+                                case ConstraintExpressionNode::BinaryOp::Multiply:
+                                    *outValue = SCValue::FromDouble(leftNumber * rightNumber);
+                                    break;
+                                case ConstraintExpressionNode::BinaryOp::Divide:
+                                    *outValue = SCValue::FromDouble(leftNumber / rightNumber);
+                                    break;
+                                default:
+                                    break;
+                            }
+                            return SC_OK;
+                        }
+                        case ConstraintExpressionNode::BinaryOp::Equal:
+                            if (IsNumericValue(left) && IsNumericValue(right))
+                            {
+                                double leftNumber = 0.0;
+                                double rightNumber = 0.0;
+                                if (!TryAsDouble(left, &leftNumber) || !TryAsDouble(right, &rightNumber))
+                                {
+                                    return SC_E_TYPE_MISMATCH;
+                                }
+                                *outValue = SCValue::FromBool(leftNumber == rightNumber);
+                            } else
+                            {
+                                *outValue = SCValue::FromBool(left == right);
+                            }
+                            return SC_OK;
+                        case ConstraintExpressionNode::BinaryOp::NotEqual:
+                            if (IsNumericValue(left) && IsNumericValue(right))
+                            {
+                                double leftNumber = 0.0;
+                                double rightNumber = 0.0;
+                                if (!TryAsDouble(left, &leftNumber) || !TryAsDouble(right, &rightNumber))
+                                {
+                                    return SC_E_TYPE_MISMATCH;
+                                }
+                                *outValue = SCValue::FromBool(leftNumber != rightNumber);
+                            } else
+                            {
+                                *outValue = SCValue::FromBool(left != right);
+                            }
+                            return SC_OK;
+                        case ConstraintExpressionNode::BinaryOp::Less:
+                        case ConstraintExpressionNode::BinaryOp::LessEqual:
+                        case ConstraintExpressionNode::BinaryOp::Greater:
+                        case ConstraintExpressionNode::BinaryOp::GreaterEqual: {
+                            if (IsNumericValue(left) && IsNumericValue(right))
+                            {
+                                double leftNumber = 0.0;
+                                double rightNumber = 0.0;
+                                if (!TryAsDouble(left, &leftNumber) || !TryAsDouble(right, &rightNumber))
+                                {
+                                    return SC_E_TYPE_MISMATCH;
+                                }
+                                bool result = false;
+                                switch (node.binaryOp)
+                                {
+                                    case ConstraintExpressionNode::BinaryOp::Less:
+                                        result = leftNumber < rightNumber;
+                                        break;
+                                    case ConstraintExpressionNode::BinaryOp::LessEqual:
+                                        result = leftNumber <= rightNumber;
+                                        break;
+                                    case ConstraintExpressionNode::BinaryOp::Greater:
+                                        result = leftNumber > rightNumber;
+                                        break;
+                                    case ConstraintExpressionNode::BinaryOp::GreaterEqual:
+                                        result = leftNumber >= rightNumber;
+                                        break;
+                                    default:
+                                        break;
+                                }
+                                *outValue = SCValue::FromBool(result);
+                                return SC_OK;
+                            }
+
+                            std::wstring leftText;
+                            std::wstring rightText;
+                            if (!TryAsText(left, &leftText) || !TryAsText(right, &rightText))
+                            {
+                                return SC_E_TYPE_MISMATCH;
+                            }
+
+                            bool result = false;
+                            switch (node.binaryOp)
+                            {
+                                case ConstraintExpressionNode::BinaryOp::Less:
+                                    result = leftText < rightText;
+                                    break;
+                                case ConstraintExpressionNode::BinaryOp::LessEqual:
+                                    result = leftText <= rightText;
+                                    break;
+                                case ConstraintExpressionNode::BinaryOp::Greater:
+                                    result = leftText > rightText;
+                                    break;
+                                case ConstraintExpressionNode::BinaryOp::GreaterEqual:
+                                    result = leftText >= rightText;
+                                    break;
+                                default:
+                                    break;
+                            }
+                            *outValue = SCValue::FromBool(result);
+                            return SC_OK;
+                        }
+                        case ConstraintExpressionNode::BinaryOp::And:
+                            *outValue = SCValue::FromBool(IsTruthyValue(left) && IsTruthyValue(right));
+                            return SC_OK;
+                        case ConstraintExpressionNode::BinaryOp::Or:
+                            *outValue = SCValue::FromBool(IsTruthyValue(left) || IsTruthyValue(right));
+                            return SC_OK;
+                        default:
+                            return SC_E_FAIL;
+                    }
+                }
+            }
+
+            return SC_E_FAIL;
         }
 
         std::wstring SanitizeIdentifier(const std::wstring& input)
@@ -2283,6 +3420,71 @@ namespace StableCore::Storage
                     break;
                 }
             }
+        }
+
+        ErrorCode BindValueToStatement(SqliteStmt& stmt, int index, const SCValue& value)
+        {
+            switch (value.GetKind())
+            {
+                case ValueKind::Null:
+                    return stmt.BindNull(index);
+                case ValueKind::Int64: {
+                    std::int64_t v = 0;
+                    const ErrorCode rc = value.AsInt64(&v);
+                    return Failed(rc) ? rc : stmt.BindInt64(index, v);
+                }
+                case ValueKind::Double: {
+                    double v = 0.0;
+                    const ErrorCode rc = value.AsDouble(&v);
+                    return Failed(rc) ? rc : stmt.BindDouble(index, v);
+                }
+                case ValueKind::Bool: {
+                    bool v = false;
+                    const ErrorCode rc = value.AsBool(&v);
+                    return Failed(rc) ? rc : stmt.BindInt(index, v ? 1 : 0);
+                }
+                case ValueKind::String: {
+                    std::wstring v;
+                    const ErrorCode rc = value.AsStringCopy(&v);
+                    return Failed(rc) ? rc : stmt.BindText(index, v);
+                }
+                case ValueKind::RecordId: {
+                    RecordId v = 0;
+                    const ErrorCode rc = value.AsRecordId(&v);
+                    return Failed(rc) ? rc : stmt.BindInt64(index, static_cast<std::int64_t>(v));
+                }
+                case ValueKind::Enum: {
+                    std::wstring v;
+                    const ErrorCode rc = value.AsEnumCopy(&v);
+                    return Failed(rc) ? rc : stmt.BindText(index, v);
+                }
+                case ValueKind::Binary: {
+                    std::vector<std::uint8_t> v;
+                    const ErrorCode rc = value.AsBinaryCopy(&v);
+                    return Failed(rc) ? rc : stmt.BindBlob(index, v);
+                }
+                default:
+                    return SC_E_TYPE_MISMATCH;
+            }
+        }
+
+        std::wstring QuoteSqlIdentifier(const std::wstring& identifier)
+        {
+            std::wstring quoted;
+            quoted.push_back(L'"');
+            for (wchar_t ch : identifier)
+            {
+                if (ch == L'"')
+                {
+                    quoted.push_back(L'"');
+                    quoted.push_back(L'"');
+                } else
+                {
+                    quoted.push_back(ch);
+                }
+            }
+            quoted.push_back(L'"');
+            return quoted;
         }
 
         SCValue ReadValueFromStorage(const SqliteStmt& stmt,
@@ -2955,6 +4157,7 @@ namespace StableCore::Storage
             ErrorCode DeleteTable(const wchar_t* name) override;
             ErrorCode AddObserver(ISCDatabaseObserver* observer) override;
             ErrorCode RemoveObserver(ISCDatabaseObserver* observer) override;
+            ErrorCode GetLastConstraintViolationInfo(SCConstraintViolationInfo* outInfo) const override;
             ErrorCode ExecuteUpgradePlan(const SCUpgradePlan& plan,
                                          bool confirmed,
                                          SCUpgradeResult* outResult) override;
@@ -3012,6 +4215,7 @@ namespace StableCore::Storage
             void InitializeQueryIndexStorage() override;
 
             friend class SqliteSchema;
+            friend class SqliteTable;
 
             bool HasActiveEdit() const noexcept
             {
@@ -3074,6 +4278,8 @@ namespace StableCore::Storage
             void LogStartupDiagnostic(SCDiagnosticSeverity severity,
                                       const std::wstring& category,
                                       const std::wstring& message);
+            void ClearConstraintViolation() const;
+            void SetConstraintViolation(const SCConstraintViolationInfo& info) const;
             void SetCleanShutdownFlag(bool cleanShutdown);
             ErrorCode EnsureWritable() const;
             ErrorCode ValidateActiveEdit(ISCEditSession* edit) const;
@@ -3084,6 +4290,57 @@ namespace StableCore::Storage
             ErrorCode ValidateColumnDefForSchema(SqliteSchema* schema, const SCColumnDef& def) const;
             ErrorCode ValidateConstraintDefForSchema(SqliteSchema* schema, const SCConstraintDef& def) const;
             ErrorCode ValidateIndexDefForSchema(SqliteSchema* schema, const SCIndexDef& def) const;
+            ErrorCode ValidateConstraintUniqueness(SqliteTable* table,
+                                                   const SCConstraintDef& constraint,
+                                                   const std::shared_ptr<SqliteRecordData>& candidateData,
+                                                   const std::wstring* overrideFieldName = nullptr,
+                                                   const SCValue* overrideValue = nullptr) const;
+            ErrorCode ValidateCheckConstraint(SqliteTable* table,
+                                              const SCConstraintDef& constraint,
+                                              const std::shared_ptr<SqliteRecordData>& candidateData,
+                                              const std::wstring* overrideFieldName = nullptr,
+                                              const SCValue* overrideValue = nullptr) const;
+            ErrorCode ValidateForeignKeyConstraint(SqliteTable* table,
+                                                   const SCConstraintDef& constraint,
+                                                   const std::shared_ptr<SqliteRecordData>& candidateData,
+                                                   const std::wstring* overrideFieldName = nullptr,
+                                                   const SCValue* overrideValue = nullptr) const;
+            ErrorCode ApplyForeignKeyActionsForTableDelete(SqliteTable* table,
+                                                           const std::shared_ptr<SqliteRecordData>& candidateData);
+            ErrorCode ApplyForeignKeyActionsForColumnUpdate(SqliteTable* table,
+                                                            const std::shared_ptr<SqliteRecordData>& candidateData,
+                                                            const std::wstring& fieldName,
+                                                            const SCValue& oldValue,
+                                                            const SCValue& newValue);
+            ErrorCode ValidateTableConstraints(SqliteTable* table,
+                                               const std::shared_ptr<SqliteRecordData>& candidateData,
+                                               const std::wstring* overrideFieldName = nullptr,
+                                               const SCValue* overrideValue = nullptr,
+                                               const SCConstraintDef* specificConstraint = nullptr) const;
+            ErrorCode ValidateUniqueAndPrimaryKeyConstraints(SqliteTable* table,
+                                                             const std::shared_ptr<SqliteRecordData>& candidateData,
+                                                             const std::wstring* overrideFieldName = nullptr,
+                                                             const SCValue* overrideValue = nullptr,
+                                                             const SCConstraintDef* specificConstraint = nullptr) const;
+            ErrorCode ValidateForeignKeyReferencesToTable(SqliteTable* table,
+                                                          const std::shared_ptr<SqliteRecordData>& candidateData,
+                                                          const std::wstring* overrideFieldName = nullptr,
+                                                          const SCValue* overrideValue = nullptr) const;
+            ErrorCode ValidateForeignKeyReferencesForTouchedTables(const JournalTransaction& tx) const;
+            bool HasForeignKeyReferencesToTable(const std::wstring& tableName) const;
+            bool HasForeignKeyReferencesToColumn(const std::wstring& tableName, const std::wstring& columnName) const;
+            void MarkForeignKeyReferenceCacheDirty() noexcept;
+            ErrorCode RefreshForeignKeyReferenceCache() const;
+            const std::vector<ForeignKeyReferenceEntry>* GetForeignKeyReferenceEntries(const std::wstring& tableName) const;
+            const std::vector<ForeignKeyReferenceEntry>*
+            GetForeignKeyReferenceEntries(const std::wstring& tableName, const std::wstring& columnName) const;
+            ErrorCode ReadConstraintValue(SqliteTable* table,
+                                          const SqliteRecordData& recordData,
+                                          const std::wstring& columnName,
+                                          const std::wstring* overrideFieldName,
+                                          const SCValue* overrideValue,
+                                          SCValue* outValue,
+                                          bool* outIsNull) const;
             const SCColumnDef* FindRelationStorageColumn(const SCColumnDef& relationColumn) const;
             const SCColumnDef* FindRelationDisplayColumn(const SCColumnDef& relationColumn) const;
             ErrorCode ResolveRelationWriteValue(const SCColumnDef& relationColumn,
@@ -3111,10 +4368,13 @@ namespace StableCore::Storage
                                                          const QueryPlan& analyzedPlan,
                                                          CompositeIndexLookupBounds* outBounds) const;
             ErrorCode ValidateRequiredValuesForCommit() const;
+            ErrorCode ValidateUniqueAndPrimaryKeyConstraintsForTouchedTables(const JournalTransaction& tx) const;
             bool HasAliveRecords(SqliteSchema* schema) const;
             bool IsRecordReferenced(const std::wstring& tableName, RecordId recordId) const;
+            SqliteTable* FindTableByRowId(std::int64_t tableRowId) const;
             void MarkReferenceIndexDirty() noexcept;
             void RefreshReferenceIndexState();
+            void CollectTouchedTableNames(const JournalTransaction& tx, std::vector<std::wstring>* outTableNames) const;
             JournalLookup LookupRecordJournalState(const std::wstring& tableName, RecordId recordId) const;
             void RemoveFieldJournalEntries(const std::wstring& tableName, RecordId recordId);
             void RemoveAllJournalEntriesForRecord(const std::wstring& tableName, RecordId recordId);
@@ -3202,11 +4462,18 @@ namespace StableCore::Storage
             bool referenceIndexDirty_{true};
             bool referenceIndexBuilt_{false};
             VersionId referenceIndexVersion_{0};
+            mutable bool foreignKeyReferenceCacheDirty_{true};
+            mutable std::unordered_map<std::wstring, std::vector<ForeignKeyReferenceEntry>>
+                foreignKeyReferenceCacheByTable_;
+            mutable std::unordered_map<std::wstring, std::vector<ForeignKeyReferenceEntry>>
+                foreignKeyReferenceCacheByTableAndColumn_;
             bool cleanShutdown_{true};
             bool persistCleanShutdownOnDestroy_{true};
             bool dirtyStartupDetected_{false};
             bool corruptionDetected_{false};
             bool importSessionStoreReady_{false};
+            mutable std::optional<SCConstraintViolationInfo> lastConstraintViolation_;
+            mutable std::unordered_set<std::wstring> activeConstraintPropagationKeys_;
             std::vector<SCDiagnosticEntry> startupDiagnostics_;
             std::map<std::wstring, SCTablePtr> tables_;
             std::vector<ISCDatabaseObserver*> observers_;
@@ -3439,7 +4706,7 @@ namespace StableCore::Storage
             }
             if (constraintsByName_.contains(def.name))
             {
-                return SC_E_CONSTRAINT_VIOLATION;
+                return SC_E_INVALIDARG;
             }
             return db_->PersistAddedConstraint(this, def);
         }
@@ -3748,6 +5015,14 @@ namespace StableCore::Storage
             auto data = std::make_shared<SqliteRecordData>(db_->AllocateRecordId());
             records_.emplace(data->id, data);
             db_->RecordCreate(this, data);
+            const ErrorCode constraintRc = db_->ValidateTableConstraints(this, data);
+            if (Failed(constraintRc))
+            {
+                db_->RemoveAllJournalEntriesForRecord(name_, data->id);
+                records_.erase(data->id);
+                return constraintRc;
+            }
+            db_->MarkReferenceIndexDirty();
             outRecord = MakeRecord(data);
             return SC_OK;
         }
@@ -4112,6 +5387,8 @@ namespace StableCore::Storage
                 "constraint_id INTEGER PRIMARY KEY AUTOINCREMENT, table_id "
                 "INTEGER NOT NULL, kind INTEGER NOT NULL, name TEXT NOT NULL, "
                 "source_kind INTEGER NOT NULL, referenced_table TEXT NOT NULL, "
+                "on_delete_action INTEGER NOT NULL DEFAULT 0, "
+                "on_update_action INTEGER NOT NULL DEFAULT 0, "
                 "check_expression TEXT NOT NULL DEFAULT '');");
             db_.Execute(
                 "CREATE INDEX IF NOT EXISTS idx_schema_constraints_table ON "
@@ -4286,11 +5563,17 @@ namespace StableCore::Storage
 
             if (HasTable(L"schema_constraints") && HasTable(L"schema_constraint_columns"))
             {
+                const bool supportsForeignKeyActions = schemaVersion_ >= 7;
                 SqliteStmt constraintsStmt = db_.Prepare(
-                    "SELECT constraint_id, kind, name, source_kind, "
-                    "referenced_table, check_expression FROM "
-                    "schema_constraints WHERE table_id = ? ORDER BY "
-                    "constraint_id;");
+                    supportsForeignKeyActions
+                        ? "SELECT constraint_id, kind, name, source_kind, "
+                          "referenced_table, on_delete_action, on_update_action, "
+                          "check_expression FROM schema_constraints WHERE table_id = ? ORDER BY "
+                          "constraint_id;"
+                        : "SELECT constraint_id, kind, name, source_kind, "
+                          "referenced_table, 0 AS on_delete_action, 0 AS on_update_action, "
+                          "check_expression FROM schema_constraints WHERE table_id = ? ORDER BY "
+                          "constraint_id;");
                 constraintsStmt.BindInt64(1, tableRowId);
                 bool hasConstraint = false;
                 while (constraintsStmt.Step(&hasConstraint) == SC_OK && hasConstraint)
@@ -4301,7 +5584,9 @@ namespace StableCore::Storage
                     constraint.name = constraintsStmt.ColumnText(2);
                     constraint.sourceKind = FromSqliteSchemaSourceKind(constraintsStmt.ColumnInt(3));
                     constraint.referencedTable = constraintsStmt.ColumnText(4);
-                    constraint.checkExpression = constraintsStmt.ColumnText(5);
+                    constraint.onDelete = FromSqliteForeignKeyAction(constraintsStmt.ColumnInt(5));
+                    constraint.onUpdate = FromSqliteForeignKeyAction(constraintsStmt.ColumnInt(6));
+                    constraint.checkExpression = constraintsStmt.ColumnText(7);
 
                     SqliteStmt constraintColumnsStmt = db_.Prepare(
                         "SELECT column_name, referenced_column_name FROM "
@@ -4492,13 +5777,16 @@ namespace StableCore::Storage
                     SqliteStmt stmt = db_.Prepare(
                         "INSERT INTO schema_constraints(table_id, kind, "
                         "name, source_kind, referenced_table, "
-                        "check_expression) VALUES(?, ?, ?, ?, ?, ?);");
+                        "on_delete_action, on_update_action, "
+                        "check_expression) VALUES(?, ?, ?, ?, ?, ?, ?, ?);");
                     stmt.BindInt64(1, table->TableRowId());
                     stmt.BindInt(2, ToSqliteConstraintKind(constraint.kind));
                     stmt.BindText(3, constraint.name);
                     stmt.BindInt(4, ToSqliteSchemaSourceKind(constraint.sourceKind));
                     stmt.BindText(5, constraint.referencedTable);
-                    stmt.BindText(6, constraint.checkExpression);
+                    stmt.BindInt(6, ToSqliteForeignKeyAction(constraint.onDelete));
+                    stmt.BindInt(7, ToSqliteForeignKeyAction(constraint.onUpdate));
+                    stmt.BindText(8, constraint.checkExpression);
                     const ErrorCode rc = stmt.Step();
                     if (Failed(rc))
                     {
@@ -5604,6 +6892,7 @@ namespace StableCore::Storage
             {
                 return writableRc;
             }
+            ClearConstraintViolation();
             const ErrorCode validate = ValidateActiveEdit(edit);
             if (Failed(validate))
             {
@@ -5622,6 +6911,12 @@ namespace StableCore::Storage
             if (Failed(requiredValueRc))
             {
                 return requiredValueRc;
+            }
+
+            const ErrorCode uniqueConstraintRc = ValidateUniqueAndPrimaryKeyConstraintsForTouchedTables(activeJournal_);
+            if (Failed(uniqueConstraintRc))
+            {
+                return uniqueConstraintRc;
             }
 
             try
@@ -5715,6 +7010,7 @@ namespace StableCore::Storage
             {
                 return writableRc;
             }
+            ClearConstraintViolation();
             if (activeEdit_)
             {
                 return SC_E_WRITE_CONFLICT;
@@ -5736,6 +7032,13 @@ namespace StableCore::Storage
                     (void)ApplyJournalForward(tx.tx);
                     undoStack_.push_back(tx);
                     return applyRc;
+                }
+                const ErrorCode constraintRc = ValidateUniqueAndPrimaryKeyConstraintsForTouchedTables(tx.tx);
+                if (Failed(constraintRc))
+                {
+                    (void)ApplyJournalForward(tx.tx);
+                    undoStack_.push_back(tx);
+                    return constraintRc;
                 }
                 const VersionId nextVersion = version_ + 1;
                 PersistTouchedRecords(tx.tx, nextVersion);
@@ -5771,6 +7074,7 @@ namespace StableCore::Storage
             {
                 return writableRc;
             }
+            ClearConstraintViolation();
             if (activeEdit_)
             {
                 return SC_E_WRITE_CONFLICT;
@@ -5792,6 +7096,13 @@ namespace StableCore::Storage
                     (void)ApplyJournalReverse(tx.tx);
                     redoStack_.push_back(tx);
                     return applyRc;
+                }
+                const ErrorCode constraintRc = ValidateUniqueAndPrimaryKeyConstraintsForTouchedTables(tx.tx);
+                if (Failed(constraintRc))
+                {
+                    (void)ApplyJournalReverse(tx.tx);
+                    redoStack_.push_back(tx);
+                    return constraintRc;
                 }
                 const VersionId nextVersion = version_ + 1;
                 PersistTouchedRecords(tx.tx, nextVersion);
@@ -5916,11 +7227,12 @@ namespace StableCore::Storage
 
                 tables_.emplace(name, table);
                 MarkReferenceIndexDirty();
+                MarkForeignKeyReferenceCacheDirty();
                 outTable = std::move(table);
                 return SC_OK;
             } catch (...)
             {
-                return SC_E_FAIL;
+                return SC_E_SCHEMA_VIOLATION;
             }
         }
 
@@ -6144,6 +7456,7 @@ namespace StableCore::Storage
 
             tables_.erase(tableIt);
             MarkReferenceIndexDirty();
+            MarkForeignKeyReferenceCacheDirty();
             return SC_OK;
         }
 
@@ -6161,6 +7474,31 @@ namespace StableCore::Storage
         {
             observers_.erase(std::remove(observers_.begin(), observers_.end(), observer), observers_.end());
             return SC_OK;
+        }
+
+        ErrorCode SqliteDatabase::GetLastConstraintViolationInfo(SCConstraintViolationInfo* outInfo) const
+        {
+            if (outInfo == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+            if (!lastConstraintViolation_)
+            {
+                *outInfo = SCConstraintViolationInfo{};
+                return SC_FALSE_RESULT;
+            }
+            *outInfo = *lastConstraintViolation_;
+            return SC_OK;
+        }
+
+        void SqliteDatabase::ClearConstraintViolation() const
+        {
+            lastConstraintViolation_.reset();
+        }
+
+        void SqliteDatabase::SetConstraintViolation(const SCConstraintViolationInfo& info) const
+        {
+            lastConstraintViolation_ = info;
         }
 
         ErrorCode SqliteDatabase::CreateBackupCopy(const wchar_t* targetPath,
@@ -6891,6 +8229,11 @@ namespace StableCore::Storage
                     return SC_E_TABLE_NOT_FOUND;
                 }
 
+                if (!IsForeignKeyActionValid(def.onDelete) || !IsForeignKeyActionValid(def.onUpdate))
+                {
+                    return SC_E_SCHEMA_VIOLATION;
+                }
+
                 if (!def.referencedColumns.empty())
                 {
                     SCSchemaPtr referencedSchema;
@@ -6908,6 +8251,83 @@ namespace StableCore::Storage
                         {
                             return columnRc;
                         }
+                    }
+                }
+
+                if (def.onDelete == SCForeignKeyAction::SetNull || def.onUpdate == SCForeignKeyAction::SetNull)
+                {
+                    for (const std::wstring& columnName : def.columns)
+                    {
+                        const SCColumnDef* sourceColumn = schema->FindColumnDef(columnName);
+                        if (sourceColumn == nullptr || !sourceColumn->nullable)
+                        {
+                            return SC_E_SCHEMA_VIOLATION;
+                        }
+                    }
+                }
+
+                if (def.onDelete == SCForeignKeyAction::SetDefault ||
+                    def.onUpdate == SCForeignKeyAction::SetDefault)
+                {
+                    for (const std::wstring& columnName : def.columns)
+                    {
+                        const SCColumnDef* sourceColumn = schema->FindColumnDef(columnName);
+                        if (sourceColumn == nullptr)
+                        {
+                            return SC_E_COLUMN_NOT_FOUND;
+                        }
+                        if (sourceColumn->defaultValue.IsNull() && !sourceColumn->nullable)
+                        {
+                            return SC_E_SCHEMA_VIOLATION;
+                        }
+                        if (!sourceColumn->defaultValue.IsNull() &&
+                            sourceColumn->defaultValue.GetKind() != sourceColumn->valueKind)
+                        {
+                            return SC_E_SCHEMA_VIOLATION;
+                        }
+                    }
+                }
+            } else if (def.kind == SCConstraintKind::Check)
+            {
+                std::set<std::wstring> allowedColumns;
+                for (const std::wstring& columnName : def.columns)
+                {
+                    allowedColumns.insert(columnName);
+                }
+                ConstraintExpressionParser parser(def.checkExpression, std::move(allowedColumns));
+                ConstraintExpressionAst ast;
+                const ErrorCode parseRc = parser.Parse(&ast);
+                if (Failed(parseRc))
+                {
+                    return parseRc;
+                }
+            }
+
+            if (def.kind == SCConstraintKind::PrimaryKey || def.kind == SCConstraintKind::Unique ||
+                def.kind == SCConstraintKind::ForeignKey || def.kind == SCConstraintKind::Check)
+            {
+                auto* table = FindTableByRowId(schema->TableRowId());
+                if (table != nullptr)
+                {
+                    ErrorCode validationRc = SC_OK;
+                    switch (def.kind)
+                    {
+                        case SCConstraintKind::PrimaryKey:
+                        case SCConstraintKind::Unique:
+                            validationRc = ValidateConstraintUniqueness(table, def, std::shared_ptr<SqliteRecordData>{});
+                            break;
+                        case SCConstraintKind::Check:
+                            validationRc = ValidateCheckConstraint(table, def, std::shared_ptr<SqliteRecordData>{});
+                            break;
+                        case SCConstraintKind::ForeignKey:
+                            validationRc = ValidateForeignKeyConstraint(table, def, std::shared_ptr<SqliteRecordData>{});
+                            break;
+                        default:
+                            break;
+                    }
+                    if (Failed(validationRc))
+                    {
+                        return validationRc;
                     }
                 }
             }
@@ -6943,6 +8363,1299 @@ namespace StableCore::Storage
                 if (!seenColumns.insert(column.columnName).second)
                 {
                     return SC_E_SCHEMA_VIOLATION;
+                }
+            }
+
+            return SC_OK;
+        }
+
+        SqliteTable* SqliteDatabase::FindTableByRowId(std::int64_t tableRowId) const
+        {
+            for (const auto& [_, tableRef] : tables_)
+            {
+                auto* table = static_cast<SqliteTable*>(tableRef.Get());
+                if (table != nullptr && table->TableRowId() == tableRowId)
+                {
+                    return table;
+                }
+            }
+            return nullptr;
+        }
+
+        void SqliteDatabase::CollectTouchedTableNames(const JournalTransaction& tx,
+                                                      std::vector<std::wstring>* outTableNames) const
+        {
+            if (outTableNames == nullptr)
+            {
+                return;
+            }
+
+            outTableNames->clear();
+            for (const auto& entry : tx.entries)
+            {
+                if (entry.tableName.empty())
+                {
+                    continue;
+                }
+                if (std::find(outTableNames->begin(), outTableNames->end(), entry.tableName) == outTableNames->end())
+                {
+                    outTableNames->push_back(entry.tableName);
+                }
+            }
+        }
+
+        ErrorCode SqliteDatabase::ReadConstraintValue(SqliteTable* table,
+                                                      const SqliteRecordData& recordData,
+                                                      const std::wstring& columnName,
+                                                      const std::wstring* overrideFieldName,
+                                                      const SCValue* overrideValue,
+                                                      SCValue* outValue,
+                                                      bool* outIsNull) const
+        {
+            if (table == nullptr || outValue == nullptr || outIsNull == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+
+            SCSchemaPtr schema;
+            const ErrorCode schemaRc = table->GetSchema(schema);
+            if (Failed(schemaRc) || !schema)
+            {
+                return Failed(schemaRc) ? schemaRc : SC_E_FAIL;
+            }
+
+            SCColumnDef column;
+            const ErrorCode columnRc = schema->FindColumn(columnName.c_str(), &column);
+            if (Failed(columnRc))
+            {
+                return columnRc;
+            }
+
+            if (overrideFieldName != nullptr && overrideValue != nullptr && EqualsIgnoreCase(*overrideFieldName, column.name))
+            {
+                *outValue = *overrideValue;
+            } else
+            {
+                const auto valueIt = recordData.values.find(column.name);
+                *outValue = (valueIt != recordData.values.end()) ? valueIt->second : column.defaultValue;
+            }
+
+            *outIsNull = outValue->IsNull();
+            return SC_OK;
+        }
+
+        ErrorCode SqliteDatabase::ValidateConstraintUniqueness(SqliteTable* table,
+                                                               const SCConstraintDef& constraint,
+                                                               const std::shared_ptr<SqliteRecordData>& candidateData,
+                                                               const std::wstring* overrideFieldName,
+                                                               const SCValue* overrideValue) const
+        {
+            if (table == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+            if (constraint.kind != SCConstraintKind::PrimaryKey && constraint.kind != SCConstraintKind::Unique)
+            {
+                return SC_OK;
+            }
+
+            auto buildKeySignature = [&](const std::shared_ptr<SqliteRecordData>& recordData,
+                                         const std::wstring* fieldOverrideName,
+                                         const SCValue* fieldOverrideValue,
+                                         std::wstring* outSignature,
+                                         bool* outHasNull) -> ErrorCode {
+                if (recordData == nullptr || outSignature == nullptr || outHasNull == nullptr)
+                {
+                    return SC_E_POINTER;
+                }
+
+                outSignature->clear();
+                *outHasNull = false;
+
+                for (const std::wstring& columnName : constraint.columns)
+                {
+                    SCValue value;
+                    bool columnIsNull = false;
+                    const ErrorCode valueRc = ReadConstraintValue(table,
+                                                                  *recordData,
+                                                                  columnName,
+                                                                  fieldOverrideName,
+                                                                  fieldOverrideValue,
+                                                                  &value,
+                                                                  &columnIsNull);
+                    if (Failed(valueRc))
+                    {
+                        return valueRc;
+                    }
+                    if (columnIsNull)
+                    {
+                        *outHasNull = true;
+                    }
+                    AppendToken(outSignature, SerializeConstraintKeyValue(value));
+                }
+
+                return SC_OK;
+            };
+
+            if (candidateData != nullptr)
+            {
+                std::wstring candidateSignature;
+                bool candidateHasNull = false;
+                const ErrorCode candidateKeyRc =
+                    buildKeySignature(candidateData, overrideFieldName, overrideValue, &candidateSignature, &candidateHasNull);
+                if (Failed(candidateKeyRc))
+                {
+                    return candidateKeyRc;
+                }
+
+                if (candidateHasNull)
+                {
+                    if (constraint.kind == SCConstraintKind::PrimaryKey)
+                    {
+                        SetConstraintViolation(SCConstraintViolationInfo{
+                            table->Name(),
+                            constraint.name,
+                            constraint.kind,
+                            constraint.columns,
+                            candidateData->id,
+                            0,
+                            L"Primary key columns cannot be null.",
+                        });
+                        return SC_E_CONSTRAINT_VIOLATION;
+                    }
+                    return SC_OK;
+                }
+
+                for (const auto& [recordId, recordData] : table->Records())
+                {
+                    if (recordData == nullptr || recordData->state == RecordState::Deleted ||
+                        recordData.get() == candidateData.get())
+                    {
+                        continue;
+                    }
+
+                    std::wstring otherSignature;
+                    bool otherHasNull = false;
+                    const ErrorCode otherKeyRc =
+                        buildKeySignature(recordData, nullptr, nullptr, &otherSignature, &otherHasNull);
+                    if (Failed(otherKeyRc))
+                    {
+                        return otherKeyRc;
+                    }
+                    if (otherHasNull || otherSignature != candidateSignature)
+                    {
+                        continue;
+                    }
+
+                    SetConstraintViolation(SCConstraintViolationInfo{
+                        table->Name(),
+                        constraint.name,
+                        constraint.kind,
+                        constraint.columns,
+                        candidateData->id,
+                        recordData->id,
+                        L"Unique key already exists.",
+                    });
+                    return SC_E_CONSTRAINT_VIOLATION;
+                }
+                return SC_OK;
+            }
+
+            std::unordered_set<std::wstring> seenKeySignatures;
+            seenKeySignatures.reserve(table->Records().size());
+
+            for (const auto& [recordId, recordData] : table->Records())
+            {
+                if (recordData == nullptr || recordData->state == RecordState::Deleted)
+                {
+                    continue;
+                }
+
+                std::wstring keySignature;
+                bool hasNull = false;
+                const ErrorCode keyRc = buildKeySignature(recordData, nullptr, nullptr, &keySignature, &hasNull);
+                if (Failed(keyRc))
+                {
+                    return keyRc;
+                }
+
+                if (hasNull)
+                {
+                    if (constraint.kind == SCConstraintKind::PrimaryKey)
+                    {
+                        SetConstraintViolation(SCConstraintViolationInfo{
+                            table->Name(),
+                            constraint.name,
+                            constraint.kind,
+                            constraint.columns,
+                            recordData->id,
+                            0,
+                            L"Primary key columns cannot be null.",
+                        });
+                        return SC_E_CONSTRAINT_VIOLATION;
+                    }
+                    continue;
+                }
+
+                if (!seenKeySignatures.insert(keySignature).second)
+                {
+                    SetConstraintViolation(SCConstraintViolationInfo{
+                        table->Name(),
+                        constraint.name,
+                        constraint.kind,
+                        constraint.columns,
+                        recordData->id,
+                        0,
+                        L"Unique key already exists.",
+                    });
+                    return SC_E_CONSTRAINT_VIOLATION;
+                }
+            }
+
+            return SC_OK;
+        }
+
+        ErrorCode SqliteDatabase::ValidateCheckConstraint(SqliteTable* table,
+                                                          const SCConstraintDef& constraint,
+                                                          const std::shared_ptr<SqliteRecordData>& candidateData,
+                                                          const std::wstring* overrideFieldName,
+                                                          const SCValue* overrideValue) const
+        {
+            if (table == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+            if (constraint.kind != SCConstraintKind::Check)
+            {
+                return SC_OK;
+            }
+            if (overrideFieldName != nullptr)
+            {
+                const auto usesField = std::any_of(constraint.columns.begin(),
+                                                   constraint.columns.end(),
+                                                   [overrideFieldName](const std::wstring& columnName) {
+                                                       return EqualsIgnoreCase(columnName, *overrideFieldName);
+                                                   });
+                if (!usesField)
+                {
+                    return SC_OK;
+                }
+            }
+
+            if (candidateData == nullptr)
+            {
+                for (const auto& [_, recordData] : table->Records())
+                {
+                    if (recordData == nullptr || recordData->state == RecordState::Deleted)
+                    {
+                        continue;
+                    }
+                    const ErrorCode rc =
+                        ValidateCheckConstraint(table, constraint, recordData, overrideFieldName, overrideValue);
+                    if (Failed(rc))
+                    {
+                        return rc;
+                    }
+                }
+                return SC_OK;
+            }
+
+            SCSchemaPtr schema;
+            const ErrorCode schemaRc = table->GetSchema(schema);
+            if (Failed(schemaRc) || !schema)
+            {
+                return Failed(schemaRc) ? schemaRc : SC_E_FAIL;
+            }
+
+            std::set<std::wstring> allowedColumns(constraint.columns.begin(), constraint.columns.end());
+            ConstraintExpressionParser parser(constraint.checkExpression, std::move(allowedColumns));
+            ConstraintExpressionAst ast;
+            const ErrorCode parseRc = parser.Parse(&ast);
+            if (Failed(parseRc))
+            {
+                return parseRc;
+            }
+
+            std::unordered_map<std::wstring, SCValue> values;
+            values.reserve(constraint.columns.size());
+            for (const std::wstring& columnName : constraint.columns)
+            {
+                SCValue value;
+                bool isNull = false;
+                const ErrorCode valueRc = ReadConstraintValue(table,
+                                                              *candidateData,
+                                                              columnName,
+                                                              overrideFieldName,
+                                                              overrideValue,
+                                                              &value,
+                                                              &isNull);
+                if (Failed(valueRc))
+                {
+                    return valueRc;
+                }
+                values[columnName] = value;
+            }
+
+            SCValue result;
+            const ErrorCode evalRc = EvaluateConstraintExpressionNode(*ast.root, values, &result);
+            if (Failed(evalRc))
+            {
+                return evalRc;
+            }
+
+            if (result.IsNull())
+            {
+                return SC_OK;
+            }
+            if (IsTruthyValue(result))
+            {
+                return SC_OK;
+            }
+
+            SetConstraintViolation(SCConstraintViolationInfo{
+                table->Name(),
+                constraint.name,
+                constraint.kind,
+                constraint.columns,
+                candidateData != nullptr ? candidateData->id : 0,
+                0,
+                L"Check constraint evaluated to false.",
+            });
+            return SC_E_CONSTRAINT_VIOLATION;
+        }
+
+        ErrorCode SqliteDatabase::ValidateForeignKeyConstraint(SqliteTable* table,
+                                                               const SCConstraintDef& constraint,
+                                                               const std::shared_ptr<SqliteRecordData>& candidateData,
+                                                               const std::wstring* overrideFieldName,
+                                                               const SCValue* overrideValue) const
+        {
+            if (table == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+            if (constraint.kind != SCConstraintKind::ForeignKey)
+            {
+                return SC_OK;
+            }
+            if (constraint.referencedTable.empty())
+            {
+                return SC_E_SCHEMA_VIOLATION;
+            }
+            if (overrideFieldName != nullptr)
+            {
+                const auto usesField = std::any_of(constraint.columns.begin(),
+                                                   constraint.columns.end(),
+                                                   [overrideFieldName](const std::wstring& columnName) {
+                                                       return EqualsIgnoreCase(columnName, *overrideFieldName);
+                                                   });
+                if (!usesField)
+                {
+                    return SC_OK;
+                }
+            }
+
+            if (candidateData == nullptr)
+            {
+                for (const auto& [_, recordData] : table->Records())
+                {
+                    if (recordData == nullptr || recordData->state == RecordState::Deleted)
+                    {
+                        continue;
+                    }
+                    const ErrorCode rc =
+                        ValidateForeignKeyConstraint(table, constraint, recordData, overrideFieldName, overrideValue);
+                    if (Failed(rc))
+                    {
+                        return rc;
+                    }
+                }
+                return SC_OK;
+            }
+
+            SCSchemaPtr schema;
+            const ErrorCode schemaRc = table->GetSchema(schema);
+            if (Failed(schemaRc) || !schema)
+            {
+                return Failed(schemaRc) ? schemaRc : SC_E_FAIL;
+            }
+
+            auto targetIt = tables_.find(constraint.referencedTable);
+            if (targetIt == tables_.end())
+            {
+                return SC_E_TABLE_NOT_FOUND;
+            }
+
+            auto* targetTable = static_cast<SqliteTable*>(targetIt->second.Get());
+            if (targetTable == nullptr)
+            {
+                return SC_E_FAIL;
+            }
+
+            SCSchemaPtr targetSchema;
+            const ErrorCode targetSchemaRc = targetTable->GetSchema(targetSchema);
+            if (Failed(targetSchemaRc) || !targetSchema)
+            {
+                return Failed(targetSchemaRc) ? targetSchemaRc : SC_E_FAIL;
+            }
+
+            std::vector<SCValue> sourceValues;
+            sourceValues.reserve(constraint.columns.size());
+            for (std::size_t i = 0; i < constraint.columns.size(); ++i)
+            {
+                SCValue value;
+                bool isNull = false;
+                const ErrorCode valueRc = ReadConstraintValue(table,
+                                                              *candidateData,
+                                                              constraint.columns[i],
+                                                              overrideFieldName,
+                                                              overrideValue,
+                                                              &value,
+                                                              &isNull);
+                if (Failed(valueRc))
+                {
+                    return valueRc;
+                }
+                if (isNull)
+                {
+                    return SC_OK;
+                }
+                sourceValues.push_back(value);
+            }
+
+            bool matched = false;
+            for (const auto& [candidateId, candidateDataIt] : targetTable->Records())
+            {
+                if (candidateDataIt == nullptr || candidateDataIt->state == RecordState::Deleted)
+                {
+                    continue;
+                }
+
+                bool rowMatches = true;
+                for (std::size_t i = 0; i < constraint.columns.size(); ++i)
+                {
+                    const std::wstring targetColumnName =
+                        (i < constraint.referencedColumns.size() && !constraint.referencedColumns[i].empty())
+                            ? constraint.referencedColumns[i]
+                            : constraint.columns[i];
+
+                    SCValue targetValue;
+                    bool isNull = false;
+                    const ErrorCode valueRc = ReadConstraintValue(targetTable,
+                                                                  *candidateDataIt,
+                                                                  targetColumnName,
+                                                                  nullptr,
+                                                                  nullptr,
+                                                                  &targetValue,
+                                                                  &isNull);
+                    if (Failed(valueRc))
+                    {
+                        return valueRc;
+                    }
+                    if (isNull || targetValue != sourceValues[i])
+                    {
+                        rowMatches = false;
+                        break;
+                    }
+                }
+
+                if (!rowMatches)
+                {
+                    continue;
+                }
+
+                if (matched)
+                {
+                    SetConstraintViolation(SCConstraintViolationInfo{
+                        table->Name(),
+                        constraint.name,
+                        constraint.kind,
+                        constraint.columns,
+                        candidateData != nullptr ? candidateData->id : 0,
+                        candidateId,
+                        L"Referenced key is not unique.",
+                    });
+                    return SC_E_CONSTRAINT_VIOLATION;
+                }
+                matched = true;
+            }
+
+            if (!matched)
+            {
+                SetConstraintViolation(SCConstraintViolationInfo{
+                    table->Name(),
+                    constraint.name,
+                    constraint.kind,
+                    constraint.columns,
+                    candidateData != nullptr ? candidateData->id : 0,
+                    0,
+                    L"Referenced key does not exist.",
+                });
+                return SC_E_CONSTRAINT_VIOLATION;
+            }
+
+            return SC_OK;
+        }
+
+        ErrorCode SqliteDatabase::ApplyForeignKeyActionsForTableDelete(
+            SqliteTable* table, const std::shared_ptr<SqliteRecordData>& candidateData)
+        {
+            if (table == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+            if (candidateData == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+
+            SCSchemaPtr schema;
+            const ErrorCode schemaRc = table->GetSchema(schema);
+            if (Failed(schemaRc) || !schema)
+            {
+                return Failed(schemaRc) ? schemaRc : SC_E_FAIL;
+            }
+            auto* sourceSchema = table->Schema();
+            if (sourceSchema == nullptr)
+            {
+                return SC_E_FAIL;
+            }
+
+            struct Scope
+            {
+                std::unordered_set<std::wstring>* set{nullptr};
+                std::wstring key;
+                ~Scope()
+                {
+                    if (set != nullptr)
+                    {
+                        set->erase(key);
+                    }
+                }
+            };
+
+            const std::wstring parentScopeKey = table->Name() + L"|" + std::to_wstring(candidateData->id);
+            if (!activeConstraintPropagationKeys_.insert(parentScopeKey).second)
+            {
+                return SC_OK;
+            }
+            Scope parentScope{&activeConstraintPropagationKeys_, parentScopeKey};
+
+            for (const auto& [_, tableRef] : tables_)
+            {
+                auto* sourceTable = static_cast<SqliteTable*>(tableRef.Get());
+                if (sourceTable == nullptr)
+                {
+                    continue;
+                }
+
+                SCSchemaPtr sourceSchema;
+                if (Failed(sourceTable->GetSchema(sourceSchema)) || !sourceSchema)
+                {
+                    continue;
+                }
+                auto* sourceSchemaImpl = sourceTable->Schema();
+                if (sourceSchemaImpl == nullptr)
+                {
+                    continue;
+                }
+
+                std::int32_t constraintCount = 0;
+                if (Failed(sourceSchema->GetConstraintCount(&constraintCount)))
+                {
+                    continue;
+                }
+
+                for (std::int32_t constraintIndex = 0; constraintIndex < constraintCount; ++constraintIndex)
+                {
+                    SCConstraintDef constraint;
+                    if (Failed(sourceSchema->GetConstraint(constraintIndex, &constraint)))
+                    {
+                        continue;
+                    }
+                    if (constraint.kind != SCConstraintKind::ForeignKey ||
+                        !EqualsIgnoreCase(constraint.referencedTable, table->Name()))
+                    {
+                        continue;
+                    }
+
+                    std::vector<SCValue> parentValues;
+                    parentValues.reserve(constraint.columns.size());
+                    bool anyNull = false;
+                    for (std::size_t i = 0; i < constraint.columns.size(); ++i)
+                    {
+                        SCValue value;
+                        bool isNull = false;
+                        const ErrorCode valueRc = ReadConstraintValue(table,
+                                                                      *candidateData,
+                                                                      ResolveForeignKeyReferencedColumn(constraint, i),
+                                                                      nullptr,
+                                                                      nullptr,
+                                                                      &value,
+                                                                      &isNull);
+                        if (Failed(valueRc))
+                        {
+                            return valueRc;
+                        }
+                        if (isNull)
+                        {
+                            anyNull = true;
+                        }
+                        parentValues.push_back(value);
+                    }
+                    if (anyNull)
+                    {
+                        continue;
+                    }
+
+                    for (const auto& [childId, childData] : sourceTable->Records())
+                    {
+                        if (childData == nullptr || childData->state == RecordState::Deleted)
+                        {
+                            continue;
+                        }
+
+                        bool matches = true;
+                        for (std::size_t i = 0; i < constraint.columns.size(); ++i)
+                        {
+                            SCValue childValue;
+                            bool isNull = false;
+                            const ErrorCode childRc = ReadConstraintValue(sourceTable,
+                                                                           *childData,
+                                                                           constraint.columns[i],
+                                                                           nullptr,
+                                                                           nullptr,
+                                                                           &childValue,
+                                                                           &isNull);
+                            if (Failed(childRc))
+                            {
+                                return childRc;
+                            }
+                            if (isNull || childValue != parentValues[i])
+                            {
+                                matches = false;
+                                break;
+                            }
+                        }
+
+                        if (!matches)
+                        {
+                            continue;
+                        }
+
+                        const std::wstring scopeKey = sourceTable->Name() + L"|" + std::to_wstring(childId);
+                        if (!activeConstraintPropagationKeys_.insert(scopeKey).second)
+                        {
+                            continue;
+                        }
+                        Scope scope{&activeConstraintPropagationKeys_, scopeKey};
+
+                        switch (constraint.onDelete)
+                        {
+                            case SCForeignKeyAction::Restrict:
+                            case SCForeignKeyAction::NoAction:
+                                SetConstraintViolation(SCConstraintViolationInfo{
+                                    sourceTable->Name(),
+                                    constraint.name,
+                                    constraint.kind,
+                                    constraint.columns,
+                                    childId,
+                                    candidateData->id,
+                                    L"Foreign key delete/update would leave dependent rows.",
+                                });
+                                return SC_E_CONSTRAINT_VIOLATION;
+                            case SCForeignKeyAction::Cascade:
+                                if (const ErrorCode deleteRc = sourceTable->DeleteRecord(childId);
+                                    Failed(deleteRc) && deleteRc != SC_E_RECORD_DELETED)
+                                {
+                                    return deleteRc;
+                                }
+                                break;
+                            case SCForeignKeyAction::SetNull:
+                            case SCForeignKeyAction::SetDefault: {
+                                for (std::size_t i = 0; i < constraint.columns.size(); ++i)
+                                {
+                                    const std::wstring childColumnName = constraint.columns[i];
+                                    SCValue nextValue = SCValue::Null();
+                                    if (constraint.onDelete == SCForeignKeyAction::SetDefault)
+                                    {
+                                        const SCColumnDef* childColumn = sourceSchemaImpl->FindColumnDef(childColumnName);
+                                        if (childColumn == nullptr)
+                                        {
+                                            return SC_E_COLUMN_NOT_FOUND;
+                                        }
+                                        nextValue = childColumn->defaultValue;
+                                    }
+                                    const ErrorCode writeRc = WriteValue(sourceTable, childData, childColumnName, nextValue);
+                                    if (Failed(writeRc) && writeRc != SC_E_RECORD_DELETED)
+                                    {
+                                        return writeRc;
+                                    }
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            return SC_OK;
+        }
+
+        ErrorCode SqliteDatabase::ApplyForeignKeyActionsForColumnUpdate(
+            SqliteTable* table,
+            const std::shared_ptr<SqliteRecordData>& candidateData,
+            const std::wstring& fieldName,
+            const SCValue& oldValue,
+            const SCValue& newValue)
+        {
+            if (table == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+            if (candidateData == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+
+            if (oldValue == newValue)
+            {
+                return SC_OK;
+            }
+
+            struct Scope
+            {
+                std::unordered_set<std::wstring>* set{nullptr};
+                std::wstring key;
+                ~Scope()
+                {
+                    if (set != nullptr)
+                    {
+                        set->erase(key);
+                    }
+                }
+            };
+
+            const std::wstring parentScopeKey = table->Name() + L"|" + std::to_wstring(candidateData->id);
+            if (!activeConstraintPropagationKeys_.insert(parentScopeKey).second)
+            {
+                return SC_OK;
+            }
+            Scope parentScope{&activeConstraintPropagationKeys_, parentScopeKey};
+
+            const auto* referenceEntries = GetForeignKeyReferenceEntries(table->Name(), fieldName);
+            if (referenceEntries == nullptr || referenceEntries->empty())
+            {
+                return SC_OK;
+            }
+
+            for (const auto& entry : *referenceEntries)
+            {
+                auto sourceIt = tables_.find(entry.sourceTableName);
+                if (sourceIt == tables_.end())
+                {
+                    continue;
+                }
+
+                auto* sourceTable = static_cast<SqliteTable*>(sourceIt->second.Get());
+                if (sourceTable == nullptr)
+                {
+                    continue;
+                }
+
+                SCSchemaPtr sourceSchema;
+                if (Failed(sourceTable->GetSchema(sourceSchema)) || !sourceSchema)
+                {
+                    continue;
+                }
+                auto* sourceSchemaImpl = sourceTable->Schema();
+                if (sourceSchemaImpl == nullptr)
+                {
+                    continue;
+                }
+
+                std::vector<SCValue> parentOldValues;
+                std::vector<SCValue> parentNewValues;
+                parentOldValues.reserve(entry.constraint.columns.size());
+                parentNewValues.reserve(entry.constraint.columns.size());
+                bool anyNull = false;
+                for (std::size_t i = 0; i < entry.constraint.columns.size(); ++i)
+                {
+                    const std::wstring referencedColumn = ResolveForeignKeyReferencedColumn(entry.constraint, i);
+
+                    SCValue oldTupleValue;
+                    bool oldIsNull = false;
+                    const ErrorCode oldRc = ReadConstraintValue(table,
+                                                                 *candidateData,
+                                                                 referencedColumn,
+                                                                 nullptr,
+                                                                 nullptr,
+                                                                 &oldTupleValue,
+                                                                 &oldIsNull);
+                    if (Failed(oldRc))
+                    {
+                        return oldRc;
+                    }
+                    parentOldValues.push_back(oldTupleValue);
+                    anyNull = anyNull || oldIsNull;
+
+                    SCValue newTupleValue;
+                    bool newIsNull = false;
+                    const ErrorCode newRc = ReadConstraintValue(table,
+                                                                 *candidateData,
+                                                                 referencedColumn,
+                                                                 &fieldName,
+                                                                 &newValue,
+                                                                 &newTupleValue,
+                                                                 &newIsNull);
+                    if (Failed(newRc))
+                    {
+                        return newRc;
+                    }
+                    parentNewValues.push_back(newTupleValue);
+                }
+
+                if (anyNull)
+                {
+                    continue;
+                }
+
+                for (const auto& [childId, childData] : sourceTable->Records())
+                {
+                    if (childData == nullptr || childData->state == RecordState::Deleted)
+                    {
+                        continue;
+                    }
+
+                    bool matches = true;
+                    for (std::size_t i = 0; i < entry.constraint.columns.size(); ++i)
+                    {
+                        SCValue childValue;
+                        bool isNull = false;
+                        const ErrorCode childRc = ReadConstraintValue(sourceTable,
+                                                                       *childData,
+                                                                       entry.constraint.columns[i],
+                                                                       nullptr,
+                                                                       nullptr,
+                                                                       &childValue,
+                                                                       &isNull);
+                        if (Failed(childRc))
+                        {
+                            return childRc;
+                        }
+                        if (isNull || childValue != parentOldValues[i])
+                        {
+                            matches = false;
+                            break;
+                        }
+                    }
+
+                    if (!matches)
+                    {
+                        continue;
+                    }
+
+                    const std::wstring scopeKey = sourceTable->Name() + L"|" + std::to_wstring(childId);
+                    if (!activeConstraintPropagationKeys_.insert(scopeKey).second)
+                    {
+                        continue;
+                    }
+                    Scope scope{&activeConstraintPropagationKeys_, scopeKey};
+
+                    switch (entry.constraint.onUpdate)
+                    {
+                        case SCForeignKeyAction::Restrict:
+                        case SCForeignKeyAction::NoAction:
+                            SetConstraintViolation(SCConstraintViolationInfo{
+                                sourceTable->Name(),
+                                entry.constraint.name,
+                                entry.constraint.kind,
+                                entry.constraint.columns,
+                                childId,
+                                candidateData->id,
+                                L"Foreign key update would leave dependent rows.",
+                            });
+                            return SC_E_CONSTRAINT_VIOLATION;
+                        case SCForeignKeyAction::Cascade:
+                            for (std::size_t i = 0; i < entry.constraint.columns.size(); ++i)
+                            {
+                                const ErrorCode writeRc = WriteValue(sourceTable,
+                                                                     childData,
+                                                                     entry.constraint.columns[i],
+                                                                     parentNewValues[i]);
+                                if (Failed(writeRc) && writeRc != SC_E_RECORD_DELETED)
+                                {
+                                    return writeRc;
+                                }
+                            }
+                            break;
+                        case SCForeignKeyAction::SetNull:
+                        case SCForeignKeyAction::SetDefault: {
+                            for (std::size_t i = 0; i < entry.constraint.columns.size(); ++i)
+                            {
+                                SCValue nextValue = SCValue::Null();
+                                if (entry.constraint.onUpdate == SCForeignKeyAction::SetDefault)
+                                {
+                                    const SCColumnDef* childColumn = sourceSchemaImpl->FindColumnDef(entry.constraint.columns[i]);
+                                    if (childColumn == nullptr)
+                                    {
+                                        return SC_E_COLUMN_NOT_FOUND;
+                                    }
+                                    nextValue = childColumn->defaultValue;
+                                }
+                                const ErrorCode writeRc =
+                                    WriteValue(sourceTable, childData, entry.constraint.columns[i], nextValue);
+                                if (Failed(writeRc) && writeRc != SC_E_RECORD_DELETED)
+                                {
+                                    return writeRc;
+                                }
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+
+            return SC_OK;
+        }
+
+        ErrorCode SqliteDatabase::ValidateTableConstraints(SqliteTable* table,
+                                                           const std::shared_ptr<SqliteRecordData>& candidateData,
+                                                           const std::wstring* overrideFieldName,
+                                                           const SCValue* overrideValue,
+                                                           const SCConstraintDef* specificConstraint) const
+        {
+            if (table == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+
+            SCSchemaPtr schema;
+            const ErrorCode schemaRc = table->GetSchema(schema);
+            if (Failed(schemaRc) || !schema)
+            {
+                return Failed(schemaRc) ? schemaRc : SC_E_FAIL;
+            }
+
+            std::int32_t constraintCount = 0;
+            const ErrorCode countRc = schema->GetConstraintCount(&constraintCount);
+            if (Failed(countRc))
+            {
+                return countRc;
+            }
+
+            auto validateRecord = [&](const std::shared_ptr<SqliteRecordData>& recordData) -> ErrorCode {
+                for (std::int32_t index = 0; index < constraintCount; ++index)
+                {
+                    SCConstraintDef constraint;
+                    const ErrorCode constraintRc = schema->GetConstraint(index, &constraint);
+                    if (Failed(constraintRc))
+                    {
+                        return constraintRc;
+                    }
+
+                    if (constraint.kind != SCConstraintKind::PrimaryKey && constraint.kind != SCConstraintKind::Unique &&
+                        constraint.kind != SCConstraintKind::Check && constraint.kind != SCConstraintKind::ForeignKey)
+                    {
+                        continue;
+                    }
+
+                    if (specificConstraint != nullptr && !EqualsIgnoreCase(constraint.name, specificConstraint->name))
+                    {
+                        continue;
+                    }
+
+                    if (overrideFieldName != nullptr)
+                    {
+                        const auto usesField = std::any_of(constraint.columns.begin(),
+                                                           constraint.columns.end(),
+                                                           [overrideFieldName](const std::wstring& columnName) {
+                                                               return EqualsIgnoreCase(columnName, *overrideFieldName);
+                                                           });
+                        if (!usesField && constraint.kind != SCConstraintKind::ForeignKey)
+                        {
+                            continue;
+                        }
+                    }
+
+                    ErrorCode validateRc = SC_OK;
+                    switch (constraint.kind)
+                    {
+                        case SCConstraintKind::PrimaryKey:
+                        case SCConstraintKind::Unique:
+                            validateRc = ValidateConstraintUniqueness(
+                                table, constraint, recordData, overrideFieldName, overrideValue);
+                            break;
+                        case SCConstraintKind::Check:
+                            validateRc =
+                                ValidateCheckConstraint(table, constraint, recordData, overrideFieldName, overrideValue);
+                            break;
+                        case SCConstraintKind::ForeignKey:
+                            validateRc = ValidateForeignKeyConstraint(
+                                table, constraint, recordData, overrideFieldName, overrideValue);
+                            break;
+                        default:
+                            break;
+                    }
+
+                    if (Failed(validateRc))
+                    {
+                        return validateRc;
+                    }
+                }
+                return SC_OK;
+            };
+
+            if (candidateData != nullptr)
+            {
+                return validateRecord(candidateData);
+            }
+
+            for (const auto& [_, recordData] : table->Records())
+            {
+                if (recordData == nullptr || recordData->state == RecordState::Deleted)
+                {
+                    continue;
+                }
+                const ErrorCode validateRc = validateRecord(recordData);
+                if (Failed(validateRc))
+                {
+                    return validateRc;
+                }
+            }
+
+            return SC_OK;
+        }
+
+        ErrorCode SqliteDatabase::ValidateForeignKeyReferencesToTable(SqliteTable* table,
+                                                                       const std::shared_ptr<SqliteRecordData>& candidateData,
+                                                                       const std::wstring* overrideFieldName,
+                                                                       const SCValue* overrideValue) const
+        {
+            if (table == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+
+            SCSchemaPtr schema;
+            const ErrorCode schemaRc = table->GetSchema(schema);
+            if (Failed(schemaRc) || !schema)
+            {
+                return Failed(schemaRc) ? schemaRc : SC_E_FAIL;
+            }
+
+            const auto* referenceEntries = GetForeignKeyReferenceEntries(table->Name());
+            if (referenceEntries == nullptr || referenceEntries->empty())
+            {
+                return SC_OK;
+            }
+
+            std::int32_t columnCount = 0;
+            const ErrorCode countRc = schema->GetColumnCount(&columnCount);
+            if (Failed(countRc))
+            {
+                return countRc;
+            }
+
+            for (std::int32_t columnIndex = 0; columnIndex < columnCount; ++columnIndex)
+            {
+                SCColumnDef column;
+                if (Failed(schema->GetColumn(columnIndex, &column)))
+                {
+                    continue;
+                }
+
+                const auto* columnEntries = GetForeignKeyReferenceEntries(table->Name(), column.name);
+                if (columnEntries == nullptr || columnEntries->empty())
+                {
+                    continue;
+                }
+
+                for (const auto& entry : *columnEntries)
+                {
+                    auto sourceIt = tables_.find(entry.sourceTableName);
+                    if (sourceIt == tables_.end())
+                    {
+                        continue;
+                    }
+
+                    auto* sourceTable = static_cast<SqliteTable*>(sourceIt->second.Get());
+                    if (sourceTable == nullptr)
+                    {
+                        continue;
+                    }
+
+                    SCSchemaPtr sourceSchema;
+                    if (Failed(sourceTable->GetSchema(sourceSchema)) || !sourceSchema)
+                    {
+                        continue;
+                    }
+
+                    std::vector<SCValue> targetValues;
+                    targetValues.reserve(entry.constraint.columns.size());
+                    bool anyNull = false;
+                    for (std::size_t i = 0; i < entry.constraint.columns.size(); ++i)
+                    {
+                        const std::wstring referencedColumnName = ResolveForeignKeyReferencedColumn(entry.constraint, i);
+                        SCValue value;
+                        bool isNull = false;
+                        const ErrorCode valueRc = ReadConstraintValue(table,
+                                                                      *candidateData,
+                                                                      referencedColumnName,
+                                                                      overrideFieldName,
+                                                                      overrideValue,
+                                                                      &value,
+                                                                      &isNull);
+                        if (Failed(valueRc))
+                        {
+                            return valueRc;
+                        }
+                        if (isNull)
+                        {
+                            anyNull = true;
+                        }
+                        targetValues.push_back(value);
+                    }
+
+                    if (anyNull)
+                    {
+                        continue;
+                    }
+
+                    for (const auto& [candidateId, candidateDataIt] : sourceTable->Records())
+                    {
+                        if (candidateDataIt == nullptr || candidateDataIt->state == RecordState::Deleted)
+                        {
+                            continue;
+                        }
+
+                        bool match = true;
+                        for (std::size_t i = 0; i < entry.constraint.columns.size(); ++i)
+                        {
+                            SCValue sourceValue;
+                            bool isNull = false;
+                            const ErrorCode valueRc = ReadConstraintValue(sourceTable,
+                                                                          *candidateDataIt,
+                                                                          entry.constraint.columns[i],
+                                                                          nullptr,
+                                                                          nullptr,
+                                                                          &sourceValue,
+                                                                          &isNull);
+                            if (Failed(valueRc))
+                            {
+                                return valueRc;
+                            }
+                            if (isNull || sourceValue != targetValues[i])
+                            {
+                                match = false;
+                                break;
+                            }
+                        }
+
+                        if (match)
+                        {
+                            return SC_E_CONSTRAINT_VIOLATION;
+                        }
+                    }
+                }
+            }
+
+            return SC_OK;
+        }
+
+        ErrorCode SqliteDatabase::ValidateUniqueAndPrimaryKeyConstraints(
+            SqliteTable* table,
+            const std::shared_ptr<SqliteRecordData>& candidateData,
+            const std::wstring* overrideFieldName,
+            const SCValue* overrideValue,
+            const SCConstraintDef* specificConstraint) const
+        {
+            return ValidateTableConstraints(table, candidateData, overrideFieldName, overrideValue, specificConstraint);
+        }
+
+        ErrorCode SqliteDatabase::ValidateForeignKeyReferencesForTouchedTables(const JournalTransaction& tx) const
+        {
+            std::vector<std::wstring> touchedTableNames;
+            CollectTouchedTableNames(tx, &touchedTableNames);
+
+            for (const std::wstring& tableName : touchedTableNames)
+            {
+                auto tableIt = tables_.find(tableName);
+                if (tableIt == tables_.end())
+                {
+                    continue;
+                }
+
+                auto* table = static_cast<SqliteTable*>(tableIt->second.Get());
+                if (table == nullptr)
+                {
+                    continue;
+                }
+
+                if (!HasForeignKeyReferencesToTable(tableName))
+                {
+                    continue;
+                }
+
+                for (const auto& [_, recordData] : table->Records())
+                {
+                    if (recordData == nullptr)
+                    {
+                        continue;
+                    }
+
+                    const ErrorCode validateRc =
+                        ValidateForeignKeyReferencesToTable(table, recordData, nullptr, nullptr);
+                    if (Failed(validateRc))
+                    {
+                        return validateRc;
+                    }
+                }
+            }
+
+            return SC_OK;
+        }
+
+        bool SqliteDatabase::HasForeignKeyReferencesToTable(const std::wstring& tableName) const
+        {
+            const auto* entries = GetForeignKeyReferenceEntries(tableName);
+            return entries != nullptr && !entries->empty();
+        }
+
+        bool SqliteDatabase::HasForeignKeyReferencesToColumn(const std::wstring& tableName,
+                                                             const std::wstring& columnName) const
+        {
+            const auto* entries = GetForeignKeyReferenceEntries(tableName, columnName);
+            if (entries == nullptr)
+            {
+                return false;
+            }
+            return !entries->empty();
+        }
+
+        ErrorCode SqliteDatabase::ValidateUniqueAndPrimaryKeyConstraintsForTouchedTables(const JournalTransaction& tx) const
+        {
+            std::vector<std::wstring> touchedTableNames;
+            CollectTouchedTableNames(tx, &touchedTableNames);
+
+            for (const std::wstring& tableName : touchedTableNames)
+            {
+                auto tableIt = tables_.find(tableName);
+                if (tableIt == tables_.end())
+                {
+                    continue;
+                }
+
+                auto* table = static_cast<SqliteTable*>(tableIt->second.Get());
+                if (table == nullptr)
+                {
+                    continue;
+                }
+
+                const ErrorCode validateRc = ValidateTableConstraints(table, std::shared_ptr<SqliteRecordData>{});
+                if (Failed(validateRc))
+                {
+                    return validateRc;
                 }
             }
 
@@ -8428,6 +11141,7 @@ namespace StableCore::Storage
             {
                 return writableRc;
             }
+            ClearConstraintViolation();
             const ErrorCode validate = ValidateWrite(table, data, fieldName, value);
             if (Failed(validate))
             {
@@ -8451,6 +11165,7 @@ namespace StableCore::Storage
                     return relationRc;
                 }
             }
+
             SCValue oldValue = column->defaultValue;
             const auto existing = data->values.find(fieldName);
             if (existing != data->values.end())
@@ -8461,6 +11176,24 @@ namespace StableCore::Storage
             if (oldValue == storedValue)
             {
                 return SC_OK;
+            }
+
+            const ErrorCode constraintRc =
+                ValidateTableConstraints(table, data, &fieldName, &storedValue);
+            if (Failed(constraintRc))
+            {
+                return constraintRc;
+            }
+
+            const bool hasForeignKeyReferences = HasForeignKeyReferencesToColumn(table->Name(), fieldName);
+            if (hasForeignKeyReferences)
+            {
+                const ErrorCode foreignKeyActionRc =
+                    ApplyForeignKeyActionsForColumnUpdate(table, data, fieldName, oldValue, storedValue);
+                if (Failed(foreignKeyActionRc))
+                {
+                    return foreignKeyActionRc;
+                }
             }
 
             data->values[fieldName] = storedValue;
@@ -8479,6 +11212,7 @@ namespace StableCore::Storage
             {
                 return writableRc;
             }
+            ClearConstraintViolation();
             if (!activeEdit_)
             {
                 return SC_E_NO_ACTIVE_EDIT;
@@ -8486,6 +11220,14 @@ namespace StableCore::Storage
             if (data->state == RecordState::Deleted)
             {
                 return SC_E_RECORD_DELETED;
+            }
+            if (HasForeignKeyReferencesToTable(table->Name()))
+            {
+                const ErrorCode foreignKeyActionRc = ApplyForeignKeyActionsForTableDelete(table, data);
+                if (Failed(foreignKeyActionRc))
+                {
+                    return foreignKeyActionRc;
+                }
             }
             if (IsRecordReferenced(table->Name(), data->id))
             {
@@ -8822,6 +11564,113 @@ namespace StableCore::Storage
             referenceIndexDirty_ = true;
         }
 
+        void SqliteDatabase::MarkForeignKeyReferenceCacheDirty() noexcept
+        {
+            foreignKeyReferenceCacheDirty_ = true;
+        }
+
+        ErrorCode SqliteDatabase::RefreshForeignKeyReferenceCache() const
+        {
+            foreignKeyReferenceCacheByTable_.clear();
+            foreignKeyReferenceCacheByTableAndColumn_.clear();
+
+            for (const auto& [_, tableRef] : tables_)
+            {
+                auto* sourceTable = static_cast<SqliteTable*>(tableRef.Get());
+                if (sourceTable == nullptr)
+                {
+                    continue;
+                }
+
+                SCSchemaPtr sourceSchema;
+                if (Failed(sourceTable->GetSchema(sourceSchema)) || !sourceSchema)
+                {
+                    continue;
+                }
+
+                std::int32_t constraintCount = 0;
+                const ErrorCode countRc = sourceSchema->GetConstraintCount(&constraintCount);
+                if (Failed(countRc))
+                {
+                    return countRc;
+                }
+
+                for (std::int32_t index = 0; index < constraintCount; ++index)
+                {
+                    SCConstraintDef constraint;
+                    const ErrorCode constraintRc = sourceSchema->GetConstraint(index, &constraint);
+                    if (Failed(constraintRc))
+                    {
+                        return constraintRc;
+                    }
+
+                    if (constraint.kind != SCConstraintKind::ForeignKey || constraint.referencedTable.empty())
+                    {
+                        continue;
+                    }
+
+                    foreignKeyReferenceCacheByTable_[ToUpperCopy(constraint.referencedTable)].push_back(
+                        ForeignKeyReferenceEntry{sourceTable->Name(), constraint});
+
+                    for (std::size_t index = 0; index < constraint.columns.size(); ++index)
+                    {
+                        const std::wstring resolvedReferencedColumn = ResolveForeignKeyReferencedColumn(constraint, index);
+                        if (resolvedReferencedColumn.empty())
+                        {
+                            continue;
+                        }
+                        foreignKeyReferenceCacheByTableAndColumn_[MakeForeignKeyReferenceCacheKey(constraint.referencedTable,
+                                                                                                  resolvedReferencedColumn)]
+                            .push_back(ForeignKeyReferenceEntry{sourceTable->Name(), constraint});
+                    }
+                }
+            }
+
+            foreignKeyReferenceCacheDirty_ = false;
+            return SC_OK;
+        }
+
+        const std::vector<ForeignKeyReferenceEntry>*
+        SqliteDatabase::GetForeignKeyReferenceEntries(const std::wstring& tableName) const
+        {
+            if (foreignKeyReferenceCacheDirty_)
+            {
+                const ErrorCode rc = RefreshForeignKeyReferenceCache();
+                if (Failed(rc))
+                {
+                    return nullptr;
+                }
+            }
+
+            const auto it = foreignKeyReferenceCacheByTable_.find(ToUpperCopy(tableName));
+            if (it == foreignKeyReferenceCacheByTable_.end())
+            {
+                return nullptr;
+            }
+            return &it->second;
+        }
+
+        const std::vector<ForeignKeyReferenceEntry>*
+        SqliteDatabase::GetForeignKeyReferenceEntries(const std::wstring& tableName, const std::wstring& columnName) const
+        {
+            if (foreignKeyReferenceCacheDirty_)
+            {
+                const ErrorCode rc = RefreshForeignKeyReferenceCache();
+                if (Failed(rc))
+                {
+                    return nullptr;
+                }
+            }
+
+            const auto it = foreignKeyReferenceCacheByTableAndColumn_.find(
+                MakeForeignKeyReferenceCacheKey(tableName, columnName));
+            if (it == foreignKeyReferenceCacheByTableAndColumn_.end())
+            {
+                return nullptr;
+            }
+            return &it->second;
+        }
+
         ErrorCode SqliteDatabase::SyncLegacyIndexMetadata(SqliteSchema* schema,
                                                           const std::wstring& columnName,
                                                           bool indexed)
@@ -9033,7 +11882,6 @@ namespace StableCore::Storage
         {
             RecordJournal(
                 table->Name(), data->id, L"", SCValue::Null(), SCValue::Null(), true, false, JournalOp::CreateRecord);
-            MarkReferenceIndexDirty();
         }
 
         ErrorCode SqliteDatabase::PersistSchemaAddColumn(SqliteSchema* schema,
@@ -9280,6 +12128,7 @@ namespace StableCore::Storage
 
             schema->UnloadColumn(columnName);
             MarkReferenceIndexDirty();
+            MarkForeignKeyReferenceCacheDirty();
             return SC_OK;
         }
 
@@ -9295,8 +12144,9 @@ namespace StableCore::Storage
             SqliteStmt stmt = db_.Prepare(
                 "INSERT INTO schema_constraints("
                 " constraint_id, table_id, kind, name, source_kind, "
-                "referenced_table, check_expression)"
-                " VALUES(?, ?, ?, ?, ?, ?, ?);");
+                "referenced_table, on_delete_action, on_update_action, "
+                "check_expression)"
+                " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?);");
             if (rowId > 0)
             {
                 stmt.BindInt64(1, rowId);
@@ -9309,7 +12159,9 @@ namespace StableCore::Storage
             stmt.BindText(4, def.name);
             stmt.BindInt(5, ToSqliteSchemaSourceKind(def.sourceKind));
             stmt.BindText(6, def.referencedTable);
-            stmt.BindText(7, def.checkExpression);
+            stmt.BindInt(7, ToSqliteForeignKeyAction(def.onDelete));
+            stmt.BindInt(8, ToSqliteForeignKeyAction(def.onUpdate));
+            stmt.BindText(9, def.checkExpression);
             const ErrorCode rc = stmt.Step();
             if (Failed(rc))
             {
@@ -9336,6 +12188,7 @@ namespace StableCore::Storage
             }
 
             schema->LoadConstraint(def, constraintId);
+            MarkForeignKeyReferenceCacheDirty();
             return SC_OK;
         }
 
@@ -9376,6 +12229,7 @@ namespace StableCore::Storage
             }
 
             schema->UnloadConstraint(name);
+            MarkForeignKeyReferenceCacheDirty();
             return SC_OK;
         }
 
@@ -9915,21 +12769,43 @@ namespace StableCore::Storage
             {
                 return writableRc;
             }
+            ClearConstraintViolation();
             if (schema == nullptr)
             {
                 return SC_E_POINTER;
             }
 
-            auto tableIt = std::find_if(
-                tables_.begin(),
-                tables_.end(),
-                [tableRowId = schema->TableRowId()](const std::pair<const std::wstring, SCTablePtr>& entry) {
-                    const auto* table = static_cast<SqliteTable*>(entry.second.Get());
-                    return table != nullptr && table->TableRowId() == tableRowId;
-                });
-            if (tableIt == tables_.end())
+            auto* table = FindTableByRowId(schema->TableRowId());
+            if (table == nullptr)
             {
                 return SC_E_FAIL;
+            }
+
+            if (def.kind == SCConstraintKind::PrimaryKey || def.kind == SCConstraintKind::Unique ||
+                def.kind == SCConstraintKind::ForeignKey || def.kind == SCConstraintKind::Check)
+            {
+                ErrorCode constraintValidationRc = SC_OK;
+                switch (def.kind)
+                {
+                    case SCConstraintKind::PrimaryKey:
+                    case SCConstraintKind::Unique:
+                        constraintValidationRc =
+                            ValidateConstraintUniqueness(table, def, std::shared_ptr<SqliteRecordData>{});
+                        break;
+                    case SCConstraintKind::Check:
+                        constraintValidationRc = ValidateCheckConstraint(table, def, std::shared_ptr<SqliteRecordData>{});
+                        break;
+                    case SCConstraintKind::ForeignKey:
+                        constraintValidationRc =
+                            ValidateForeignKeyConstraint(table, def, std::shared_ptr<SqliteRecordData>{});
+                        break;
+                    default:
+                        break;
+                }
+                if (Failed(constraintValidationRc))
+                {
+                    return constraintValidationRc;
+                }
             }
 
             try
@@ -9953,7 +12829,7 @@ namespace StableCore::Storage
             }
 
             const std::int64_t rowId = schema->FindConstraintRowId(def.name.c_str());
-            RecordConstraintJournal(tableIt->first, SCConstraintDef{}, def, JournalOp::AddConstraint, rowId);
+            RecordConstraintJournal(table->Name(), SCConstraintDef{}, def, JournalOp::AddConstraint, rowId);
             return SC_OK;
         }
 

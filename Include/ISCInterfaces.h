@@ -289,6 +289,15 @@ namespace StableCore::Storage
 
         virtual ErrorCode AddObserver(ISCDatabaseObserver* observer) = 0;
         virtual ErrorCode RemoveObserver(ISCDatabaseObserver* observer) = 0;
+        virtual ErrorCode GetLastConstraintViolationInfo(SCConstraintViolationInfo* outInfo) const
+        {
+            if (outInfo == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+            *outInfo = SCConstraintViolationInfo{};
+            return SC_E_NOTIMPL;
+        }
 
         // SQLite-backed databases expose file backup support.
         virtual ErrorCode CreateBackupCopy(const wchar_t* targetPath,

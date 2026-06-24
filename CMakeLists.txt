@@ -98,6 +98,7 @@ set(SCSTORAGE_LIBRARY_SOURCES
     Src/Migration/SCMigration.cpp
     Src/Sqlite/SqliteUpgradeRegistry.cpp
     Src/Sqlite/SqliteUpgradeV5ToV6.cpp
+    Src/Sqlite/SqliteUpgradeV6ToV7.cpp
     Src/Query/SCQueryBridge.cpp
     Src/Query/SCQueryExecutor.cpp
     Src/Query/SCQuerySqliteExecutor.cpp

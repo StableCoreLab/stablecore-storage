@@ -412,6 +412,26 @@ namespace StableCore::Storage
         Check,
     };
 
+    enum class SCForeignKeyAction
+    {
+        Restrict,
+        NoAction,
+        Cascade,
+        SetNull,
+        SetDefault,
+    };
+
+    struct SCConstraintViolationInfo
+    {
+        std::wstring tableName;
+        std::wstring constraintName;
+        SCConstraintKind kind{SCConstraintKind::PrimaryKey};
+        std::vector<std::wstring> columns;
+        RecordId recordId{0};
+        RecordId referencedRecordId{0};
+        std::wstring reason;
+    };
+
     struct SCConstraintDef
     {
         SCConstraintKind kind{SCConstraintKind::PrimaryKey};
@@ -420,6 +440,8 @@ namespace StableCore::Storage
         SCSchemaSourceKind sourceKind{SCSchemaSourceKind::Explicit};
         std::wstring referencedTable;
         std::vector<std::wstring> referencedColumns;
+        SCForeignKeyAction onDelete{SCForeignKeyAction::Restrict};
+        SCForeignKeyAction onUpdate{SCForeignKeyAction::Restrict};
         std::wstring checkExpression;
     };
 
