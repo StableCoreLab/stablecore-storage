@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <filesystem>
+#include <sstream>
 
 #include <gtest/gtest.h>
 #include <sqlite3.h>
@@ -98,6 +99,45 @@ TEST(SchemaEdit, SchemaConstraintAndIndexPrimitivesPersistAcrossReopen)
     EXPECT_EQ(reopened->Redo(), sc::SC_OK);
     EXPECT_EQ(schema->FindConstraint(L"uq_Beam_Width", &constraint), sc::SC_OK);
     EXPECT_EQ(schema->FindIndex(L"idx_Beam_Name", &index), sc::SC_OK);
+}
+
+TEST(SchemaEdit, NumericCheckConstraintJournalPayloadPersistsAcrossReopen)
+{
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_SchemaEdit_NumericCheckConstraintJournal.sqlite");
+
+    {
+        sc::SCDbPtr db;
+        EXPECT_EQ(sc::CreateFileDatabase(dbPath.c_str(), sc::SCOpenDatabaseOptions{}, db), sc::SC_OK);
+
+        sc::SCTablePtr table = CreateWidthOnlyBeamTable(db);
+        sc::SCSchemaPtr schema;
+        EXPECT_EQ(table->GetSchema(schema), sc::SC_OK);
+
+        sc::SCEditPtr edit;
+        EXPECT_EQ(db->BeginEdit(L"add numeric check", edit), sc::SC_OK);
+        EXPECT_EQ(schema->AddConstraint(MakeCheckConstraint(L"ck_Beam_Width_Zero", L"Width", L"0")), sc::SC_OK);
+        EXPECT_EQ(db->Commit(edit.Get()), sc::SC_OK);
+    }
+
+    sc::SCDbPtr reopened;
+    EXPECT_EQ(sc::CreateFileDatabase(dbPath.c_str(), sc::SCOpenDatabaseOptions{}, reopened), sc::SC_OK);
+
+    sc::SCTablePtr table;
+    EXPECT_EQ(reopened->GetTable(L"Beam", table), sc::SC_OK);
+    sc::SCSchemaPtr schema;
+    EXPECT_EQ(table->GetSchema(schema), sc::SC_OK);
+
+    sc::SCConstraintDef constraint;
+    EXPECT_EQ(schema->FindConstraint(L"ck_Beam_Width_Zero", &constraint), sc::SC_OK);
+    EXPECT_EQ(constraint.kind, sc::SCConstraintKind::Check);
+    EXPECT_EQ(constraint.checkExpression, L"0");
+
+    EXPECT_EQ(reopened->Undo(), sc::SC_OK);
+    EXPECT_EQ(schema->FindConstraint(L"ck_Beam_Width_Zero", &constraint), sc::SC_E_CONSTRAINT_NOT_FOUND);
+
+    EXPECT_EQ(reopened->Redo(), sc::SC_OK);
+    EXPECT_EQ(schema->FindConstraint(L"ck_Beam_Width_Zero", &constraint), sc::SC_OK);
+    EXPECT_EQ(constraint.checkExpression, L"0");
 }
 
 TEST(SchemaEdit, SchemaConstraintAndIndexPrimitivesSupportRemovalUndoAndRedo)
@@ -978,6 +1018,95 @@ TEST(SchemaEdit, ForeignKeyConstraintRejectsInvalidWritesAndDeletes)
     EXPECT_EQ(floorTable->GetRecord(floor->GetId(), floorReloaded), sc::SC_OK);
     EXPECT_EQ(floorReloaded->SetString(L"Code", L"F-002"), sc::SC_E_CONSTRAINT_VIOLATION);
     EXPECT_EQ(db->Rollback(updateEdit.Get()), sc::SC_OK);
+}
+
+TEST(SchemaEdit, RedoRejectsLegacyParentUpdateThatBecomesInvalidUnderForeignKey)
+{
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_SchemaEdit_RedoForeignKeyRevalidation.sqlite");
+    sc::RecordId floorId = 0;
+    sc::RecordId beamId = 0;
+
+    {
+        sc::SCDbPtr db;
+        EXPECT_EQ(sc::CreateFileDatabase(dbPath.c_str(), sc::SCOpenDatabaseOptions{}, db), sc::SC_OK);
+
+        sc::SCTablePtr floorTable;
+        EXPECT_EQ(db->CreateTable(L"Floor", floorTable), sc::SC_OK);
+        sc::SCSchemaPtr floorSchema;
+        EXPECT_EQ(floorTable->GetSchema(floorSchema), sc::SC_OK);
+        EXPECT_EQ(floorSchema->AddColumn(MakeStringColumn(L"Code", false)), sc::SC_OK);
+        EXPECT_EQ(floorSchema->AddConstraint(MakeUniqueConstraint(L"uq_Floor_Code", L"Code")), sc::SC_OK);
+
+        sc::SCTablePtr beamTable;
+        EXPECT_EQ(db->CreateTable(L"Beam", beamTable), sc::SC_OK);
+        sc::SCSchemaPtr beamSchema;
+        EXPECT_EQ(beamTable->GetSchema(beamSchema), sc::SC_OK);
+        EXPECT_EQ(beamSchema->AddColumn(MakeStringColumn(L"FloorCode", true)), sc::SC_OK);
+
+        sc::SCEditPtr seedEdit;
+        EXPECT_EQ(db->BeginEdit(L"seed rows", seedEdit), sc::SC_OK);
+        sc::SCRecordPtr floor;
+        EXPECT_EQ(floorTable->CreateRecord(floor), sc::SC_OK);
+        EXPECT_EQ(floor->SetString(L"Code", L"F-001"), sc::SC_OK);
+        sc::SCRecordPtr beam;
+        EXPECT_EQ(beamTable->CreateRecord(beam), sc::SC_OK);
+        EXPECT_EQ(beam->SetString(L"FloorCode", L"F-001"), sc::SC_OK);
+        EXPECT_EQ(db->Commit(seedEdit.Get()), sc::SC_OK);
+        floorId = floor->GetId();
+        beamId = beam->GetId();
+
+        sc::SCEditPtr parentUpdateEdit;
+        EXPECT_EQ(db->BeginEdit(L"update parent code", parentUpdateEdit), sc::SC_OK);
+        EXPECT_EQ(floor->SetString(L"Code", L"F-002"), sc::SC_OK);
+        EXPECT_EQ(db->Commit(parentUpdateEdit.Get()), sc::SC_OK);
+
+        sc::SCEditPtr childUpdateEdit;
+        EXPECT_EQ(db->BeginEdit(L"update child code", childUpdateEdit), sc::SC_OK);
+        EXPECT_EQ(beam->SetString(L"FloorCode", L"F-002"), sc::SC_OK);
+        EXPECT_EQ(db->Commit(childUpdateEdit.Get()), sc::SC_OK);
+
+        EXPECT_EQ(db->Undo(), sc::SC_OK);
+        EXPECT_EQ(db->Undo(), sc::SC_OK);
+
+        std::int64_t beamTableId = 0;
+        ASSERT_TRUE(QuerySqliteInt64(dbPath, "SELECT table_id FROM tables WHERE name = 'Beam';", &beamTableId));
+
+        std::ostringstream sql;
+        sql << "BEGIN;"
+            << "INSERT INTO schema_constraints(table_id, kind, name, source_kind, referenced_table, "
+               "on_delete_action, on_update_action, check_expression) VALUES("
+            << beamTableId << ", "
+            << static_cast<int>(sc::SCConstraintKind::ForeignKey) << ", 'fk_Beam_FloorCode', "
+            << static_cast<int>(sc::SCSchemaSourceKind::Explicit) << ", 'Floor', "
+            << static_cast<int>(sc::SCForeignKeyAction::Restrict) << ", "
+            << static_cast<int>(sc::SCForeignKeyAction::Restrict) << ", '');"
+            << "INSERT INTO schema_constraint_columns(constraint_id, column_ordinal, column_name, "
+               "referenced_column_name) VALUES(last_insert_rowid(), 0, 'FloorCode', 'Code');"
+            << "COMMIT;";
+        ASSERT_TRUE(ExecSqliteScript(dbPath, sql.str().c_str()));
+    }
+
+    sc::SCDbPtr reopened;
+    EXPECT_EQ(sc::CreateFileDatabase(dbPath.c_str(), sc::SCOpenDatabaseOptions{}, reopened), sc::SC_OK);
+
+    sc::SCTablePtr floorTable;
+    EXPECT_EQ(reopened->GetTable(L"Floor", floorTable), sc::SC_OK);
+    sc::SCTablePtr beamTable;
+    EXPECT_EQ(reopened->GetTable(L"Beam", beamTable), sc::SC_OK);
+
+    EXPECT_EQ(reopened->Redo(), sc::SC_E_CONSTRAINT_VIOLATION);
+
+    sc::SCRecordPtr floor;
+    EXPECT_EQ(floorTable->GetRecord(floorId, floor), sc::SC_OK);
+    const wchar_t* floorCode = nullptr;
+    EXPECT_EQ(floor->GetString(L"Code", &floorCode), sc::SC_OK);
+    EXPECT_STREQ(floorCode, L"F-001");
+
+    sc::SCRecordPtr beam;
+    EXPECT_EQ(beamTable->GetRecord(beamId, beam), sc::SC_OK);
+    const wchar_t* beamFloorCode = nullptr;
+    EXPECT_EQ(beam->GetString(L"FloorCode", &beamFloorCode), sc::SC_OK);
+    EXPECT_STREQ(beamFloorCode, L"F-001");
 }
 
 TEST(SchemaEdit, ForeignKeyConstraintRejectsExistingInvalidDataWhenAdded)

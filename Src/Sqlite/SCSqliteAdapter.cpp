@@ -1306,6 +1306,132 @@ namespace StableCore::Storage
             return payload;
         }
 
+        bool TryParseSerializedConstraintBody(const std::vector<std::wstring>& tokens,
+                                             bool actionsBeforeCheckExpression,
+                                             SCConstraintDef* outDef)
+        {
+            if (outDef == nullptr)
+            {
+                return false;
+            }
+
+            auto parseAction = [](const std::wstring& token, SCForeignKeyAction* outAction) -> bool {
+                if (outAction == nullptr)
+                {
+                    return false;
+                }
+
+                int action = 0;
+                try
+                {
+                    action = std::stoi(token);
+                } catch (...)
+                {
+                    return false;
+                }
+
+                *outAction = FromSqliteForeignKeyAction(action);
+                return IsForeignKeyActionValid(*outAction);
+            };
+
+            auto parseCount = [](const std::wstring& token, std::size_t* outCount) -> bool {
+                if (outCount == nullptr)
+                {
+                    return false;
+                }
+
+                try
+                {
+                    *outCount = static_cast<std::size_t>(std::stoull(token));
+                    return true;
+                } catch (...)
+                {
+                    return false;
+                }
+            };
+
+            SCConstraintDef def = *outDef;
+            def.columns.clear();
+            def.referencedColumns.clear();
+            def.onDelete = SCForeignKeyAction::Restrict;
+            def.onUpdate = SCForeignKeyAction::Restrict;
+
+            std::size_t index = 0;
+            if (actionsBeforeCheckExpression)
+            {
+                if (tokens.size() < 3 || !parseAction(tokens[index++], &def.onDelete) ||
+                    !parseAction(tokens[index++], &def.onUpdate))
+                {
+                    return false;
+                }
+            }
+
+            if (index >= tokens.size())
+            {
+                return false;
+            }
+            def.checkExpression = tokens[index++];
+
+            if (index >= tokens.size())
+            {
+                return false;
+            }
+
+            std::size_t columnCount = 0;
+            if (!parseCount(tokens[index++], &columnCount))
+            {
+                return false;
+            }
+
+            if (tokens.size() < index + columnCount + 1)
+            {
+                return false;
+            }
+
+            for (std::size_t columnIndex = 0; columnIndex < columnCount; ++columnIndex)
+            {
+                def.columns.push_back(tokens[index++]);
+            }
+
+            std::size_t referencedColumnCount = 0;
+            if (index >= tokens.size() || !parseCount(tokens[index++], &referencedColumnCount))
+            {
+                return false;
+            }
+
+            if (tokens.size() < index + referencedColumnCount)
+            {
+                return false;
+            }
+
+            for (std::size_t columnIndex = 0; columnIndex < referencedColumnCount; ++columnIndex)
+            {
+                def.referencedColumns.push_back(tokens[index++]);
+            }
+
+            if (!actionsBeforeCheckExpression)
+            {
+                if (index == tokens.size())
+                {
+                    *outDef = std::move(def);
+                    return true;
+                }
+                if (tokens.size() != index + 2 || !parseAction(tokens[index++], &def.onDelete) ||
+                    !parseAction(tokens[index++], &def.onUpdate))
+                {
+                    return false;
+                }
+            }
+
+            if (index != tokens.size())
+            {
+                return false;
+            }
+
+            *outDef = std::move(def);
+            return true;
+        }
+
         bool DeserializeConstraintDef(const std::wstring& payload, SCConstraintDef* outDef)
         {
             if (outDef == nullptr)
@@ -1350,129 +1476,26 @@ namespace StableCore::Storage
                 return false;
             }
 
-            def.onDelete = SCForeignKeyAction::Restrict;
-            def.onUpdate = SCForeignKeyAction::Restrict;
-            bool hasForeignKeyActionTokens = false;
-            try
+            std::vector<std::wstring> bodyTokens;
+            bodyTokens.push_back(token);
+            while (cursor < payload.size())
             {
-                const std::size_t probe = static_cast<std::size_t>(std::stoull(token));
-                if (probe <= static_cast<std::size_t>(SCForeignKeyAction::SetDefault))
-                {
-                    hasForeignKeyActionTokens = true;
-                }
-            } catch (...)
-            {
-                hasForeignKeyActionTokens = false;
-            }
-
-            if (hasForeignKeyActionTokens)
-            {
-                try
-                {
-                    def.onDelete = FromSqliteForeignKeyAction(std::stoi(token));
-                } catch (...)
-                {
-                    return false;
-                }
-
                 if (!ReadToken(payload, &cursor, &token))
                 {
                     return false;
                 }
-
-                try
-                {
-                    def.onUpdate = FromSqliteForeignKeyAction(std::stoi(token));
-                } catch (...)
-                {
-                    return false;
-                }
-
-                if (!ReadToken(payload, &cursor, &def.checkExpression) || !ReadToken(payload, &cursor, &token))
-                {
-                    return false;
-                }
-            } else
-            {
-                def.checkExpression = token;
-                if (!ReadToken(payload, &cursor, &token))
-                {
-                    return false;
-                }
+                bodyTokens.push_back(token);
             }
 
-            std::size_t columnCount = 0;
-            try
-            {
-                columnCount = static_cast<std::size_t>(std::stoull(token));
-            } catch (...)
+            if (!TryParseSerializedConstraintBody(bodyTokens, false, &def) &&
+                (def.kind != SCConstraintKind::ForeignKey ||
+                 !TryParseSerializedConstraintBody(bodyTokens, true, &def)))
             {
                 return false;
-            }
-
-            for (std::size_t index = 0; index < columnCount; ++index)
-            {
-                if (!ReadToken(payload, &cursor, &token))
-                {
-                    return false;
-                }
-                def.columns.push_back(token);
-            }
-
-            if (!ReadToken(payload, &cursor, &token))
-            {
-                return false;
-            }
-
-            std::size_t referencedColumnCount = 0;
-            try
-            {
-                referencedColumnCount = static_cast<std::size_t>(std::stoull(token));
-            } catch (...)
-            {
-                return false;
-            }
-
-            for (std::size_t index = 0; index < referencedColumnCount; ++index)
-            {
-                if (!ReadToken(payload, &cursor, &token))
-                {
-                    return false;
-                }
-                def.referencedColumns.push_back(token);
-            }
-
-            def.onDelete = SCForeignKeyAction::Restrict;
-            def.onUpdate = SCForeignKeyAction::Restrict;
-            if (cursor < payload.size())
-            {
-                if (!ReadToken(payload, &cursor, &token))
-                {
-                    return false;
-                }
-                try
-                {
-                    def.onDelete = FromSqliteForeignKeyAction(std::stoi(token));
-                } catch (...)
-                {
-                    return false;
-                }
-
-                if (!ReadToken(payload, &cursor, &token))
-                {
-                    return false;
-                }
-                try
-                {
-                    def.onUpdate = FromSqliteForeignKeyAction(std::stoi(token));
-                } catch (...)
-                {
-                    return false;
-                }
             }
 
             *outDef = std::move(def);
-            return cursor == payload.size();
+            return true;
         }
 
         std::wstring SerializeIndexDef(const SCIndexDef& def)
@@ -6918,6 +6941,11 @@ namespace StableCore::Storage
             {
                 return uniqueConstraintRc;
             }
+            const ErrorCode foreignKeyReferenceRc = ValidateForeignKeyReferencesForTouchedTables(activeJournal_);
+            if (Failed(foreignKeyReferenceRc))
+            {
+                return foreignKeyReferenceRc;
+            }
 
             try
             {
@@ -7040,6 +7068,13 @@ namespace StableCore::Storage
                     undoStack_.push_back(tx);
                     return constraintRc;
                 }
+                const ErrorCode foreignKeyReferenceRc = ValidateForeignKeyReferencesForTouchedTables(tx.tx);
+                if (Failed(foreignKeyReferenceRc))
+                {
+                    (void)ApplyJournalForward(tx.tx);
+                    undoStack_.push_back(tx);
+                    return foreignKeyReferenceRc;
+                }
                 const VersionId nextVersion = version_ + 1;
                 PersistTouchedRecords(tx.tx, nextVersion);
                 UpdateJournalTransactionStack(tx.txId, kStackRedo, static_cast<int>(redoStack_.size()));
@@ -7103,6 +7138,13 @@ namespace StableCore::Storage
                     (void)ApplyJournalReverse(tx.tx);
                     redoStack_.push_back(tx);
                     return constraintRc;
+                }
+                const ErrorCode foreignKeyReferenceRc = ValidateForeignKeyReferencesForTouchedTables(tx.tx);
+                if (Failed(foreignKeyReferenceRc))
+                {
+                    (void)ApplyJournalReverse(tx.tx);
+                    redoStack_.push_back(tx);
+                    return foreignKeyReferenceRc;
                 }
                 const VersionId nextVersion = version_ + 1;
                 PersistTouchedRecords(tx.tx, nextVersion);
@@ -9580,32 +9622,28 @@ namespace StableCore::Storage
 
             for (const std::wstring& tableName : touchedTableNames)
             {
-                auto tableIt = tables_.find(tableName);
-                if (tableIt == tables_.end())
+                const auto* referenceEntries = GetForeignKeyReferenceEntries(tableName);
+                if (referenceEntries == nullptr || referenceEntries->empty())
                 {
                     continue;
                 }
 
-                auto* table = static_cast<SqliteTable*>(tableIt->second.Get());
-                if (table == nullptr)
+                for (const auto& entry : *referenceEntries)
                 {
-                    continue;
-                }
+                    auto sourceIt = tables_.find(entry.sourceTableName);
+                    if (sourceIt == tables_.end())
+                    {
+                        continue;
+                    }
 
-                if (!HasForeignKeyReferencesToTable(tableName))
-                {
-                    continue;
-                }
-
-                for (const auto& [_, recordData] : table->Records())
-                {
-                    if (recordData == nullptr)
+                    auto* sourceTable = static_cast<SqliteTable*>(sourceIt->second.Get());
+                    if (sourceTable == nullptr)
                     {
                         continue;
                     }
 
                     const ErrorCode validateRc =
-                        ValidateForeignKeyReferencesToTable(table, recordData, nullptr, nullptr);
+                        ValidateForeignKeyConstraint(sourceTable, entry.constraint, std::shared_ptr<SqliteRecordData>{});
                     if (Failed(validateRc))
                     {
                         return validateRc;

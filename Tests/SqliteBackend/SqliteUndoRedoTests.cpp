@@ -1,21 +1,18 @@
 #include <filesystem>
+#include <sstream>
 
 #include <gtest/gtest.h>
 
 #include "SCStorage.h"
 
 #include "Support/TestPaths.h"
+#include "Support/TestSqliteHelpers.h"
 
 namespace sc = StableCore::Storage;
 namespace fs = std::filesystem;
 
 namespace
 {
-    sc::ErrorCode CreateFileDb(const wchar_t* path, sc::SCDbPtr& db)
-    {
-        return sc::CreateFileDatabase(path, sc::SCOpenDatabaseOptions{}, db);
-    }
-
     sc::SCTablePtr CreateBeamTable(sc::SCDbPtr& db)
     {
         sc::SCTablePtr table;
@@ -203,4 +200,112 @@ TEST(SqliteUndoRedo, SchemaColumnUndoRestoreKeepsOriginalColumnOrder)
     EXPECT_EQ(column.name, L"Name");
     EXPECT_EQ(schema->GetColumn(1, &column), sc::SC_OK);
     EXPECT_EQ(column.name, L"Height");
+}
+
+TEST(SqliteUndoRedo, PersistedRedoRejectsParentUpdateThatViolatesReopenedForeignKey)
+{
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_Sqlite_UndoRedo_PersistedRedoForeignKey.sqlite");
+    sc::RecordId floorId = 0;
+    sc::RecordId beamId = 0;
+
+    {
+        sc::SCDbPtr db;
+        EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
+
+        sc::SCTablePtr floorTable;
+        EXPECT_EQ(db->CreateTable(L"Floor", floorTable), sc::SC_OK);
+        sc::SCSchemaPtr floorSchema;
+        EXPECT_EQ(floorTable->GetSchema(floorSchema), sc::SC_OK);
+
+        sc::SCColumnDef floorCode;
+        floorCode.name = L"Code";
+        floorCode.displayName = L"Code";
+        floorCode.valueKind = sc::ValueKind::String;
+        floorCode.nullable = false;
+        floorCode.defaultValue = sc::SCValue::FromString(L"");
+        EXPECT_EQ(floorSchema->AddColumn(floorCode), sc::SC_OK);
+
+        sc::SCConstraintDef floorCodeUnique;
+        floorCodeUnique.kind = sc::SCConstraintKind::Unique;
+        floorCodeUnique.name = L"uq_Floor_Code";
+        floorCodeUnique.columns.push_back(L"Code");
+        EXPECT_EQ(floorSchema->AddConstraint(floorCodeUnique), sc::SC_OK);
+
+        sc::SCTablePtr beamTable;
+        EXPECT_EQ(db->CreateTable(L"Beam", beamTable), sc::SC_OK);
+        sc::SCSchemaPtr beamSchema;
+        EXPECT_EQ(beamTable->GetSchema(beamSchema), sc::SC_OK);
+
+        sc::SCColumnDef beamFloorCode;
+        beamFloorCode.name = L"FloorCode";
+        beamFloorCode.displayName = L"FloorCode";
+        beamFloorCode.valueKind = sc::ValueKind::String;
+        beamFloorCode.nullable = true;
+        beamFloorCode.defaultValue = sc::SCValue::Null();
+        EXPECT_EQ(beamSchema->AddColumn(beamFloorCode), sc::SC_OK);
+
+        sc::SCEditPtr seedEdit;
+        EXPECT_EQ(db->BeginEdit(L"seed rows", seedEdit), sc::SC_OK);
+        sc::SCRecordPtr floor;
+        EXPECT_EQ(floorTable->CreateRecord(floor), sc::SC_OK);
+        EXPECT_EQ(floor->SetString(L"Code", L"F-001"), sc::SC_OK);
+        sc::SCRecordPtr beam;
+        EXPECT_EQ(beamTable->CreateRecord(beam), sc::SC_OK);
+        EXPECT_EQ(beam->SetString(L"FloorCode", L"F-001"), sc::SC_OK);
+        EXPECT_EQ(db->Commit(seedEdit.Get()), sc::SC_OK);
+        floorId = floor->GetId();
+        beamId = beam->GetId();
+
+        sc::SCEditPtr parentUpdateEdit;
+        EXPECT_EQ(db->BeginEdit(L"update parent code", parentUpdateEdit), sc::SC_OK);
+        EXPECT_EQ(floor->SetString(L"Code", L"F-002"), sc::SC_OK);
+        EXPECT_EQ(db->Commit(parentUpdateEdit.Get()), sc::SC_OK);
+
+        sc::SCEditPtr childUpdateEdit;
+        EXPECT_EQ(db->BeginEdit(L"update child code", childUpdateEdit), sc::SC_OK);
+        EXPECT_EQ(beam->SetString(L"FloorCode", L"F-002"), sc::SC_OK);
+        EXPECT_EQ(db->Commit(childUpdateEdit.Get()), sc::SC_OK);
+
+        EXPECT_EQ(db->Undo(), sc::SC_OK);
+        EXPECT_EQ(db->Undo(), sc::SC_OK);
+
+        std::int64_t beamTableId = 0;
+        ASSERT_TRUE(QuerySqliteInt64(dbPath, "SELECT table_id FROM tables WHERE name = 'Beam';", &beamTableId));
+
+        std::ostringstream sql;
+        sql << "BEGIN;"
+            << "INSERT INTO schema_constraints(table_id, kind, name, source_kind, referenced_table, "
+               "on_delete_action, on_update_action, check_expression) VALUES("
+            << beamTableId << ", "
+            << static_cast<int>(sc::SCConstraintKind::ForeignKey) << ", 'fk_Beam_FloorCode', "
+            << static_cast<int>(sc::SCSchemaSourceKind::Explicit) << ", 'Floor', "
+            << static_cast<int>(sc::SCForeignKeyAction::Restrict) << ", "
+            << static_cast<int>(sc::SCForeignKeyAction::Restrict) << ", '');"
+            << "INSERT INTO schema_constraint_columns(constraint_id, column_ordinal, column_name, "
+               "referenced_column_name) VALUES(last_insert_rowid(), 0, 'FloorCode', 'Code');"
+            << "COMMIT;";
+        ASSERT_TRUE(ExecSqliteScript(dbPath, sql.str().c_str()));
+    }
+
+    sc::SCDbPtr reopened;
+    EXPECT_EQ(CreateFileDb(dbPath.c_str(), reopened), sc::SC_OK);
+
+    sc::SCTablePtr floorTable;
+    EXPECT_EQ(reopened->GetTable(L"Floor", floorTable), sc::SC_OK);
+    sc::SCTablePtr beamTable;
+    EXPECT_EQ(reopened->GetTable(L"Beam", beamTable), sc::SC_OK);
+
+    EXPECT_EQ(reopened->Redo(), sc::SC_E_CONSTRAINT_VIOLATION);
+
+    sc::SCRecordPtr floor;
+    EXPECT_EQ(floorTable->GetRecord(floorId, floor), sc::SC_OK);
+    const wchar_t* floorCode = nullptr;
+    EXPECT_EQ(floor->GetString(L"Code", &floorCode), sc::SC_OK);
+    EXPECT_STREQ(floorCode, L"F-001");
+
+    sc::SCRecordPtr beam;
+    EXPECT_EQ(beamTable->GetRecord(beamId, beam), sc::SC_OK);
+    const wchar_t* beamFloorCodeText = nullptr;
+    EXPECT_EQ(beam->GetString(L"FloorCode", &beamFloorCodeText), sc::SC_OK);
+    EXPECT_STREQ(beamFloorCodeText, L"F-001");
 }
