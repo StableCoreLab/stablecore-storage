@@ -15,10 +15,14 @@ add_executable(SCStorageDatabaseEditor WIN32
     SCSchemaTableImport.h
     SCSchemaTableImportDialog.cpp
     SCSchemaTableImportDialog.h
+    SCSchemaTextPane.cpp
+    SCSchemaTextPane.h
     SCSchemaTableDialog.cpp
     SCSchemaTableDialog.h
     SCSchemaTableGenerator.cpp
     SCSchemaTableGenerator.h
+    SCTableDesignPane.cpp
+    SCTableDesignPane.h
     SCRelationPickerDialog.cpp
     SCRelationPickerDialog.h
     main.cpp
@@ -44,10 +48,14 @@ SCStorageSourceGroupTree("${CMAKE_CURRENT_SOURCE_DIR}"
     SCSchemaTableImport.h
     SCSchemaTableImportDialog.cpp
     SCSchemaTableImportDialog.h
+    SCSchemaTextPane.cpp
+    SCSchemaTextPane.h
     SCSchemaTableDialog.cpp
     SCSchemaTableDialog.h
     SCSchemaTableGenerator.cpp
     SCSchemaTableGenerator.h
+    SCTableDesignPane.cpp
+    SCTableDesignPane.h
     SCRelationPickerDialog.cpp
     SCRelationPickerDialog.h
     main.cpp

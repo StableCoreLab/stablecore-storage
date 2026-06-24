@@ -1,4 +1,4 @@
-#include "SCAddColumnDialog.h"
+﻿#include "SCAddColumnDialog.h"
 
 #include "SCBinaryUtils.h"
 #include "SCDatabaseSession.h"
@@ -16,6 +16,12 @@ namespace StableCore::Storage::Editor
 {
     namespace
     {
+        enum class RelationBindingMode
+        {
+            RecordId = 0,
+            BusinessKey = 1,
+        };
+
         bool IsRelationStorageColumnUsable(const sc::SCTableSchemaSnapshot& snapshot,
                                            const QString& columnName)
         {
@@ -118,7 +124,7 @@ namespace StableCore::Storage::Editor
     SCAddColumnDialog::SCAddColumnDialog(SCDatabaseSession* session, QWidget* parent)
         : QDialog(parent), session_(session)
     {
-        setWindowTitle(QStringLiteral("添加字段"));
+        setWindowTitle(QStringLiteral("新增字段"));
 
         auto* layout = new QVBoxLayout(this);
         auto* form = new QFormLayout();
@@ -127,6 +133,7 @@ namespace StableCore::Storage::Editor
         displayNameEdit_ = new QLineEdit(this);
         valueKindCombo_ = new QComboBox(this);
         relationCheck_ = new QCheckBox(QStringLiteral("关系字段"), this);
+        relationBindingCombo_ = new QComboBox(this);
         nullableCheck_ = new QCheckBox(this);
         editableCheck_ = new QCheckBox(this);
         userDefinedCheck_ = new QCheckBox(this);
@@ -141,11 +148,11 @@ namespace StableCore::Storage::Editor
         referenceDisplayColumnLabel_ = new QLabel(QStringLiteral("显示列"), this);
         defaultValueEdit_ = new QLineEdit(this);
         defaultValueEdit_->setPlaceholderText(
-            QStringLiteral("仅在表中已有数据时需要"));
+            QStringLiteral("仅在表中已有数据时需要填写"));
 
         referenceTableEdit_->setPlaceholderText(QStringLiteral("请输入已存在的表名"));
         referenceStorageColumnEdit_->setPlaceholderText(
-            QStringLiteral("请输入用于存储的业务键列"));
+            QStringLiteral("用于保存关联值的业务列"));
         referenceDisplayColumnEdit_->setPlaceholderText(
             QStringLiteral("可选，不填则默认与存储列一致"));
 
@@ -161,6 +168,15 @@ namespace StableCore::Storage::Editor
         referenceTableEdit_->setCompleter(referenceTableCompleter_);
         referenceStorageColumnEdit_->setCompleter(referenceStorageCompleter_);
         referenceDisplayColumnEdit_->setCompleter(referenceDisplayCompleter_);
+        relationBindingCombo_->addItem(
+            QStringLiteral("按记录ID关联"),
+            static_cast<int>(RelationBindingMode::RecordId));
+        relationBindingCombo_->addItem(
+            QStringLiteral("按业务键关联"),
+            static_cast<int>(RelationBindingMode::BusinessKey));
+        relationBindingCombo_->setCurrentIndex(
+            relationBindingCombo_->findData(
+                static_cast<int>(RelationBindingMode::BusinessKey)));
 
         valueKindCombo_->addItem(QStringLiteral("Integer (Int64)"),
                                  static_cast<int>(sc::ValueKind::Int64));
@@ -180,14 +196,15 @@ namespace StableCore::Storage::Editor
         nullableCheck_->setChecked(true);
         editableCheck_->setChecked(true);
 
-        form->addRow(QStringLiteral("名称"), nameEdit_);
-        form->addRow(QStringLiteral("显示名称"), displayNameEdit_);
+        form->addRow(QStringLiteral("字段名"), nameEdit_);
+        form->addRow(QStringLiteral("显示名"), displayNameEdit_);
         form->addRow(QStringLiteral("值类型"), valueKindCombo_);
-        form->addRow(QStringLiteral("列类型"), relationCheck_);
+        form->addRow(QStringLiteral("字段类型"), relationCheck_);
+        form->addRow(QStringLiteral("关联方式"), relationBindingCombo_);
         form->addRow(QStringLiteral("可空"), nullableCheck_);
         form->addRow(QStringLiteral("可编辑"), editableCheck_);
         form->addRow(QStringLiteral("用户定义"), userDefinedCheck_);
-        form->addRow(QStringLiteral("建索引"), indexedCheck_);
+        form->addRow(QStringLiteral("已建索引"), indexedCheck_);
         form->addRow(QStringLiteral("参与计算"), participatesInCalcCheck_);
         form->addRow(QStringLiteral("单位"), unitEdit_);
         form->addRow(referenceTableLabel_, referenceTableEdit_);
@@ -215,6 +232,8 @@ namespace StableCore::Storage::Editor
         connect(nullableCheck_, &QCheckBox::toggled, this,
                 &SCAddColumnDialog::UpdateValidationState);
         connect(relationCheck_, &QCheckBox::toggled, this,
+                &SCAddColumnDialog::UpdateValidationState);
+        connect(relationBindingCombo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
                 &SCAddColumnDialog::UpdateValidationState);
         connect(referenceTableEdit_, &QLineEdit::textChanged, this,
                 &SCAddColumnDialog::UpdateValidationState);
@@ -259,6 +278,11 @@ namespace StableCore::Storage::Editor
         participatesInCalcCheck_->setChecked(value.participatesInCalc);
         unitEdit_->setText(QString::fromStdWString(value.unit));
         referenceTableEdit_->setText(QString::fromStdWString(value.referenceTable));
+        const bool recordIdBinding = value.referenceStorageColumn.empty();
+        relationBindingCombo_->setCurrentIndex(
+            relationBindingCombo_->findData(static_cast<int>(
+                recordIdBinding ? RelationBindingMode::RecordId
+                                : RelationBindingMode::BusinessKey)));
         referenceStorageColumnEdit_->setText(
             QString::fromStdWString(value.referenceStorageColumn));
         referenceDisplayColumnEdit_->setText(
@@ -334,6 +358,14 @@ namespace StableCore::Storage::Editor
                                  : displayNameEdit_->text().toStdWString();
         column.valueKind =
             static_cast<sc::ValueKind>(valueKindCombo_->currentData().toInt());
+        const RelationBindingMode bindingMode =
+            static_cast<RelationBindingMode>(
+                relationBindingCombo_->currentData().toInt());
+        if (relationCheck_->isChecked() &&
+            bindingMode == RelationBindingMode::RecordId)
+        {
+            column.valueKind = sc::ValueKind::RecordId;
+        }
         column.columnKind = relationCheck_->isChecked()
                                 ? sc::ColumnKind::Relation
                                 : sc::ColumnKind::Fact;
@@ -352,10 +384,17 @@ namespace StableCore::Storage::Editor
         if (column.columnKind == sc::ColumnKind::Relation)
         {
             column.referenceTable = referenceTableEdit_->text().toStdWString();
-            column.referenceStorageColumn =
-                referenceStorageColumnEdit_->text().toStdWString();
-            column.referenceDisplayColumn =
-                referenceDisplayColumnEdit_->text().toStdWString();
+            if (bindingMode == RelationBindingMode::RecordId)
+            {
+                column.referenceStorageColumn.clear();
+                column.referenceDisplayColumn.clear();
+            } else
+            {
+                column.referenceStorageColumn =
+                    referenceStorageColumnEdit_->text().toStdWString();
+                column.referenceDisplayColumn =
+                    referenceDisplayColumnEdit_->text().toStdWString();
+            }
         } else
         {
             column.referenceTable.clear();
@@ -451,6 +490,9 @@ namespace StableCore::Storage::Editor
         const QString tableName = referenceTableEdit_->text().trimmed();
         const QString storageColumn = referenceStorageColumnEdit_->text().trimmed();
         const QString displayColumn = referenceDisplayColumnEdit_->text().trimmed();
+        const RelationBindingMode bindingMode =
+            static_cast<RelationBindingMode>(
+                relationBindingCombo_->currentData().toInt());
 
         if (tableName.isEmpty())
         {
@@ -460,6 +502,13 @@ namespace StableCore::Storage::Editor
         if (!loadedSnapshot)
         {
             relationHintLabel_->setText(QStringLiteral("引用表不存在或无法读取。"));
+            return;
+        }
+        if (bindingMode == RelationBindingMode::RecordId)
+        {
+            relationHintLabel_->setText(
+                QStringLiteral("当前模式：按记录ID关联。系统直接保存目标记录的记录ID，") +
+                QStringLiteral("无需填写存储列或显示列。"));
             return;
         }
         if (storageColumn.isEmpty())
@@ -476,13 +525,13 @@ namespace StableCore::Storage::Editor
                         });
         if (!storageColumnExists)
         {
-            relationHintLabel_->setText(QStringLiteral("存储列必须来自引用表。"));
+            relationHintLabel_->setText(QStringLiteral("存储列必须存在于引用表中。"));
             return;
         }
 
         if (!IsRelationStorageColumnUsable(snapshot, storageColumn))
         {
-            relationHintLabel_->setText(QStringLiteral("存储列必须非空且具备唯一约束。"));
+            relationHintLabel_->setText(QStringLiteral("存储列必须非空且唯一。"));
             return;
         }
 
@@ -496,7 +545,7 @@ namespace StableCore::Storage::Editor
                             });
             if (!displayColumnExists)
             {
-                relationHintLabel_->setText(QStringLiteral("显示列必须来自引用表。"));
+                relationHintLabel_->setText(QStringLiteral("显示列必须存在于引用表中。"));
                 return;
             }
         }
@@ -536,20 +585,34 @@ namespace StableCore::Storage::Editor
             const QString tableName = referenceTableEdit_->text().trimmed();
             const QString storageColumn = referenceStorageColumnEdit_->text().trimmed();
             const QString displayColumn = referenceDisplayColumnEdit_->text().trimmed();
+            const RelationBindingMode bindingMode =
+                static_cast<RelationBindingMode>(
+                    relationBindingCombo_->currentData().toInt());
 
             if (tableName.isEmpty())
             {
                 relationValid = false;
                 relationError = QStringLiteral("关系字段必须指定引用表。");
-            } else if (!loadedSnapshot)
+            }
+            else if (!loadedSnapshot)
             {
                 relationValid = false;
-                relationError = QStringLiteral("引用表不存在。");
-            } else if (storageColumn.isEmpty())
+                relationError = QStringLiteral("引用表不存在或无法读取。");
+            }
+            else if (bindingMode == RelationBindingMode::RecordId)
+            {
+                if (selectedKind != sc::ValueKind::RecordId)
+                {
+                    relationValid = false;
+                    relationError = QStringLiteral("按记录ID关联时，值类型必须为 RecordId。");
+                }
+            }
+            else if (storageColumn.isEmpty())
             {
                 relationValid = false;
-                relationError = QStringLiteral("必须指定存储列。");
-            } else if (std::none_of(
+                relationError = QStringLiteral("关系字段必须指定存储列。");
+            }
+            else if (std::none_of(
                            snapshot.columns.begin(), snapshot.columns.end(),
                            [&storageColumn](const sc::SCColumnDef& column) {
                                return QString::fromStdWString(column.name).compare(
@@ -558,11 +621,13 @@ namespace StableCore::Storage::Editor
             {
                 relationValid = false;
                 relationError = QStringLiteral("存储列必须存在于引用表中。");
-            } else if (!IsRelationStorageColumnUsable(snapshot, storageColumn))
+            }
+            else if (!IsRelationStorageColumnUsable(snapshot, storageColumn))
             {
                 relationValid = false;
                 relationError = QStringLiteral("存储列必须非空且唯一。");
-            } else if (!displayColumn.isEmpty() &&
+            }
+            else if (!displayColumn.isEmpty() &&
                        std::none_of(snapshot.columns.begin(), snapshot.columns.end(),
                                     [&displayColumn](const sc::SCColumnDef& column) {
                                         return QString::fromStdWString(column.name).compare(
@@ -608,6 +673,11 @@ namespace StableCore::Storage::Editor
         }
 
         const bool relationVisible = relationCheck_->isChecked();
+        const bool businessKeyBinding =
+            relationVisible &&
+            static_cast<RelationBindingMode>(
+                relationBindingCombo_->currentData().toInt()) ==
+                RelationBindingMode::BusinessKey;
         if (referenceTableLabel_ != nullptr)
         {
             referenceTableLabel_->setVisible(relationVisible);
@@ -616,21 +686,25 @@ namespace StableCore::Storage::Editor
         {
             referenceTableEdit_->setVisible(relationVisible);
         }
+        if (relationBindingCombo_ != nullptr)
+        {
+            relationBindingCombo_->setVisible(relationVisible);
+        }
         if (referenceStorageColumnLabel_ != nullptr)
         {
-            referenceStorageColumnLabel_->setVisible(relationVisible);
+            referenceStorageColumnLabel_->setVisible(businessKeyBinding);
         }
         if (referenceStorageColumnEdit_ != nullptr)
         {
-            referenceStorageColumnEdit_->setVisible(relationVisible);
+            referenceStorageColumnEdit_->setVisible(businessKeyBinding);
         }
         if (referenceDisplayColumnLabel_ != nullptr)
         {
-            referenceDisplayColumnLabel_->setVisible(relationVisible);
+            referenceDisplayColumnLabel_->setVisible(businessKeyBinding);
         }
         if (referenceDisplayColumnEdit_ != nullptr)
         {
-            referenceDisplayColumnEdit_->setVisible(relationVisible);
+            referenceDisplayColumnEdit_->setVisible(businessKeyBinding);
         }
 
         if (okButton_ != nullptr)

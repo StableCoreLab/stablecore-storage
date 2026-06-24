@@ -6,6 +6,7 @@
 #include <QDateTime>
 #include <QFile>
 #include <QFileDialog>
+#include <QFrame>
 #include <QIODevice>
 #include <QHBoxLayout>
 #include <QInputDialog>
@@ -19,6 +20,7 @@
 #include <QSplitter>
 #include <QStringList>
 #include <QStatusBar>
+#include <QTabBar>
 #include <QToolBar>
 #include <QTabWidget>
 #include <QVector>
@@ -27,12 +29,15 @@
 
 #include <SCTreeGrid/SCTreeGridCtrl.h>
 
+#include <functional>
 #include <vector>
 
 #include "SCBatch.h"
 #include "SCBinaryUtils.h"
+#include "SCSchemaTextPane.h"
 #include "SCSchemaTableImportDialog.h"
 #include "SCSchemaTableDialog.h"
+#include "SCTableDesignPane.h"
 
 namespace sc = StableCore::Storage;
 
@@ -40,10 +45,9 @@ namespace StableCore::Storage::Editor
 {
     namespace
     {
-        constexpr int kInspectorSchemaTab = 0;
-        constexpr int kInspectorRecordTab = 1;
-        constexpr int kInspectorComputedTab = 2;
-        constexpr int kInspectorRelationTab = 3;
+        constexpr int kCurrentDetailsRecordTab = 0;
+        constexpr int kCurrentDetailsComputedTab = 1;
+        constexpr int kCurrentDetailsRelationTab = 2;
 
         constexpr int kBottomDiagnosticsTab = 0;
         constexpr int kBottomEditLogTab = 1;
@@ -59,9 +63,13 @@ namespace StableCore::Storage::Editor
             Database,
             TablesRoot,
             Table,
+            TableColumns,
+            TableConstraints,
+            TableIndexes,
+            TableRecords,
             ComputedRoot,
             ComputedColumn,
-            SystemRoot,
+            ActivityRoot,
             EditLog,
             Journal,
             Snapshots,
@@ -126,7 +134,7 @@ namespace StableCore::Storage::Editor
                     bool v = false;
                     if (value.AsBool(&v) == sc::SC_OK)
                     {
-                        return v ? QStringLiteral("是") : QStringLiteral("否");
+                        return v ? QStringLiteral("Yes") : QStringLiteral("No");
                     }
                     break;
                 }
@@ -167,12 +175,12 @@ namespace StableCore::Storage::Editor
                     break;
             }
 
-            return QStringLiteral("<值>");
+            return QStringLiteral("<Value>");
         }
 
         QString BoolToText(bool value)
         {
-            return value ? QStringLiteral("是") : QStringLiteral("否");
+            return value ? QStringLiteral("Yes") : QStringLiteral("No");
         }
 
         QString OpenModeToText(sc::SCDatabaseOpenMode mode)
@@ -180,13 +188,13 @@ namespace StableCore::Storage::Editor
             switch (mode)
             {
                 case sc::SCDatabaseOpenMode::Normal:
-                    return QStringLiteral("普通");
+                    return QStringLiteral("Normal");
                 case sc::SCDatabaseOpenMode::NoHistory:
-                    return QStringLiteral("无历史");
+                    return QStringLiteral("No History");
                 case sc::SCDatabaseOpenMode::ReadOnly:
-                    return QStringLiteral("只读");
+                    return QStringLiteral("Read Only");
                 default:
-                    return QStringLiteral("未知");
+                    return QStringLiteral("Unknown");
             }
         }
 
@@ -195,27 +203,27 @@ namespace StableCore::Storage::Editor
             switch (type)
             {
                 case ExplorerNodeType::Database:
-                    return QStringLiteral("数据库");
+                    return QStringLiteral("Database");
                 case ExplorerNodeType::TablesRoot:
-                    return QStringLiteral("表");
+                    return QStringLiteral("Tables");
                 case ExplorerNodeType::Table:
-                    return QStringLiteral("表");
+                    return QStringLiteral("Table");
                 case ExplorerNodeType::ComputedRoot:
-                    return QStringLiteral("计算列");
+                    return QStringLiteral("Computed Column");
                 case ExplorerNodeType::ComputedColumn:
-                    return QStringLiteral("计算列");
-                case ExplorerNodeType::SystemRoot:
-                    return QStringLiteral("系统");
+                    return QStringLiteral("Computed Column");
+                case ExplorerNodeType::ActivityRoot:
+                    return QStringLiteral("Activity");
                 case ExplorerNodeType::EditLog:
-                    return QStringLiteral("编辑日志");
+                    return QStringLiteral("Edit Log");
                 case ExplorerNodeType::Journal:
-                    return QStringLiteral("日志");
+                    return QStringLiteral("Journal");
                 case ExplorerNodeType::Snapshots:
-                    return QStringLiteral("快照");
+                    return QStringLiteral("Snapshots");
                 case ExplorerNodeType::Diagnostics:
-                    return QStringLiteral("诊断");
+                    return QStringLiteral("Diagnostics");
                 default:
-                    return QStringLiteral("未知");
+                    return QStringLiteral("Unknown");
             }
         }
 
@@ -224,19 +232,19 @@ namespace StableCore::Storage::Editor
             switch (kind)
             {
                 case sc::SCEditLogActionKind::Commit:
-                    return QStringLiteral("提交");
+                    return QStringLiteral("Commit");
                 case sc::SCEditLogActionKind::Undo:
-                    return QStringLiteral("撤销");
+                    return QStringLiteral("Undo");
                 case sc::SCEditLogActionKind::Redo:
-                    return QStringLiteral("重做");
+                    return QStringLiteral("Redo");
                 case sc::SCEditLogActionKind::Import:
-                    return QStringLiteral("导入");
+                    return QStringLiteral("Import");
                 case sc::SCEditLogActionKind::RuleWriteback:
-                    return QStringLiteral("规则回写");
+                    return QStringLiteral("Rule Writeback");
                 case sc::SCEditLogActionKind::SaveBaseline:
-                    return QStringLiteral("保存基线");
+                    return QStringLiteral("Save Baseline");
                 default:
-                    return QStringLiteral("未知");
+                    return QStringLiteral("Unknown");
             }
         }
 
@@ -285,7 +293,7 @@ namespace StableCore::Storage::Editor
 
         QString StorageErrorText(sc::ErrorCode error)
         {
-            return QStringLiteral("存储错误: 0x") +
+            return QStringLiteral("Storage error: 0x") +
                    QString::number(static_cast<qulonglong>(error), 16);
         }
 
@@ -316,7 +324,7 @@ namespace StableCore::Storage::Editor
                 if (outError != nullptr)
                 {
                     *outError =
-                        QStringLiteral("输出CSV行容器为空。");
+                        QStringLiteral("The CSV row output container is empty.");
                 }
                 return false;
             }
@@ -379,7 +387,7 @@ namespace StableCore::Storage::Editor
                         if (outError != nullptr)
                         {
                             *outError = QStringLiteral(
-                                "引号CSV字段后出现意外字符。");
+                                "Unexpected character after quoted CSV field.");
                         }
                         return false;
                     }
@@ -388,7 +396,7 @@ namespace StableCore::Storage::Editor
                         if (outError != nullptr)
                         {
                             *outError = QStringLiteral(
-                                "非引号CSV字段内出现意外引号。");
+                                "Unexpected quote inside unquoted CSV field.");
                         }
                         return false;
                     }
@@ -455,7 +463,7 @@ namespace StableCore::Storage::Editor
                 if (outError != nullptr)
                 {
                     *outError = QStringLiteral(
-                        "CSV输入在引号字段内结束。");
+                        "CSV input ended inside a quoted field.");
                 }
                 return false;
             }
@@ -480,7 +488,7 @@ namespace StableCore::Storage::Editor
                 if (outError != nullptr)
                 {
                     *outError =
-                        QStringLiteral("无效整数值: ") + text;
+                        QStringLiteral("Invalid integer value: ") + text;
                 }
                 return false;
             }
@@ -502,7 +510,7 @@ namespace StableCore::Storage::Editor
                 if (outError != nullptr)
                 {
                     *outError =
-                        QStringLiteral("无效小数值: ") + text;
+                        QStringLiteral("Invalid decimal value: ") + text;
                 }
                 return false;
             }
@@ -546,7 +554,7 @@ namespace StableCore::Storage::Editor
 
             if (outError != nullptr)
             {
-                *outError = QStringLiteral("无效布尔值: ") + text;
+                *outError = QStringLiteral("Invalid boolean value: ") + text;
             }
             return false;
         }
@@ -559,7 +567,7 @@ namespace StableCore::Storage::Editor
             {
                 if (outError != nullptr)
                 {
-                    *outError = QStringLiteral("输出值为空。");
+                    *outError = QStringLiteral("Output value is empty.");
                 }
                 return false;
             }
@@ -695,17 +703,20 @@ namespace StableCore::Storage::Editor
         UpdateDatabaseStatusBar();
         RefreshOverviewPanels();
         UpdateGridSummary();
+        SetWorkspaceMode(WorkspaceMode::Data);
 
         connect(session_, &SCDatabaseSession::DatabaseOpened, this, [this]() {
             RefreshObjectExplorer();
             UpdateDatabaseStatusBar();
             RefreshOverviewPanels();
             UpdateGridSummary();
-            SetStatusMessage(QStringLiteral("数据库已打开。"));
+            RefreshWorkspaceHeader();
+            RefreshWorkspacePages();
+            SetStatusMessage(QStringLiteral("Database opened."));
             const QString dbPath = session_->DatabasePath();
             if (!dbPath.isEmpty())
             {
-                setWindowTitle(QStringLiteral("数据库编辑器 - %1").arg(dbPath));
+                setWindowTitle(QStringLiteral("Database Editor - %1").arg(dbPath));
             }
         });
         connect(session_, &SCDatabaseSession::TablesChanged, this, [this]() {
@@ -713,59 +724,88 @@ namespace StableCore::Storage::Editor
             UpdateDatabaseStatusBar();
             RefreshOverviewPanels();
             UpdateGridSummary();
+            RefreshWorkspaceHeader();
+            RefreshWorkspacePages();
         });
         connect(
             session_, &SCDatabaseSession::CurrentTableChanged, this, [this]() {
                 RefreshGridData();
                 RefreshObjectExplorer();
-                UpdateSchemaInspector();
-                UpdateRecordInspector();
+                RefreshCurrentDetailsPanel();
+                RefreshCurrentRecordPanel();
                 UpdateComputedColumnsPanel();
-                UpdateRelationInspector();
+                RefreshRelationPanel();
                 UpdateDatabaseStatusBar();
                 UpdateGridSummary();
                 RefreshOverviewPanels();
+                RefreshWorkspaceHeader();
+                RefreshWorkspacePages();
                 const QString currentTableName = session_->CurrentTableName();
                 SetStatusMessage(
                     currentTableName.isEmpty()
-                        ? QStringLiteral("表选择已清除。")
-                        : QStringLiteral("已选择表: ") +
+                        ? QStringLiteral("Table selection cleared.")
+                        : QStringLiteral("Selected table: ") +
                               currentTableName);
             });
         connect(session_, &SCDatabaseSession::RecordsChanged, this, [this]() {
             UpdateGridSummary();
-            UpdateRecordInspector();
-            UpdateRelationInspector();
+            RefreshCurrentRecordPanel();
+            RefreshRelationPanel();
             RefreshOverviewPanels();
             UpdateDatabaseStatusBar();
+            RefreshWorkspaceHeader();
+            RefreshWorkspacePages();
         });
     }
 
     void SCDatabaseEditorMainWindow::BuildUi()
     {
-        setWindowTitle(QStringLiteral("数据库编辑器"));
-        resize(1540, 920);
+        setWindowTitle(QStringLiteral("Database Editor"));
+        resize(1600, 960);
 
         auto* centralWidget = new QWidget(this);
         auto* centralLayout = new QVBoxLayout(centralWidget);
         centralLayout->setContentsMargins(0, 0, 0, 0);
         centralLayout->setSpacing(6);
 
-        // 数据库状态标签将添加到底部状态栏，不在中央区域显示
+        workspaceHeader_ = new QWidget(centralWidget);
+        auto* workspaceHeaderLayout = new QHBoxLayout(workspaceHeader_);
+        workspaceHeaderLayout->setContentsMargins(6, 6, 6, 0);
+        workspaceHeaderLayout->setSpacing(12);
+        workspaceTitleLabel_ =
+            new QLabel(QStringLiteral("Table: -"), workspaceHeader_);
+        workspaceStatsLabel_ =
+            new QLabel(QStringLiteral("Rows: 0 | Columns: 0"),
+                       workspaceHeader_);
+        workspaceModeStateLabel_ =
+            new QLabel(QStringLiteral("Mode: Data"), workspaceHeader_);
+        workspaceModeBar_ = new QTabBar(workspaceHeader_);
+        workspaceModeBar_->addTab(QStringLiteral("Data"));
+        workspaceModeBar_->addTab(QStringLiteral("Design"));
+        workspaceModeBar_->addTab(QStringLiteral("Schema Text"));
+        workspaceModeBar_->setExpanding(false);
+        workspaceHeaderLayout->addWidget(workspaceTitleLabel_);
+        workspaceHeaderLayout->addWidget(workspaceStatsLabel_);
+        workspaceHeaderLayout->addStretch(1);
+        workspaceHeaderLayout->addWidget(workspaceModeStateLabel_);
+        workspaceHeaderLayout->addWidget(workspaceModeBar_);
+        centralLayout->addWidget(workspaceHeader_);
+
+        workspaceStack_ = new QStackedWidget(centralWidget);
+
         tablePage_ = new QWidget(centralWidget);
         auto* tableLayout = new QVBoxLayout(tablePage_);
         tableLayout->setContentsMargins(0, 0, 0, 0);
         tableLayout->setSpacing(6);
 
-        // tableTitleLabel_ 已移除，表信息显示在状态栏的 currentTableLabel_ 中
 
         auto* filterLayout = new QHBoxLayout();
         filterEdit_ = new QLineEdit(tablePage_);
-        filterEdit_->setPlaceholderText(QStringLiteral("筛选当前表"));
+        filterEdit_->setPlaceholderText(QStringLiteral("Filter current table"));
         auto* clearFilterButton =
-            new QPushButton(QStringLiteral("清除"), tablePage_);
+            new QPushButton(QStringLiteral("Clear"), tablePage_);
         filterLayout->addWidget(
-            new QLabel(QStringLiteral("筛选:"), tablePage_));
+            new QLabel(QStringLiteral("Filter:"), tablePage_));
         filterLayout->addWidget(filterEdit_, 1);
         filterLayout->addWidget(clearFilterButton);
         tableLayout->addLayout(filterLayout);
@@ -776,7 +816,13 @@ namespace StableCore::Storage::Editor
         dataTable_->setContextMenuPolicy(Qt::CustomContextMenu);
         tableLayout->addWidget(dataTable_, 1);
 
-        centralLayout->addWidget(tablePage_, 1);
+        workspaceStack_->addWidget(tablePage_);
+        tableDesignPane_ = new SCTableDesignPane(session_, workspaceStack_);
+        workspaceStack_->addWidget(tableDesignPane_);
+        schemaTextPane_ = new SCSchemaTextPane(session_, workspaceStack_);
+        workspaceStack_->addWidget(schemaTextPane_);
+
+        centralLayout->addWidget(workspaceStack_, 1);
         setCentralWidget(centralWidget);
 
         connect(filterEdit_, &QLineEdit::textChanged, this,
@@ -785,16 +831,27 @@ namespace StableCore::Storage::Editor
                 &QLineEdit::clear);
         connect(dataTable_, &QWidget::customContextMenuRequested, this,
                 &SCDatabaseEditorMainWindow::OnGridContextMenuRequested);
+        connect(workspaceModeBar_, &QTabBar::currentChanged, this,
+                &SCDatabaseEditorMainWindow::OnWorkspaceModeChanged);
+        connect(tableDesignPane_, &SCTableDesignPane::StatusMessage, this,
+                &SCDatabaseEditorMainWindow::SetStatusMessage);
+        connect(schemaTextPane_, &SCSchemaTextPane::StatusMessage, this,
+                &SCDatabaseEditorMainWindow::SetStatusMessage);
+        connect(schemaTextPane_, &SCSchemaTextPane::TableImported, this,
+                [this](const QString& tableName) {
+                    SelectTableInExplorer(tableName);
+                    SetWorkspaceMode(WorkspaceMode::Data);
+                });
 
         objectExplorerDock_ =
-            new QDockWidget(QStringLiteral("对象资源管理器"), this);
+            new QDockWidget(QStringLiteral("Object Explorer"), this);
         objectExplorerDock_->setObjectName(
             QStringLiteral("objectExplorerDock"));
         objectExplorerDock_->setAllowedAreas(Qt::LeftDockWidgetArea |
                                              Qt::RightDockWidgetArea);
         objectTree_ = new QTreeWidget(objectExplorerDock_);
         objectTree_->setHeaderLabels(
-            {QStringLiteral("对象"), QStringLiteral("类型")});
+            {QStringLiteral("Object"), QStringLiteral("Type")});
         objectTree_->setSelectionMode(QAbstractItemView::SingleSelection);
         objectTree_->setAlternatingRowColors(true);
         objectTree_->setContextMenuPolicy(Qt::CustomContextMenu);
@@ -806,53 +863,41 @@ namespace StableCore::Storage::Editor
             objectTree_, &QWidget::customContextMenuRequested, this,
             &SCDatabaseEditorMainWindow::OnObjectExplorerContextMenuRequested);
 
-        inspectorDock_ = new QDockWidget(QStringLiteral("检查器"), this);
-        inspectorDock_->setObjectName(QStringLiteral("inspectorDock"));
-        inspectorDock_->setAllowedAreas(Qt::RightDockWidgetArea);
-        inspectorTabs_ = new QTabWidget(inspectorDock_);
+        currentDetailsDock_ = new QDockWidget(QStringLiteral("Current Details"), this);
+        currentDetailsDock_->setObjectName(QStringLiteral("inspectorDock"));
+        currentDetailsDock_->setAllowedAreas(Qt::RightDockWidgetArea);
+        currentDetailsTabs_ = new QTabWidget(currentDetailsDock_);
 
-        schemaTree_ = new QTreeWidget(inspectorTabs_);
-        schemaTree_->setHeaderLabels(
-            {QStringLiteral("字段名"), QStringLiteral("显示名"),
-             QStringLiteral("类型"), QStringLiteral("可为空"),
-             QStringLiteral("默认值"), QStringLiteral("引用表"),
-             QStringLiteral("用户定义"), QStringLiteral("计算列")});
-        schemaTree_->setContextMenuPolicy(Qt::CustomContextMenu);
-        inspectorTabs_->addTab(schemaTree_, QStringLiteral("模式"));
-
-        recordTree_ = new QTreeWidget(inspectorTabs_);
+        recordTree_ = new QTreeWidget(currentDetailsTabs_);
         recordTree_->setHeaderLabels(
-            {QStringLiteral("字段"), QStringLiteral("值")});
-        inspectorTabs_->addTab(recordTree_, QStringLiteral("当前记录"));
+            {QStringLiteral("Field"), QStringLiteral("Value")});
+        currentDetailsTabs_->addTab(recordTree_, QStringLiteral("Current Record"));
 
-        computedColumnsTree_ = new QTreeWidget(inspectorTabs_);
+        computedColumnsTree_ = new QTreeWidget(currentDetailsTabs_);
         computedColumnsTree_->setHeaderLabels(
-            {QStringLiteral("名称"), QStringLiteral("类型"),
-             QStringLiteral("表达式"), QStringLiteral("可缓存")});
-        inspectorTabs_->addTab(computedColumnsTree_,
-                               QStringLiteral("计算列"));
+            {QStringLiteral("Name"), QStringLiteral("Type"),
+             QStringLiteral("Expression"), QStringLiteral("Cacheable")});
+        currentDetailsTabs_->addTab(computedColumnsTree_,
+                               QStringLiteral("Computed Column"));
 
-        relationTree_ = new QTreeWidget(inspectorTabs_);
+        relationTree_ = new QTreeWidget(currentDetailsTabs_);
         relationTree_->setHeaderLabels(
-            {QStringLiteral("字段"), QStringLiteral("目标表"),
-             QStringLiteral("目标字段"), QStringLiteral("状态")});
-        inspectorTabs_->addTab(relationTree_, QStringLiteral("关联"));
+            {QStringLiteral("Field"), QStringLiteral("Target Table"),
+            QStringLiteral("Target Field"), QStringLiteral("State")});
+        currentDetailsTabs_->addTab(relationTree_, QStringLiteral("Relations"));
 
-        connect(schemaTree_, &QWidget::customContextMenuRequested, this,
-                &SCDatabaseEditorMainWindow::OnSchemaContextMenuRequested);
+        currentDetailsDock_->setWidget(currentDetailsTabs_);
+        addDockWidget(Qt::RightDockWidgetArea, currentDetailsDock_);
 
-        inspectorDock_->setWidget(inspectorTabs_);
-        addDockWidget(Qt::RightDockWidgetArea, inspectorDock_);
-
-        bottomDock_ = new QDockWidget(QStringLiteral("底部面板"), this);
+        bottomDock_ = new QDockWidget(QStringLiteral("Activity"), this);
         bottomDock_->setObjectName(QStringLiteral("bottomDock"));
         bottomDock_->setAllowedAreas(Qt::BottomDockWidgetArea);
         bottomTabs_ = new QTabWidget(bottomDock_);
 
         diagnosticsText_ = new QPlainTextEdit(bottomTabs_);
         diagnosticsText_->setReadOnly(true);
-        diagnosticsText_->setPlainText(QStringLiteral("未打开数据库。"));
-        bottomTabs_->addTab(diagnosticsText_, QStringLiteral("诊断"));
+        diagnosticsText_->setPlainText(QStringLiteral("No database open."));
+        bottomTabs_->addTab(diagnosticsText_, QStringLiteral("Diagnostics"));
 
         auto* editLogWidget = new QWidget(bottomTabs_);
         auto* editLogLayout = new QVBoxLayout(editLogWidget);
@@ -861,48 +906,48 @@ namespace StableCore::Storage::Editor
         editStateText_ = new QPlainTextEdit(editLogWidget);
         editStateText_->setReadOnly(true);
         editStateText_->setMinimumHeight(110);
-        editStateText_->setPlainText(QStringLiteral("未打开数据库。"));
+        editStateText_->setPlainText(QStringLiteral("No database open."));
         editLogLayout->addWidget(
-            new QLabel(QStringLiteral("状态摘要"), editLogWidget));
+            new QLabel(QStringLiteral("State Summary"), editLogWidget));
         editLogLayout->addWidget(editStateText_);
         editLogTree_ = new QTreeWidget(editLogWidget);
         editLogTree_->setHeaderLabels(
-            {QStringLiteral("操作"), QStringLiteral("版本"),
-             QStringLiteral("动作"), QStringLiteral("提交"),
-             QStringLiteral("时间戳"), QStringLiteral("文本"),
-             QStringLiteral("详情")});
+            {QStringLiteral("Operation"), QStringLiteral("Version"),
+             QStringLiteral("Action"), QStringLiteral("Commit"),
+             QStringLiteral("Timestamp"), QStringLiteral("Text"),
+             QStringLiteral("Details")});
         editLogLayout->addWidget(
-            new QLabel(QStringLiteral("编辑日志项"), editLogWidget));
+            new QLabel(QStringLiteral("Edit Log"), editLogWidget));
         editLogLayout->addWidget(editLogTree_, 1);
-        bottomTabs_->addTab(editLogWidget, QStringLiteral("编辑日志"));
+        bottomTabs_->addTab(editLogWidget, QStringLiteral("Edit Log"));
 
         healthSummaryText_ = new QPlainTextEdit(bottomTabs_);
         healthSummaryText_->setReadOnly(true);
-        healthSummaryText_->setPlainText(QStringLiteral("未打开数据库。"));
+        healthSummaryText_->setPlainText(QStringLiteral("No database open."));
         bottomTabs_->addTab(healthSummaryText_,
-                            QStringLiteral("健康摘要"));
+                            QStringLiteral("Health Summary"));
 
         sqlPreviewText_ = new QPlainTextEdit(bottomTabs_);
         sqlPreviewText_->setReadOnly(true);
         sqlPreviewText_->setPlainText(QStringLiteral(
-            "SQL 预览在打开表之前不可用。"));
-        bottomTabs_->addTab(sqlPreviewText_, QStringLiteral("SQL 预览"));
+            "SQL preview is unavailable until a table is opened."));
+        bottomTabs_->addTab(sqlPreviewText_, QStringLiteral("SQL Preview"));
 
         debugPackageText_ = new QPlainTextEdit(bottomTabs_);
         debugPackageText_->setReadOnly(true);
         debugPackageText_->setPlainText(
-            QStringLiteral("未导出调试包。"));
-        bottomTabs_->addTab(debugPackageText_, QStringLiteral("调试包"));
+            QStringLiteral("No debug package exported."));
+        bottomTabs_->addTab(debugPackageText_, QStringLiteral("Export Debug Package"));
 
         bottomDock_->setWidget(bottomTabs_);
         addDockWidget(Qt::BottomDockWidgetArea, bottomDock_);
 
-        // 数据库状态标签 - 添加到底部状态栏
-        openModeLabel_ = new QLabel(QStringLiteral("模式: 已关闭"), this);
-        currentTableLabel_ = new QLabel(QStringLiteral("表: -"), this);
-        tableStatsLabel_ = new QLabel(QStringLiteral("记录: 0"), this);
-        filterStateLabel_ = new QLabel(QStringLiteral("筛选: 关闭"), this);
-        transactionStateLabel_ = new QLabel(QStringLiteral("事务: 空闲"), this);
+        // Status bar labels.
+        openModeLabel_ = new QLabel(QStringLiteral("Mode: Closed"), this);
+        currentTableLabel_ = new QLabel(QStringLiteral("Table: -"), this);
+        tableStatsLabel_ = new QLabel(QStringLiteral("Rows: 0"), this);
+        filterStateLabel_ = new QLabel(QStringLiteral("Filter: Off"), this);
+        transactionStateLabel_ = new QLabel(QStringLiteral("Transaction: Idle"), this);
 
         // 添加分隔符
         auto* spacer1 = new QWidget(this);
@@ -914,7 +959,6 @@ namespace StableCore::Storage::Editor
         auto* spacer4 = new QWidget(this);
         spacer4->setFixedWidth(12);
 
-        // 添加到状态栏（左侧）
         statusBar()->addWidget(openModeLabel_);
         statusBar()->addWidget(spacer1);
         statusBar()->addWidget(currentTableLabel_);
@@ -931,166 +975,167 @@ namespace StableCore::Storage::Editor
         separator->setFrameShadow(QFrame::Sunken);
         statusBar()->addWidget(separator);
 
-        statusLabel_ = new QLabel(QStringLiteral("就绪。"), this);
+        statusLabel_ = new QLabel(QStringLiteral("Ready."), this);
         statusBar()->addPermanentWidget(statusLabel_, 1);
     }
 
     void SCDatabaseEditorMainWindow::BuildMenus()
     {
-        auto* fileMenu = menuBar()->addMenu(QStringLiteral("文件(&F)"));
-        fileMenu->addAction(QStringLiteral("新建数据库..."), this,
+        auto* fileMenu = menuBar()->addMenu(QStringLiteral("File(&F)"));
+        fileMenu->addAction(QStringLiteral("New Database..."), this,
                             &SCDatabaseEditorMainWindow::CreateDatabase);
-        fileMenu->addAction(QStringLiteral("打开数据库..."), this,
+        fileMenu->addAction(QStringLiteral("Open Database..."), this,
                             &SCDatabaseEditorMainWindow::OpenDatabase);
-        fileMenu->addAction(QStringLiteral("创建备份副本..."), this,
+        fileMenu->addAction(QStringLiteral("Create Backup Copy..."), this,
                             &SCDatabaseEditorMainWindow::CreateBackupCopy);
-        fileMenu->addAction(QStringLiteral("导出调试包..."), this,
+        fileMenu->addAction(QStringLiteral("Export Debug Package..."), this,
                             &SCDatabaseEditorMainWindow::ExportDebugPackage);
 
-        auto* editMenu = menuBar()->addMenu(QStringLiteral("编辑(&E)"));
-        editMenu->addAction(QStringLiteral("撤销"), this,
+        auto* editMenu = menuBar()->addMenu(QStringLiteral("Edit(&E)"));
+        editMenu->addAction(QStringLiteral("Undo"), this,
                             &SCDatabaseEditorMainWindow::UndoLastAction);
-        editMenu->addAction(QStringLiteral("重做"), this,
+        editMenu->addAction(QStringLiteral("Redo"), this,
                             &SCDatabaseEditorMainWindow::RedoLastAction);
         editMenu->addSeparator();
         savePendingChangesAction_ = editMenu->addAction(
-            QStringLiteral("保存待更改"), this,
+            QStringLiteral("Save Pending Changes"), this,
             &SCDatabaseEditorMainWindow::SavePendingChanges);
         discardPendingChangesAction_ = editMenu->addAction(
-            QStringLiteral("放弃待更改"), this,
+            QStringLiteral("Discard Pending Changes"), this,
             &SCDatabaseEditorMainWindow::DiscardPendingChanges);
-        editMenu->addAction(QStringLiteral("刷新"), this,
+        editMenu->addAction(QStringLiteral("Refresh"), this,
                             &SCDatabaseEditorMainWindow::RefreshCurrentView);
 
-        auto* tableMenu = menuBar()->addMenu(QStringLiteral("表(&T)"));
-        tableMenu->addAction(QStringLiteral("创建表..."), this,
+        auto* tableMenu = menuBar()->addMenu(QStringLiteral("Table(&T)"));
+        tableMenu->addAction(QStringLiteral("Create Table..."), this,
                              &SCDatabaseEditorMainWindow::CreateTable);
         tableMenu->addAction(
-            QStringLiteral("从模式创建表..."), this,
+            QStringLiteral("Create Table From Schema..."), this,
             &SCDatabaseEditorMainWindow::CreateTableFromSchemaDescription);
-        tableMenu->addAction(QStringLiteral("删除选中的表"), this,
+        tableMenu->addAction(QStringLiteral("Delete Selected Table"), this,
                              &SCDatabaseEditorMainWindow::DeleteSelectedTable);
         tableMenu->addAction(
-            QStringLiteral("表结构..."), this,
+            QStringLiteral("Open Design Workspace"), this,
             &SCDatabaseEditorMainWindow::OpenSchemaTableConverter);
-        tableMenu->addAction(QStringLiteral("添加列..."), this,
+        tableMenu->addAction(QStringLiteral("Add Column..."), this,
                              &SCDatabaseEditorMainWindow::AddColumn);
-        tableMenu->addAction(QStringLiteral("编辑选中的列..."), this,
+        tableMenu->addAction(QStringLiteral("Edit Selected Column..."), this,
                              &SCDatabaseEditorMainWindow::EditSelectedColumn);
-        tableMenu->addAction(QStringLiteral("添加记录"), this,
+        tableMenu->addAction(QStringLiteral("Add Record"), this,
                              &SCDatabaseEditorMainWindow::AddRecord);
-        tableMenu->addAction(QStringLiteral("删除选中的记录"), this,
+        tableMenu->addAction(QStringLiteral("Delete Selected Record"), this,
                              &SCDatabaseEditorMainWindow::DeleteSelectedRecord);
-        tableMenu->addAction(QStringLiteral("选择关联..."), this,
+        tableMenu->addAction(QStringLiteral("Select Relation..."), this,
                              &SCDatabaseEditorMainWindow::EditSelectedRelation);
         tableMenu->addSeparator();
         tableMenu->addAction(
-            QStringLiteral("导出 CSV..."), this,
+            QStringLiteral("Export CSV..."), this,
             &SCDatabaseEditorMainWindow::ExportCurrentTableCsv);
         tableMenu->addAction(
-            QStringLiteral("导入 CSV..."), this,
+            QStringLiteral("Import CSV..."), this,
             &SCDatabaseEditorMainWindow::ImportCsvIntoCurrentTable);
 
         auto* computedMenu =
-            menuBar()->addMenu(QStringLiteral("计算列(&C)"));
+            menuBar()->addMenu(QStringLiteral("Computed(&C)"));
         computedMenu->addAction(
-            QStringLiteral("添加会话计算列..."), this,
+            QStringLiteral("Add Session Computed Column..."), this,
             &SCDatabaseEditorMainWindow::AddSessionComputedColumn);
         computedMenu->addAction(
-            QStringLiteral("编辑选中的计算列..."), this,
+            QStringLiteral("Edit Selected Computed Column..."), this,
             &SCDatabaseEditorMainWindow::EditSelectedComputedColumn);
         computedMenu->addAction(
-            QStringLiteral("将选中列转换为计算列..."), this,
+            QStringLiteral("Convert Selected Column To Computed..."), this,
             &SCDatabaseEditorMainWindow::ConvertSelectedColumnToComputed);
         computedMenu->addAction(
-            QStringLiteral("将选中计算列转换为列..."),
+            QStringLiteral("Convert Selected Computed To Column..."),
             this, &SCDatabaseEditorMainWindow::ConvertSelectedComputedToColumn);
         computedMenu->addAction(
-            QStringLiteral("删除选中的计算列"), this,
+            QStringLiteral("Delete Selected Computed Column"), this,
             &SCDatabaseEditorMainWindow::DeleteSelectedComputedColumn);
 
-        auto* toolsMenu = menuBar()->addMenu(QStringLiteral("工具(&T)"));
-        toolsMenu->addAction(QStringLiteral("健康检查"), this,
+        auto* toolsMenu = menuBar()->addMenu(QStringLiteral("Tools(&T)"));
+        toolsMenu->addAction(QStringLiteral("Health Summary"), this,
                              &SCDatabaseEditorMainWindow::ShowHealthSummary);
-        toolsMenu->addAction(QStringLiteral("显示编辑日志/状态摘要"),
+        toolsMenu->addAction(QStringLiteral("Show Edit Log / State Summary"),
                              this,
                              &SCDatabaseEditorMainWindow::ShowEditLogSummary);
-        toolsMenu->addAction(QStringLiteral("导出调试包..."), this,
+        toolsMenu->addAction(QStringLiteral("Export Debug Package..."), this,
                              &SCDatabaseEditorMainWindow::ExportDebugPackage);
 
-        auto* viewMenu = menuBar()->addMenu(QStringLiteral("查看(&V)"));
+        auto* viewMenu = menuBar()->addMenu(QStringLiteral("View(&V)"));
         viewMenu->addAction(objectExplorerDock_->toggleViewAction());
-        viewMenu->addAction(inspectorDock_->toggleViewAction());
+        viewMenu->addAction(currentDetailsDock_->toggleViewAction());
         viewMenu->addAction(bottomDock_->toggleViewAction());
         viewMenu->addSeparator();
-        viewMenu->addAction(QStringLiteral("重置布局"), this, [this]() {
+        viewMenu->addAction(QStringLiteral("Reset Layout"), this, [this]() {
             objectExplorerDock_->show();
-            inspectorDock_->show();
+            currentDetailsDock_->show();
             bottomDock_->show();
             objectExplorerDock_->raise();
-            inspectorDock_->raise();
+            currentDetailsDock_->raise();
             bottomDock_->raise();
         });
 
-        auto* toolbar = addToolBar(QStringLiteral("主工具栏"));
-        toolbar->addAction(QStringLiteral("打开"), this,
+        auto* toolbar = addToolBar(QStringLiteral("Main Toolbar"));
+        toolbar->addAction(QStringLiteral("Open Database"), this,
                            &SCDatabaseEditorMainWindow::OpenDatabase);
-        toolbar->addAction(QStringLiteral("新建数据库"), this,
+        toolbar->addAction(QStringLiteral("New Database"), this,
                            &SCDatabaseEditorMainWindow::CreateDatabase);
         closeDatabaseAction_ =
-            toolbar->addAction(QStringLiteral("关闭"), this,
+            toolbar->addAction(QStringLiteral("Close Database"), this,
                                &SCDatabaseEditorMainWindow::CloseDatabase);
-        toolbar->addAction(QStringLiteral("备份副本"), this,
+        toolbar->addAction(QStringLiteral("Create Backup Copy"), this,
                            &SCDatabaseEditorMainWindow::CreateBackupCopy);
-        toolbar->addAction(QStringLiteral("刷新"), this,
+        toolbar->addAction(QStringLiteral("Refresh"), this,
                            &SCDatabaseEditorMainWindow::RefreshCurrentView);
         toolbar->addSeparator();
-        undoAction_ = toolbar->addAction(QStringLiteral("撤销"), this,
+        undoAction_ = toolbar->addAction(QStringLiteral("Undo"), this,
                            &SCDatabaseEditorMainWindow::UndoLastAction);
-        redoAction_ = toolbar->addAction(QStringLiteral("重做"), this,
+        redoAction_ = toolbar->addAction(QStringLiteral("Redo"), this,
                            &SCDatabaseEditorMainWindow::RedoLastAction);
         toolbar->addSeparator();
-        toolbar->addAction(QStringLiteral("健康检查"), this,
+        toolbar->addAction(QStringLiteral("Health Summary"), this,
                            &SCDatabaseEditorMainWindow::ShowHealthSummary);
-        toolbar->addAction(QStringLiteral("调试包"), this,
+        toolbar->addAction(QStringLiteral("Export Debug Package"), this,
                            &SCDatabaseEditorMainWindow::ExportDebugPackage);
 
-        // 表操作工具栏 - 与主工具栏并列
-        tableToolBar_ = addToolBar(QStringLiteral("表操作"));
-        tableToolBar_->addAction(QStringLiteral("添加记录"), this,
+        // 表Operation工具栏 - 与主工具栏并列
+        // Table operations toolbar, alongside the main toolbar.
+        tableToolBar_ = addToolBar(QStringLiteral("Table Actions"));
+        tableToolBar_->addAction(QStringLiteral("Add Record"), this,
                                  &SCDatabaseEditorMainWindow::AddRecord);
         tableToolBar_->addAction(
-            QStringLiteral("删除记录"), this,
+            QStringLiteral("Delete Record"), this,
             &SCDatabaseEditorMainWindow::DeleteSelectedRecord);
         tableToolBar_->addSeparator();
         tableToolBar_->addAction(
-            QStringLiteral("导出 CSV..."), this,
+            QStringLiteral("Export CSV..."), this,
             &SCDatabaseEditorMainWindow::ExportCurrentTableCsv);
         tableToolBar_->addAction(
-            QStringLiteral("导入 CSV..."), this,
+            QStringLiteral("Import CSV..."), this,
             &SCDatabaseEditorMainWindow::ImportCsvIntoCurrentTable);
         tableToolBar_->addSeparator();
-        tableToolBar_->addAction(QStringLiteral("添加列"), this,
+        tableToolBar_->addAction(QStringLiteral("Add Column..."), this,
                                  &SCDatabaseEditorMainWindow::AddColumn);
         tableToolBar_->addAction(
-            QStringLiteral("编辑列"), this,
+            QStringLiteral("Edit Selected Column..."), this,
             &SCDatabaseEditorMainWindow::EditSelectedColumn);
         tableToolBar_->addAction(
-            QStringLiteral("选择关联"), this,
+            QStringLiteral("Select Relation..."), this,
             &SCDatabaseEditorMainWindow::EditSelectedRelation);
         tableToolBar_->addSeparator();
         tableToolBar_->addAction(
-            QStringLiteral("保存待更改"), this,
+            QStringLiteral("Save Pending Changes"), this,
             &SCDatabaseEditorMainWindow::SavePendingChanges);
         tableToolBar_->addAction(
-            QStringLiteral("放弃待更改"), this,
+            QStringLiteral("Discard Pending Changes"), this,
             &SCDatabaseEditorMainWindow::DiscardPendingChanges);
         tableToolBar_->addSeparator();
         tableToolBar_->addAction(
-            QStringLiteral("添加计算列"), this,
+            QStringLiteral("Add Computed Column"), this,
             &SCDatabaseEditorMainWindow::AddSessionComputedColumn);
         tableToolBar_->addAction(
-            QStringLiteral("编辑计算列"), this,
+            QStringLiteral("Edit Computed Column"), this,
             &SCDatabaseEditorMainWindow::EditSelectedComputedColumn);
 
         if (closeDatabaseAction_ != nullptr)
@@ -1104,8 +1149,8 @@ namespace StableCore::Storage::Editor
         if (session_->IsOpen() && session_->HasPendingEdit())
         {
             const QMessageBox::StandardButton answer = QMessageBox::question(
-            this, QStringLiteral("创建数据库"),
-            QStringLiteral("待更改将被丢弃。继续？"));
+            this, QStringLiteral("Create Database"),
+            QStringLiteral("Pending changes will be discarded. Continue?"));
             if (answer != QMessageBox::Yes)
             {
                 return;
@@ -1113,8 +1158,8 @@ namespace StableCore::Storage::Editor
         }
 
         const QString filePath = QFileDialog::getSaveFileName(
-            this, QStringLiteral("创建数据库"), QString(),
-            QStringLiteral("SQLite数据库 (*.sqlite);;所有文件 (*)"));
+            this, QStringLiteral("Create Database"), QString(),
+            QStringLiteral("SQLite Database (*.sqlite);;All Files (*)"));
         if (filePath.isEmpty())
         {
             return;
@@ -1123,7 +1168,7 @@ namespace StableCore::Storage::Editor
         QString error;
         if (!session_->CreateDatabase(filePath, &error))
         {
-            ShowError(QStringLiteral("创建数据库失败"), error);
+            ShowError(QStringLiteral("Failed to create database"), error);
         }
     }
 
@@ -1132,8 +1177,8 @@ namespace StableCore::Storage::Editor
         if (session_->IsOpen() && session_->HasPendingEdit())
         {
             const QMessageBox::StandardButton answer = QMessageBox::question(
-            this, QStringLiteral("打开数据库"),
-            QStringLiteral("待更改将被丢弃。继续？"));
+            this, QStringLiteral("Open Database"),
+            QStringLiteral("Pending changes will be discarded. Continue?"));
             if (answer != QMessageBox::Yes)
             {
                 return;
@@ -1141,8 +1186,8 @@ namespace StableCore::Storage::Editor
         }
 
         const QString filePath = QFileDialog::getOpenFileName(
-            this, QStringLiteral("打开数据库"), QString(),
-            QStringLiteral("SQLite数据库 (*.sqlite *.db);;所有文件 (*)"));
+            this, QStringLiteral("Open Database"), QString(),
+            QStringLiteral("SQLite Database (*.sqlite *.db);;All Files (*)"));
         if (filePath.isEmpty())
         {
             return;
@@ -1151,7 +1196,7 @@ namespace StableCore::Storage::Editor
         QString error;
         if (!session_->OpenDatabase(filePath, &error))
         {
-            ShowError(QStringLiteral("打开数据库失败"), error);
+            ShowError(QStringLiteral("Failed to open database"), error);
         }
     }
 
@@ -1159,7 +1204,7 @@ namespace StableCore::Storage::Editor
     {
         if (!session_->IsOpen())
         {
-            SetStatusMessage(QStringLiteral("未打开数据库。"));
+            SetStatusMessage(QStringLiteral("No database open."));
             return;
         }
 
@@ -1169,17 +1214,17 @@ namespace StableCore::Storage::Editor
             session_->GetEditingState(&editingState, &stateError);
         if (!stateLoaded && !stateError.isEmpty())
         {
-            ShowError(QStringLiteral("关闭数据库失败"), stateError);
+            ShowError(QStringLiteral("Failed to close database"), stateError);
             return;
         }
         const bool hasPendingChanges = session_->HasPendingEdit();
 
         const QMessageBox::StandardButton answer = QMessageBox::question(
-            this, QStringLiteral("关闭数据库"),
+            this, QStringLiteral("Close Database"),
             hasPendingChanges
                 ? QStringLiteral(
-                      "关闭当前数据库？待更改将被丢弃。")
-                : QStringLiteral("关闭当前数据库？"));
+                      "Close the current database? Pending changes will be discarded.")
+                : QStringLiteral("Close the current database?"));
         if (answer != QMessageBox::Yes)
         {
             return;
@@ -1188,29 +1233,29 @@ namespace StableCore::Storage::Editor
         QString error;
         if (!session_->CloseDatabase(&error))
         {
-            ShowError(QStringLiteral("关闭数据库失败"), error);
+            ShowError(QStringLiteral("Failed to close database"), error);
             return;
         }
 
         RefreshGridData();
         RefreshObjectExplorer();
-        UpdateSchemaInspector();
-        UpdateRecordInspector();
+        RefreshCurrentDetailsPanel();
+        RefreshCurrentRecordPanel();
         UpdateComputedColumnsPanel();
-        UpdateRelationInspector();
+        RefreshRelationPanel();
         UpdateDatabaseStatusBar();
         RefreshOverviewPanels();
         UpdateGridSummary();
-        setWindowTitle(QStringLiteral("数据库编辑器"));
-        SetStatusMessage(QStringLiteral("数据库已关闭。"));
+        setWindowTitle(QStringLiteral("Database Editor"));
+        SetStatusMessage(QStringLiteral("Database closed."));
     }
 
     void SCDatabaseEditorMainWindow::CreateBackupCopy()
     {
         if (!session_->IsOpen())
         {
-            ShowError(QStringLiteral("创建备份副本失败"),
-                      QStringLiteral("未打开数据库。"));
+            ShowError(QStringLiteral("Failed to create backup copy"),
+                      QStringLiteral("No database open."));
             return;
         }
 
@@ -1219,8 +1264,8 @@ namespace StableCore::Storage::Editor
                 ? QString()
                 : session_->DatabasePath() + QStringLiteral("_backup.sqlite");
         const QString filePath = QFileDialog::getSaveFileName(
-            this, QStringLiteral("创建备份副本"), defaultPath,
-            QStringLiteral("SQLite数据库 (*.sqlite);;所有文件 (*)"));
+            this, QStringLiteral("Create Backup Copy"), defaultPath,
+            QStringLiteral("SQLite Database (*.sqlite);;All Files (*)"));
         if (filePath.isEmpty())
         {
             return;
@@ -1233,11 +1278,11 @@ namespace StableCore::Storage::Editor
         QString error;
         if (!session_->CreateBackupCopy(filePath, options, &result, &error))
         {
-            ShowError(QStringLiteral("创建备份副本失败"), error);
+            ShowError(QStringLiteral("Failed to create backup copy"), error);
             return;
         }
 
-        SetStatusMessage(QStringLiteral("备份副本已创建: ") + filePath);
+        SetStatusMessage(QStringLiteral("Backup copy created: ") + filePath);
     }
 
     void SCDatabaseEditorMainWindow::OpenSchemaTableConverter()
@@ -1245,20 +1290,19 @@ namespace StableCore::Storage::Editor
         if (session_ == nullptr || !session_->IsOpen() ||
             session_->CurrentTableName().isEmpty())
         {
-            ShowError(QStringLiteral("表结构"),
-                      QStringLiteral("请先选择当前表。"));
+            ShowError(QStringLiteral("Open Design Workspace"),
+                      QStringLiteral("Please select the current table first."));
             return;
         }
 
-        SCSchemaTableDialog dialog(session_, this);
-        dialog.exec();
+        SetWorkspaceMode(WorkspaceMode::Design);
     }
 
     void SCDatabaseEditorMainWindow::CreateTable()
     {
         bool accepted = false;
         const QString tableName = QInputDialog::getText(
-            this, QStringLiteral("创建表"), QStringLiteral("表名"),
+            this, QStringLiteral("Create Table"), QStringLiteral("Table Name"),
             QLineEdit::Normal, QString(), &accepted);
         if (!accepted || tableName.trimmed().isEmpty())
         {
@@ -1268,7 +1312,7 @@ namespace StableCore::Storage::Editor
         QString error;
         if (!session_->CreateTable(tableName.trimmed(), &error))
         {
-            ShowError(QStringLiteral("创建表失败"), error);
+            ShowError(QStringLiteral("Failed to create table"), error);
         }
     }
 
@@ -1276,13 +1320,25 @@ namespace StableCore::Storage::Editor
     {
         if (session_ == nullptr || !session_->IsOpen())
         {
-            ShowError(QStringLiteral("从模式创建表失败"),
-                      QStringLiteral("未打开数据库。"));
+            ShowError(QStringLiteral("Failed to create table from schema"),
+                      QStringLiteral("No database open."));
             return;
         }
 
         SCSchemaTableImportDialog dialog(session_, this);
         dialog.exec();
+
+        RefreshGridData();
+        RefreshObjectExplorer();
+        RefreshCurrentDetailsPanel();
+        RefreshCurrentRecordPanel();
+        UpdateComputedColumnsPanel();
+        RefreshRelationPanel();
+        UpdateDatabaseStatusBar();
+        RefreshOverviewPanels();
+        RefreshWorkspaceHeader();
+        RefreshWorkspacePages();
+        UpdateGridSummary();
     }
 
     void SCDatabaseEditorMainWindow::AddColumn()
@@ -1294,7 +1350,11 @@ namespace StableCore::Storage::Editor
                 objectTree_->currentItem()
                     ->data(0, kExplorerNodeTypeRole)
                     .toInt());
-            if (nodeType == ExplorerNodeType::Table)
+            if (nodeType == ExplorerNodeType::Table ||
+                nodeType == ExplorerNodeType::TableColumns ||
+                nodeType == ExplorerNodeType::TableConstraints ||
+                nodeType == ExplorerNodeType::TableIndexes ||
+                nodeType == ExplorerNodeType::TableRecords)
             {
                 QString error;
                 const QString nodeName = objectTree_->currentItem()
@@ -1302,7 +1362,7 @@ namespace StableCore::Storage::Editor
                                              .toString();
                 if (!session_->SelectTable(nodeName, &error))
                 {
-                    ShowError(QStringLiteral("添加列失败"), error);
+                    ShowError(QStringLiteral("Failed to add column"), error);
                     return;
                 }
             }
@@ -1310,8 +1370,8 @@ namespace StableCore::Storage::Editor
 
         if (session_->CurrentTableName().isEmpty())
         {
-            ShowError(QStringLiteral("添加列失败"),
-                      QStringLiteral("请先选择表。"));
+            ShowError(QStringLiteral("Failed to add column"),
+                      QStringLiteral("Please select a table first."));
             return;
         }
 
@@ -1319,14 +1379,14 @@ namespace StableCore::Storage::Editor
         QString editingError;
         if (!session_->GetEditingState(&editingState, &editingError))
         {
-            ShowError(QStringLiteral("添加列失败"), editingError);
+            ShowError(QStringLiteral("Failed to add column"), editingError);
             return;
         }
         if (session_->HasPendingEdit())
         {
-            ShowError(QStringLiteral("添加列失败"),
+            ShowError(QStringLiteral("Failed to add column"),
                       QStringLiteral(
-                          "请先保存或放弃待更改再修改模式。"));
+                          "Please save or discard pending changes before editing the schema."));
             return;
         }
 
@@ -1335,7 +1395,7 @@ namespace StableCore::Storage::Editor
         QString stateError;
         if (!session_->CurrentTableHasRecords(&tableHasRecords, &stateError))
         {
-            ShowError(QStringLiteral("添加列失败"), stateError);
+            ShowError(QStringLiteral("Failed to add column"), stateError);
             return;
         }
         dialog.SetCurrentTableHasRecords(tableHasRecords);
@@ -1348,16 +1408,16 @@ namespace StableCore::Storage::Editor
         QString error;
         if (!session_->AddColumn(column, &error))
         {
-            ShowError(QStringLiteral("添加列失败"), error);
+            ShowError(QStringLiteral("Failed to add column"), error);
             return;
         }
 
-        UpdateSchemaInspector();
-        SelectSchemaColumnByName(ToQString(column.name));
+        RefreshCurrentDetailsPanel();
+        SelectDesignColumnByName(ToQString(column.name));
         RefreshGridData();
-        UpdateRelationInspector();
+        RefreshRelationPanel();
         RefreshOverviewPanels();
-        SetStatusMessage(QStringLiteral("列已添加: ") +
+        SetStatusMessage(QStringLiteral("Column added: ") +
                          ToQString(column.name));
     }
 
@@ -1385,28 +1445,28 @@ namespace StableCore::Storage::Editor
         if (nodeType == ExplorerNodeType::Table)
         {
             QAction* selectAction = menu.addAction(
-                QStringLiteral("选择表"), this,
+                QStringLiteral("Select Table"), this,
                 &SCDatabaseEditorMainWindow::OnTableSelectionChanged);
             selectAction->setEnabled(true);
-            menu.addAction(QStringLiteral("添加列..."), this,
+            menu.addAction(QStringLiteral("Add Column..."), this,
                            &SCDatabaseEditorMainWindow::AddColumn);
-            menu.addAction(QStringLiteral("删除表..."), this,
+            menu.addAction(QStringLiteral("Delete Table..."), this,
                            &SCDatabaseEditorMainWindow::DeleteSelectedTable);
         } else if (nodeType == ExplorerNodeType::TablesRoot)
         {
-            menu.addAction(QStringLiteral("创建表..."), this,
+            menu.addAction(QStringLiteral("Create Table..."), this,
                            &SCDatabaseEditorMainWindow::CreateTable);
             menu.addAction(
-                QStringLiteral("从模式创建表..."), this,
+                QStringLiteral("Create Table From Schema..."), this,
                 &SCDatabaseEditorMainWindow::CreateTableFromSchemaDescription);
         } else if (nodeType == ExplorerNodeType::ComputedRoot)
         {
             menu.addAction(
-                QStringLiteral("添加会话计算列..."), this,
+                QStringLiteral("Add Session Computed Column..."), this,
                 &SCDatabaseEditorMainWindow::AddSessionComputedColumn);
         } else
         {
-            menu.addAction(QStringLiteral("刷新"), this,
+            menu.addAction(QStringLiteral("Refresh"), this,
                            &SCDatabaseEditorMainWindow::RefreshCurrentView);
         }
 
@@ -1417,8 +1477,8 @@ namespace StableCore::Storage::Editor
     {
         if (session_ == nullptr || !session_->IsOpen())
         {
-            ShowError(QStringLiteral("删除表失败"),
-                      QStringLiteral("未打开数据库。"));
+            ShowError(QStringLiteral("Failed to delete table"),
+                      QStringLiteral("No database open."));
             return;
         }
 
@@ -1444,14 +1504,14 @@ namespace StableCore::Storage::Editor
 
         if (tableName.isEmpty())
         {
-            ShowError(QStringLiteral("删除表失败"),
-                      QStringLiteral("请先选择表。"));
+            ShowError(QStringLiteral("Failed to delete table"),
+                      QStringLiteral("Please select a table first."));
             return;
         }
 
         const QMessageBox::StandardButton answer = QMessageBox::question(
-            this, QStringLiteral("删除表"),
-            QStringLiteral("删除表 \"%1\"?").arg(tableName));
+            this, QStringLiteral("Delete Table"),
+            QStringLiteral("Delete Table \"%1\"?").arg(tableName));
         if (answer != QMessageBox::Yes)
         {
             return;
@@ -1460,26 +1520,26 @@ namespace StableCore::Storage::Editor
         QString error;
         if (!session_->DeleteTable(tableName, &error))
         {
-            ShowError(QStringLiteral("删除表失败"), error);
+            ShowError(QStringLiteral("Failed to delete table"), error);
             return;
         }
 
-        SetStatusMessage(QStringLiteral("表已删除: ") + tableName);
+        SetStatusMessage(QStringLiteral("Table deleted: ") + tableName);
     }
 
     void SCDatabaseEditorMainWindow::DeleteSelectedColumn()
     {
-        const QString columnName = CurrentSchemaColumnName();
+        const QString columnName = CurrentDesignColumnName();
         if (columnName.isEmpty())
         {
-            ShowError(QStringLiteral("删除列失败"),
-                      QStringLiteral("请先选择模式字段。"));
+            ShowError(QStringLiteral("Failed to delete column"),
+                      QStringLiteral("Please select a schema field first."));
             return;
         }
 
         const QMessageBox::StandardButton answer = QMessageBox::question(
-            this, QStringLiteral("删除列"),
-            QStringLiteral("删除模式字段 \"%1\"?").arg(columnName));
+            this, QStringLiteral("Delete Column"),
+            QStringLiteral("Delete schema field \"%1\"?").arg(columnName));
         if (answer != QMessageBox::Yes)
         {
             return;
@@ -1489,7 +1549,7 @@ namespace StableCore::Storage::Editor
         QString error;
         if (!session_->BuildSchemaSnapshot(&columnsBeforeDelete, &error))
         {
-            ShowError(QStringLiteral("删除列失败"), error);
+            ShowError(QStringLiteral("Failed to delete column"), error);
             return;
         }
 
@@ -1516,25 +1576,25 @@ namespace StableCore::Storage::Editor
 
         if (!session_->RemoveColumn(columnName, &error))
         {
-            ShowError(QStringLiteral("删除列失败"), error);
+            ShowError(QStringLiteral("Failed to delete column"), error);
             return;
         }
 
-        UpdateSchemaInspector();
-        SelectSchemaColumnByName(fallbackSelection);
+        RefreshCurrentDetailsPanel();
+        SelectDesignColumnByName(fallbackSelection);
         RefreshGridData();
-        UpdateRelationInspector();
+        RefreshRelationPanel();
         RefreshOverviewPanels();
-        SetStatusMessage(QStringLiteral("列已删除: ") + columnName);
+        SetStatusMessage(QStringLiteral("Column deleted: ") + columnName);
     }
 
     void SCDatabaseEditorMainWindow::EditSelectedColumn()
     {
-        const QString columnName = CurrentSchemaColumnName();
+        const QString columnName = CurrentDesignColumnName();
         if (columnName.isEmpty())
         {
-            ShowError(QStringLiteral("编辑列失败"),
-                      QStringLiteral("请先选择模式字段。"));
+            ShowError(QStringLiteral("Failed to edit column"),
+                      QStringLiteral("Please select a schema field first."));
             return;
         }
 
@@ -1542,7 +1602,7 @@ namespace StableCore::Storage::Editor
         QString error;
         if (!session_->GetColumnDef(columnName, &existing, &error))
         {
-            ShowError(QStringLiteral("编辑列失败"), error);
+            ShowError(QStringLiteral("Failed to edit column"), error);
             return;
         }
 
@@ -1550,14 +1610,14 @@ namespace StableCore::Storage::Editor
         QString editingError;
         if (!session_->GetEditingState(&editingState, &editingError))
         {
-            ShowError(QStringLiteral("编辑列失败"), editingError);
+            ShowError(QStringLiteral("Failed to edit column"), editingError);
             return;
         }
         if (session_->HasPendingEdit())
         {
-            ShowError(QStringLiteral("编辑列失败"),
+            ShowError(QStringLiteral("Failed to edit column"),
                       QStringLiteral(
-                          "请先保存或放弃待更改再修改模式。"));
+                          "Please save or discard pending changes before editing the schema."));
             return;
         }
 
@@ -1566,7 +1626,7 @@ namespace StableCore::Storage::Editor
         QString stateError;
         if (!session_->CurrentTableHasRecords(&tableHasRecords, &stateError))
         {
-            ShowError(QStringLiteral("编辑列失败"), stateError);
+            ShowError(QStringLiteral("Failed to edit column"), stateError);
             return;
         }
         dialog.SetCurrentTableHasRecords(tableHasRecords);
@@ -1578,33 +1638,33 @@ namespace StableCore::Storage::Editor
         const sc::SCColumnDef updated = dialog.BuildColumnDef();
         if (updated.name.empty())
         {
-            ShowError(QStringLiteral("编辑列失败"),
-                      QStringLiteral("需要填写列名。"));
+            ShowError(QStringLiteral("Failed to edit column"),
+                      QStringLiteral("Column name is required."));
             return;
         }
 
         if (!session_->UpdateColumn(columnName, updated, &error))
         {
-            ShowError(QStringLiteral("编辑列失败"), error);
+            ShowError(QStringLiteral("Failed to edit column"), error);
             return;
         }
 
-        UpdateSchemaInspector();
-        SelectSchemaColumnByName(ToQString(updated.name));
+        RefreshCurrentDetailsPanel();
+        SelectDesignColumnByName(ToQString(updated.name));
         RefreshGridData();
-        UpdateRelationInspector();
+        RefreshRelationPanel();
         RefreshOverviewPanels();
-        SetStatusMessage(QStringLiteral("列已更新: ") +
+        SetStatusMessage(QStringLiteral("Column updated: ") +
                          ToQString(updated.name));
     }
 
     void SCDatabaseEditorMainWindow::ConvertSelectedColumnToComputed()
     {
-        const QString columnName = CurrentSchemaColumnName();
+        const QString columnName = CurrentDesignColumnName();
         if (columnName.isEmpty())
         {
-            ShowError(QStringLiteral("转换为计算列失败"),
-                      QStringLiteral("请先选择模式字段。"));
+            ShowError(QStringLiteral("Failed to convert to computed column"),
+                      QStringLiteral("Please select a schema field first."));
             return;
         }
 
@@ -1612,14 +1672,14 @@ namespace StableCore::Storage::Editor
         QString error;
         if (!session_->GetColumnDef(columnName, &existing, &error))
         {
-            ShowError(QStringLiteral("转换为计算列失败"), error);
+            ShowError(QStringLiteral("Failed to convert to computed column"), error);
             return;
         }
 
         SCComputedColumnDialog dialog(session_->CurrentTableName(),
                                       BuildComputedTemplate(existing), true,
                                       this);
-        dialog.setWindowTitle(QStringLiteral("转换列为计算列"));
+        dialog.setWindowTitle(QStringLiteral("Convert Column to Computed Column"));
         if (dialog.exec() != QDialog::Accepted)
         {
             return;
@@ -1628,23 +1688,23 @@ namespace StableCore::Storage::Editor
         sc::SCComputedColumnDef definition;
         if (!dialog.BuildDefinition(&definition, &error))
         {
-            ShowError(QStringLiteral("转换为计算列失败"), error);
+            ShowError(QStringLiteral("Failed to convert to computed column"), error);
             return;
         }
 
         if (!session_->ConvertColumnToComputed(columnName, definition, &error))
         {
-            ShowError(QStringLiteral("转换为计算列失败"), error);
+            ShowError(QStringLiteral("Failed to convert to computed column"), error);
             return;
         }
 
-        UpdateSchemaInspector();
+        RefreshCurrentDetailsPanel();
         UpdateComputedColumnsPanel();
         SelectComputedColumnByName(ToQString(definition.name));
         RefreshGridData();
-        UpdateRelationInspector();
+        RefreshRelationPanel();
         RefreshOverviewPanels();
-        SetStatusMessage(QStringLiteral("已转换为计算列: ") +
+        SetStatusMessage(QStringLiteral("Converted to computed column: ") +
                          ToQString(definition.name));
     }
 
@@ -1652,8 +1712,8 @@ namespace StableCore::Storage::Editor
     {
         if (!session_->CurrentTable())
         {
-            ShowError(QStringLiteral("添加计算列失败"),
-                      QStringLiteral("未选择表。"));
+            ShowError(QStringLiteral("Failed to add computed column"),
+                      QStringLiteral("No table selected."));
             return;
         }
 
@@ -1667,22 +1727,22 @@ namespace StableCore::Storage::Editor
         QString error;
         if (!dialog.BuildDefinition(&definition, &error))
         {
-            ShowError(QStringLiteral("添加计算列失败"), error);
+            ShowError(QStringLiteral("Failed to add computed column"), error);
             return;
         }
 
         if (!session_->AddSessionComputedColumn(definition, &error))
         {
-            ShowError(QStringLiteral("添加计算列失败"), error);
+            ShowError(QStringLiteral("Failed to add computed column"), error);
             return;
         }
 
         RefreshGridData();
         UpdateComputedColumnsPanel();
         SelectComputedColumnByName(ToQString(definition.name));
-        UpdateRelationInspector();
+        RefreshRelationPanel();
         RefreshOverviewPanels();
-        SetStatusMessage(QStringLiteral("计算列已添加: ") +
+        SetStatusMessage(QStringLiteral("Computed column added: ") +
                          ToQString(definition.name));
     }
 
@@ -1691,8 +1751,8 @@ namespace StableCore::Storage::Editor
         const QString columnName = CurrentComputedColumnName();
         if (columnName.isEmpty())
         {
-            ShowError(QStringLiteral("编辑计算列失败"),
-                      QStringLiteral("请在会话计算列面板中选择计算列。"));
+            ShowError(QStringLiteral("Failed to edit computed column"),
+                      QStringLiteral("Please select a computed column in the session pane."));
             return;
         }
 
@@ -1700,7 +1760,7 @@ namespace StableCore::Storage::Editor
         QString error;
         if (!session_->GetSessionComputedColumn(columnName, &existing, &error))
         {
-            ShowError(QStringLiteral("编辑计算列失败"), error);
+            ShowError(QStringLiteral("Failed to edit computed column"), error);
             return;
         }
 
@@ -1714,22 +1774,22 @@ namespace StableCore::Storage::Editor
         sc::SCComputedColumnDef updated;
         if (!dialog.BuildDefinition(&updated, &error))
         {
-            ShowError(QStringLiteral("编辑计算列失败"), error);
+            ShowError(QStringLiteral("Failed to edit computed column"), error);
             return;
         }
 
         if (!session_->UpdateSessionComputedColumn(columnName, updated, &error))
         {
-            ShowError(QStringLiteral("编辑计算列失败"), error);
+            ShowError(QStringLiteral("Failed to edit computed column"), error);
             return;
         }
 
         RefreshGridData();
         UpdateComputedColumnsPanel();
         SelectComputedColumnByName(ToQString(updated.name));
-        UpdateRelationInspector();
+        RefreshRelationPanel();
         RefreshOverviewPanels();
-        SetStatusMessage(QStringLiteral("计算列已更新: ") +
+        SetStatusMessage(QStringLiteral("Computed column updated: ") +
                          ToQString(updated.name));
     }
 
@@ -1738,8 +1798,8 @@ namespace StableCore::Storage::Editor
         const QString columnName = CurrentComputedColumnName();
         if (columnName.isEmpty())
         {
-            ShowError(QStringLiteral("转换为列失败"),
-                      QStringLiteral("请先选择计算列。"));
+            ShowError(QStringLiteral("Failed to convert to column"),
+                      QStringLiteral("Please select a computed column first."));
             return;
         }
 
@@ -1747,7 +1807,7 @@ namespace StableCore::Storage::Editor
         QString error;
         if (!session_->GetSessionComputedColumn(columnName, &existing, &error))
         {
-            ShowError(QStringLiteral("转换为列失败"), error);
+            ShowError(QStringLiteral("Failed to convert to column"), error);
             return;
         }
 
@@ -1755,24 +1815,24 @@ namespace StableCore::Storage::Editor
         QString editingError;
         if (!session_->GetEditingState(&editingState, &editingError))
         {
-            ShowError(QStringLiteral("转换为列失败"), editingError);
+            ShowError(QStringLiteral("Failed to convert to column"), editingError);
             return;
         }
         if (session_->HasPendingEdit())
         {
-            ShowError(QStringLiteral("转换为列失败"),
+            ShowError(QStringLiteral("Failed to convert to column"),
                       QStringLiteral(
-                          "请先保存或放弃待更改再修改模式。"));
+                          "Please save or discard pending changes before editing the schema."));
             return;
         }
 
         SCAddColumnDialog dialog(session_, BuildColumnTemplate(existing), this);
-        dialog.setWindowTitle(QStringLiteral("转换计算列为列"));
+        dialog.setWindowTitle(QStringLiteral("Convert Computed Column to Column"));
         bool tableHasRecords = false;
         QString stateError;
         if (!session_->CurrentTableHasRecords(&tableHasRecords, &stateError))
         {
-            ShowError(QStringLiteral("转换为列失败"), stateError);
+            ShowError(QStringLiteral("Failed to convert to column"), stateError);
             return;
         }
         dialog.SetCurrentTableHasRecords(tableHasRecords);
@@ -1784,24 +1844,24 @@ namespace StableCore::Storage::Editor
         const sc::SCColumnDef definition = dialog.BuildColumnDef();
         if (definition.name.empty())
         {
-            ShowError(QStringLiteral("转换为列失败"),
-                      QStringLiteral("需要填写列名。"));
+            ShowError(QStringLiteral("Failed to convert to column"),
+                      QStringLiteral("Column name is required."));
             return;
         }
 
         if (!session_->ConvertComputedToColumn(columnName, definition, &error))
         {
-            ShowError(QStringLiteral("转换为列失败"), error);
+            ShowError(QStringLiteral("Failed to convert to column"), error);
             return;
         }
 
-        UpdateSchemaInspector();
+        RefreshCurrentDetailsPanel();
         UpdateComputedColumnsPanel();
-        SelectSchemaColumnByName(ToQString(definition.name));
+        SelectDesignColumnByName(ToQString(definition.name));
         RefreshGridData();
-        UpdateRelationInspector();
+        RefreshRelationPanel();
         RefreshOverviewPanels();
-        SetStatusMessage(QStringLiteral("已转换为列: ") +
+        SetStatusMessage(QStringLiteral("Converted to column: ") +
                          ToQString(definition.name));
     }
 
@@ -1810,14 +1870,14 @@ namespace StableCore::Storage::Editor
         const QString columnName = CurrentComputedColumnName();
         if (columnName.isEmpty())
         {
-            ShowError(QStringLiteral("删除计算列失败"),
-                      QStringLiteral("请在会话计算列面板中选择计算列。"));
+            ShowError(QStringLiteral("Failed to delete computed column"),
+                      QStringLiteral("Please select a computed column in the session pane."));
             return;
         }
 
         const QMessageBox::StandardButton answer = QMessageBox::question(
-            this, QStringLiteral("删除计算列"),
-            QStringLiteral("删除会话计算列 \"%1\"?")
+            this, QStringLiteral("Delete Computed Column"),
+            QStringLiteral("Delete session computed column \"%1\"?")
                 .arg(columnName));
         if (answer != QMessageBox::Yes)
         {
@@ -1850,16 +1910,16 @@ namespace StableCore::Storage::Editor
         QString error;
         if (!session_->RemoveSessionComputedColumn(columnName, &error))
         {
-            ShowError(QStringLiteral("删除计算列失败"), error);
+            ShowError(QStringLiteral("Failed to delete computed column"), error);
             return;
         }
 
         RefreshGridData();
         UpdateComputedColumnsPanel();
         SelectComputedColumnByName(fallbackSelection);
-        UpdateRelationInspector();
+        RefreshRelationPanel();
         RefreshOverviewPanels();
-        SetStatusMessage(QStringLiteral("计算列已删除: ") +
+        SetStatusMessage(QStringLiteral("Computed column deleted: ") +
                          columnName);
     }
 
@@ -1868,13 +1928,13 @@ namespace StableCore::Storage::Editor
         QString error;
         if (!session_->AddRecord(&error))
         {
-            ShowError(QStringLiteral("添加记录失败"), error);
+            ShowError(QStringLiteral("Failed to add record"), error);
             return;
         }
 
         RefreshGridData();
-        UpdateRecordInspector();
-        UpdateRelationInspector();
+        RefreshCurrentRecordPanel();
+        RefreshRelationPanel();
         RefreshOverviewPanels();
         UpdateGridSummary();
         UpdateDatabaseStatusBar();
@@ -1884,10 +1944,10 @@ namespace StableCore::Storage::Editor
             session_->HasPendingEdit())
         {
             SetStatusMessage(QStringLiteral(
-                "记录草稿已创建。填写必填字段后保存待更改。"));
+                "Record draft created. Fill required fields and then save pending changes."));
         } else
         {
-            SetStatusMessage(QStringLiteral("记录已添加。"));
+            SetStatusMessage(QStringLiteral("Record added."));
         }
     }
 
@@ -1896,17 +1956,17 @@ namespace StableCore::Storage::Editor
         QString error;
         if (!session_->SavePendingChanges(&error))
         {
-            ShowError(QStringLiteral("保存待更改失败"), error);
+            ShowError(QStringLiteral("Failed to save pending changes"), error);
             return;
         }
 
         RefreshGridData();
-        UpdateRecordInspector();
-        UpdateRelationInspector();
+        RefreshCurrentRecordPanel();
+        RefreshRelationPanel();
         RefreshOverviewPanels();
         UpdateGridSummary();
         UpdateDatabaseStatusBar();
-        SetStatusMessage(QStringLiteral("待更改已保存。"));
+        SetStatusMessage(QStringLiteral("Pending changes saved."));
     }
 
     void SCDatabaseEditorMainWindow::DiscardPendingChanges()
@@ -1914,17 +1974,17 @@ namespace StableCore::Storage::Editor
         QString error;
         if (!session_->DiscardPendingChanges(&error))
         {
-            ShowError(QStringLiteral("放弃待更改失败"), error);
+            ShowError(QStringLiteral("Failed to discard pending changes"), error);
             return;
         }
 
         RefreshGridData();
-        UpdateRecordInspector();
-        UpdateRelationInspector();
+        RefreshCurrentRecordPanel();
+        RefreshRelationPanel();
         RefreshOverviewPanels();
         UpdateGridSummary();
         UpdateDatabaseStatusBar();
-        SetStatusMessage(QStringLiteral("待更改已丢弃。"));
+        SetStatusMessage(QStringLiteral("Pending changes discarded."));
     }
 
     void SCDatabaseEditorMainWindow::DeleteSelectedRecord()
@@ -1943,8 +2003,8 @@ namespace StableCore::Storage::Editor
         }
 
         const QMessageBox::StandardButton answer = QMessageBox::question(
-            this, QStringLiteral("删除记录"),
-            QStringLiteral("删除记录 %1?").arg(recordId));
+            this, QStringLiteral("Delete Record"),
+            QStringLiteral("Delete Record %1?").arg(recordId));
         if (answer != QMessageBox::Yes)
         {
             return;
@@ -1953,11 +2013,11 @@ namespace StableCore::Storage::Editor
         QString error;
         if (!session_->DeleteRecord(recordId, &error))
         {
-            ShowError(QStringLiteral("删除记录失败"), error);
+            ShowError(QStringLiteral("Failed to delete record"), error);
             return;
         }
 
-        SetStatusMessage(QStringLiteral("记录已删除: ") +
+        SetStatusMessage(QStringLiteral("Record deleted: ") +
                          QString::number(recordId));
     }
 
@@ -1965,17 +2025,17 @@ namespace StableCore::Storage::Editor
     {
         const int row = CurrentRow();
         const int col = CurrentColumn();
-        if (row < 0 || col < 0)
+        if (row < 0 || col <= 0)
         {
             return;
         }
 
         const sc::SCTableViewColumnDef tableColumn =
-            columns_[col];
+            columns_[col - 1];
         if (tableColumn.layer != sc::TableColumnLayer::Fact)
         {
-            ShowError(QStringLiteral("选择关系失败"),
-                      QStringLiteral("计算列不能存储关系值。"));
+            ShowError(QStringLiteral("Failed to select relation"),
+                      QStringLiteral("Computed columns cannot store relation values."));
             return;
         }
 
@@ -1984,13 +2044,13 @@ namespace StableCore::Storage::Editor
         if (!session_->GetColumnDef(ToQString(tableColumn.name), &column,
                                     &error))
         {
-            ShowError(QStringLiteral("选择关系失败"), error);
+            ShowError(QStringLiteral("Failed to select relation"), error);
             return;
         }
         if (column.columnKind != sc::ColumnKind::Relation)
         {
-            ShowError(QStringLiteral("选择关系失败"),
-                      QStringLiteral("所选列不是关系字段。"));
+            ShowError(QStringLiteral("Failed to select relation"),
+                      QStringLiteral("The selected column is not a relation field."));
             return;
         }
 
@@ -1998,7 +2058,7 @@ namespace StableCore::Storage::Editor
         if (!session_->BuildRelationCandidates(ToQString(column.referenceTable),
                                                column, &candidates, &error))
         {
-            ShowError(QStringLiteral("选择关系失败"), error);
+            ShowError(QStringLiteral("Failed to select relation"), error);
             return;
         }
 
@@ -2013,7 +2073,7 @@ namespace StableCore::Storage::Editor
         if (!session_->GetRelationStoredValue(dialog.SelectedRecordId(), column,
                                               &storedValue, &error))
         {
-            ShowError(QStringLiteral("选择关系失败"), error);
+            ShowError(QStringLiteral("Failed to select relation"), error);
             return;
         }
 
@@ -2021,45 +2081,12 @@ namespace StableCore::Storage::Editor
                                     ToQString(tableColumn.name), storedValue,
                                     &error))
         {
-            ShowError(QStringLiteral("选择关系失败"), error);
+            ShowError(QStringLiteral("Failed to select relation"), error);
             return;
         }
 
         RefreshGridData();
-        SetStatusMessage(QStringLiteral("关系已更新。"));
-    }
-
-    void SCDatabaseEditorMainWindow::OnSchemaContextMenuRequested(
-        const QPoint& pos)
-    {
-        if (schemaTree_ == nullptr)
-        {
-            return;
-        }
-
-        if (QTreeWidgetItem* item = schemaTree_->itemAt(pos); item != nullptr)
-        {
-            schemaTree_->setCurrentItem(item);
-        }
-
-        QMenu menu(schemaTree_);
-        const bool canEditSchema =
-            session_->IsOpen() && !session_->CurrentTableName().isEmpty();
-        QAction* addAction =
-            menu.addAction(QStringLiteral("添加列..."), this,
-                           &SCDatabaseEditorMainWindow::AddColumn);
-        addAction->setEnabled(canEditSchema);
-        QAction* editAction =
-            menu.addAction(QStringLiteral("编辑列..."), this,
-                           &SCDatabaseEditorMainWindow::EditSelectedColumn);
-        editAction->setEnabled(canEditSchema &&
-                               !CurrentSchemaColumnName().isEmpty());
-        QAction* deleteAction =
-            menu.addAction(QStringLiteral("删除列..."), this,
-                           &SCDatabaseEditorMainWindow::DeleteSelectedColumn);
-        deleteAction->setEnabled(canEditSchema &&
-                                 !CurrentSchemaColumnName().isEmpty());
-        menu.exec(schemaTree_->mapToGlobal(pos));
+        SetStatusMessage(QStringLiteral("Relation updated."));
     }
 
     void SCDatabaseEditorMainWindow::OnGridContextMenuRequested(
@@ -2090,11 +2117,11 @@ namespace StableCore::Storage::Editor
         const bool canEditRows =
             session_->IsOpen() && !session_->CurrentTableName().isEmpty();
         QAction* addAction =
-            menu.addAction(QStringLiteral("添加行"), this,
+            menu.addAction(QStringLiteral("Add Record"), this,
                            &SCDatabaseEditorMainWindow::AddRecord);
         addAction->setEnabled(canEditRows);
         QAction* deleteAction =
-            menu.addAction(QStringLiteral("删除行"), this,
+            menu.addAction(QStringLiteral("Delete Record"), this,
                            &SCDatabaseEditorMainWindow::DeleteSelectedRecord);
         deleteAction->setEnabled(
             canEditRows && !dataTable_->SelectedRows().isEmpty());
@@ -2106,13 +2133,13 @@ namespace StableCore::Storage::Editor
         QString error;
         if (!session_->Undo(&error))
         {
-            ShowError(QStringLiteral("撤销失败"), error);
+            ShowError(QStringLiteral("Undo failed"), error);
             return;
         }
 
         RefreshGridData();
-        UpdateRecordInspector();
-        UpdateRelationInspector();
+        RefreshCurrentRecordPanel();
+        RefreshRelationPanel();
         RefreshOverviewPanels();
         UpdateGridSummary();
     }
@@ -2122,13 +2149,13 @@ namespace StableCore::Storage::Editor
         QString error;
         if (!session_->Redo(&error))
         {
-            ShowError(QStringLiteral("重做失败"), error);
+            ShowError(QStringLiteral("Redo failed"), error);
             return;
         }
 
         RefreshGridData();
-        UpdateRecordInspector();
-        UpdateRelationInspector();
+        RefreshCurrentRecordPanel();
+        RefreshRelationPanel();
         RefreshOverviewPanels();
         UpdateGridSummary();
     }
@@ -2138,15 +2165,15 @@ namespace StableCore::Storage::Editor
         QString error;
         if (!session_->Refresh(&error))
         {
-            ShowError(QStringLiteral("刷新失败"), error);
+            ShowError(QStringLiteral("Refresh failed"), error);
             return;
         }
 
         RefreshGridData();
-        UpdateSchemaInspector();
-        UpdateRecordInspector();
+        RefreshCurrentDetailsPanel();
+        RefreshCurrentRecordPanel();
         UpdateComputedColumnsPanel();
-        UpdateRelationInspector();
+        RefreshRelationPanel();
         RefreshOverviewPanels();
         UpdateGridSummary();
     }
@@ -2172,8 +2199,8 @@ namespace StableCore::Storage::Editor
     void SCDatabaseEditorMainWindow::ExportDebugPackage()
     {
         const QString filePath = QFileDialog::getSaveFileName(
-            this, QStringLiteral("导出调试包"), QString(),
-            QStringLiteral("调试包 (*.scdbg);;所有文件 (*)"));
+            this, QStringLiteral("Export Debug Package"), QString(),
+            QStringLiteral("Debug Package (*.scdbg);;All Files (*)"));
         if (filePath.isEmpty())
         {
             return;
@@ -2188,7 +2215,7 @@ namespace StableCore::Storage::Editor
         QString error;
         if (!session_->ExportDebugPackage(filePath, request, &error))
         {
-            ShowError(QStringLiteral("导出调试包失败"), error);
+            ShowError(QStringLiteral("Failed to export debug package"), error);
             return;
         }
 
@@ -2199,25 +2226,25 @@ namespace StableCore::Storage::Editor
         if (debugPackageText_ != nullptr)
         {
             debugPackageText_->setPlainText(
-                QStringLiteral("已导出调试包:\n") + filePath);
+                QStringLiteral("Debug package exported:\n") + filePath);
         }
-        SetStatusMessage(QStringLiteral("调试包已导出: ") + filePath);
+        SetStatusMessage(QStringLiteral("Debug package exported: ") + filePath);
     }
 
     void SCDatabaseEditorMainWindow::ExportCurrentTableCsv()
     {
         if (!session_->IsOpen() || session_->CurrentTableName().isEmpty())
         {
-            ShowError(QStringLiteral("导出CSV失败"),
-                      QStringLiteral("导出CSV请先选择表。"));
+            ShowError(QStringLiteral("Failed to export CSV"),
+                      QStringLiteral("Please select a table first before exporting CSV."));
             return;
         }
 
         const QString defaultFileName =
             session_->CurrentTableName() + QStringLiteral(".csv");
         const QString filePath = QFileDialog::getSaveFileName(
-            this, QStringLiteral("导出CSV"), defaultFileName,
-            QStringLiteral("CSV文件 (*.csv);;所有文件 (*)"));
+            this, QStringLiteral("Export CSV"), defaultFileName,
+            QStringLiteral("CSV Files (*.csv);;All Files (*)"));
         if (filePath.isEmpty())
         {
             return;
@@ -2226,19 +2253,19 @@ namespace StableCore::Storage::Editor
         QString error;
         if (!ExportCurrentTableCsvFile(filePath, &error))
         {
-            ShowError(QStringLiteral("导出CSV失败"), error);
+            ShowError(QStringLiteral("Failed to export CSV"), error);
             return;
         }
 
-        SetStatusMessage(QStringLiteral("CSV已导出: ") + filePath);
+        SetStatusMessage(QStringLiteral("CSV exported: ") + filePath);
     }
 
     void SCDatabaseEditorMainWindow::ImportCsvIntoCurrentTable()
     {
         if (!session_->IsOpen() || session_->CurrentTableName().isEmpty())
         {
-            ShowError(QStringLiteral("导入CSV失败"),
-                      QStringLiteral("导入CSV请先选择表。"));
+            ShowError(QStringLiteral("Failed to import CSV"),
+                      QStringLiteral("Please select a table first."));
             return;
         }
 
@@ -2246,29 +2273,29 @@ namespace StableCore::Storage::Editor
         QString stateError;
         if (!session_->GetEditingState(&editingState, &stateError))
         {
-            ShowError(QStringLiteral("导入CSV失败"), stateError);
+            ShowError(QStringLiteral("Failed to import CSV"), stateError);
             return;
         }
         if (session_->HasPendingEdit())
         {
-            ShowError(QStringLiteral("导入CSV失败"),
+            ShowError(QStringLiteral("Failed to import CSV"),
                       QStringLiteral(
-                          "导入CSV请先保存或放弃待更改。"));
+                          "Please save or discard pending changes before importing CSV."));
             return;
         }
         if (editingState.openMode == sc::SCDatabaseOpenMode::ReadOnly)
         {
             ShowError(
-                QStringLiteral("导入CSV失败"),
-                QStringLiteral("CSV导入需要可写入的数据库。"));
+                QStringLiteral("Failed to import CSV"),
+                QStringLiteral("CSV import requires a writable database."));
             return;
         }
 
         const QString defaultFileName =
             session_->CurrentTableName() + QStringLiteral(".csv");
         const QString filePath = QFileDialog::getOpenFileName(
-            this, QStringLiteral("导入CSV"), defaultFileName,
-            QStringLiteral("CSV文件 (*.csv);;所有文件 (*)"));
+            this, QStringLiteral("Import CSV"), defaultFileName,
+            QStringLiteral("CSV Files (*.csv);;All Files (*)"));
         if (filePath.isEmpty())
         {
             return;
@@ -2277,11 +2304,11 @@ namespace StableCore::Storage::Editor
         QString error;
         if (!ImportCsvIntoCurrentTableFile(filePath, &error))
         {
-            ShowError(QStringLiteral("导入CSV失败"), error);
+            ShowError(QStringLiteral("Failed to import CSV"), error);
             return;
         }
 
-        SetStatusMessage(QStringLiteral("CSV已导入: ") + filePath);
+        SetStatusMessage(QStringLiteral("CSV imported: ") + filePath);
     }
 
     bool SCDatabaseEditorMainWindow::ExportCurrentTableCsvFile(
@@ -2291,7 +2318,7 @@ namespace StableCore::Storage::Editor
         {
             if (outError != nullptr)
             {
-                *outError = QStringLiteral("未选择表。");
+                *outError = QStringLiteral("No table selected.");
             }
             return false;
         }
@@ -2302,7 +2329,7 @@ namespace StableCore::Storage::Editor
             if (outError != nullptr)
             {
                 *outError =
-                    QStringLiteral("无法打开CSV文件进行写入。");
+                    QStringLiteral("Unable to open CSV file for writing.");
             }
             return false;
         }
@@ -2323,7 +2350,7 @@ namespace StableCore::Storage::Editor
             {
                 if (outError != nullptr)
                 {
-                    *outError = QStringLiteral("无法写入CSV内容。");
+                    *outError = QStringLiteral("Unable to write CSV content.");
                 }
                 return false;
             }
@@ -2332,7 +2359,7 @@ namespace StableCore::Storage::Editor
                 if (outError != nullptr)
                 {
                     *outError =
-                        QStringLiteral("无法写入CSV换行符。");
+                        QStringLiteral("Unable to write CSV newline.");
                 }
                 return false;
             }
@@ -2344,7 +2371,7 @@ namespace StableCore::Storage::Editor
         {
             if (outError != nullptr)
             {
-                *outError = QStringLiteral("无法写入CSV表头。");
+                *outError = QStringLiteral("Unable to write CSV header.");
             }
             return false;
         }
@@ -2381,7 +2408,7 @@ namespace StableCore::Storage::Editor
         {
             if (outError != nullptr)
             {
-                *outError = QStringLiteral("无法完成CSV文件。");
+                *outError = QStringLiteral("Unable to finalize CSV file.");
             }
             return false;
         }
@@ -2396,7 +2423,7 @@ namespace StableCore::Storage::Editor
         {
             if (outError != nullptr)
             {
-                *outError = QStringLiteral("未选择表。");
+                *outError = QStringLiteral("No table selected.");
             }
             return false;
         }
@@ -2407,7 +2434,7 @@ namespace StableCore::Storage::Editor
             if (outError != nullptr)
             {
                 *outError =
-                    QStringLiteral("无法打开CSV文件进行读取。");
+                    QStringLiteral("Unable to open CSV file for reading.");
             }
             return false;
         }
@@ -2423,7 +2450,7 @@ namespace StableCore::Storage::Editor
             if (outError != nullptr)
             {
                 *outError =
-                    QStringLiteral("CSV文件不含表头行。");
+                    QStringLiteral("CSV file does not contain a header row.");
             }
             return false;
         }
@@ -2472,7 +2499,7 @@ namespace StableCore::Storage::Editor
                     if (outError != nullptr)
                     {
                         *outError = QStringLiteral(
-                                        "CSV表头包含重复的可编辑列: ") +
+                                        "CSV header contains duplicate editable columns: ") +
                                     header;
                     }
                     return false;
@@ -2493,7 +2520,7 @@ namespace StableCore::Storage::Editor
             if (outError != nullptr)
             {
                 *outError = QStringLiteral(
-                        "CSV文件不含任何可编辑列。");
+                        "CSV file does not contain any editable columns.");
             }
             return false;
         }
@@ -2580,7 +2607,7 @@ namespace StableCore::Storage::Editor
                     {
                         *outError =
                             QStringLiteral(
-                                "CSV第%1行缺少必填字段 \"%2\"。")
+                                "CSV row %1 is missing required field \"%2\".")
                                 .arg(rowIndex + 2)
                                 .arg(QString::fromStdWString(definition.name));
                     }
@@ -2609,7 +2636,7 @@ namespace StableCore::Storage::Editor
                     if (outError != nullptr && !outError->isEmpty())
                     {
                         *outError =
-                            QStringLiteral("CSV第%1行, 列 \"%2\": %3")
+                            QStringLiteral("CSV row %1, column \"%2\": %3")
                                 .arg(rowIndex + 2)
                                 .arg(QString::fromStdWString(definition.name))
                                 .arg(*outError);
@@ -2633,7 +2660,7 @@ namespace StableCore::Storage::Editor
         }
 
         sc::SCBatchExecutionOptions options;
-        options.editName = L"导入CSV";
+        options.editName = L"ImportCSV";
         options.rollbackOnError = true;
 
         sc::SCBatchExecutionResult result;
@@ -2643,7 +2670,7 @@ namespace StableCore::Storage::Editor
         {
             if (outError != nullptr)
             {
-                *outError = QStringLiteral("CSV导入失败: ") +
+                *outError = QStringLiteral("CSV import failed: ") +
                             StorageErrorText(rc);
             }
             return false;
@@ -2655,7 +2682,7 @@ namespace StableCore::Storage::Editor
             if (outError != nullptr)
             {
                 *outError =
-                    QStringLiteral("CSV导入已提交, 但刷新失败: ") +
+                    QStringLiteral("CSV import committed, but refresh failed: ") +
                             refreshError;
             }
             return false;
@@ -2678,11 +2705,14 @@ namespace StableCore::Storage::Editor
         if (sqlPreviewText_ != nullptr)
         {
             sqlPreviewText_->setPlainText(
-                QStringLiteral("SQL 预览在此阶段未填充。\n"
-                               "使用模式和记录操作来检查更改。"));
+                QStringLiteral(
+                    "SQL preview is not populated at this stage.\n"
+                    "Use schema and record operations to inspect changes."));
         }
         UpdateEditLogPanel();
         UpdateDatabaseStatusBar();
+        RefreshWorkspaceHeader();
+        RefreshWorkspacePages();
     }
 
     void SCDatabaseEditorMainWindow::UpdateEditLogPanel()
@@ -2692,13 +2722,13 @@ namespace StableCore::Storage::Editor
             return;
         }
 
-        sc::SCEditingDatabaseState editingState;
         sc::SCEditLogState logState;
+        sc::SCEditingDatabaseState editingState;
         QString error;
         if (!session_->GetEditingState(&editingState, &error))
         {
             editStateText_->setPlainText(
-                QStringLiteral("加载编辑状态失败: ") + error);
+                QStringLiteral("Failed to load edit state: ") + error);
             editLogTree_->clear();
             return;
         }
@@ -2706,38 +2736,38 @@ namespace StableCore::Storage::Editor
         if (!session_->GetEditLogState(&logState, &error))
         {
             editStateText_->setPlainText(
-                QStringLiteral("加载编辑日志失败: ") + error);
+                QStringLiteral("Failed to load edit log: ") + error);
             editLogTree_->clear();
             return;
         }
 
         QString summary;
-        summary += QStringLiteral("打开: ") +
-                   (editingState.open ? QStringLiteral("是")
-                                      : QStringLiteral("否")) +
+        summary += QStringLiteral("Open: ") +
+                   (editingState.open ? QStringLiteral("Yes")
+                                      : QStringLiteral("No")) +
                    QLatin1Char('\n');
-        summary += QStringLiteral("打开模式: ") +
+        summary += QStringLiteral("Open Mode: ") +
                    OpenModeToText(editingState.openMode) + QLatin1Char('\n');
-        summary += QStringLiteral("脏: ") +
-                   (editingState.dirty ? QStringLiteral("是")
-                                       : QStringLiteral("否")) +
+        summary += QStringLiteral("Dirty: ") +
+                   (editingState.dirty ? QStringLiteral("Yes")
+                                       : QStringLiteral("No")) +
                    QLatin1Char('\n');
-        summary += QStringLiteral("当前版本: ") +
+        summary += QStringLiteral("Current Version: ") +
                    QString::number(
                        static_cast<qulonglong>(editingState.currentVersion)) +
                    QLatin1Char('\n');
-        summary += QStringLiteral("基线版本: ") +
+        summary += QStringLiteral("Baseline Version: ") +
                    QString::number(
                        static_cast<qulonglong>(editingState.baselineVersion)) +
                    QLatin1Char('\n');
-        summary += QStringLiteral("撤销次数: ") +
+        summary += QStringLiteral("Undo Count: ") +
                    QString::number(editingState.undoCount) + QLatin1Char('\n');
-        summary += QStringLiteral("重做次数: ") +
+        summary += QStringLiteral("Redo Count: ") +
                    QString::number(editingState.redoCount) + QLatin1Char('\n');
-        summary += QStringLiteral("撤销项: ") +
+        summary += QStringLiteral("Undo Items: ") +
                    QString::number(logState.undoItems.size()) +
                    QLatin1Char('\n');
-        summary += QStringLiteral("重做项: ") +
+        summary += QStringLiteral("Redo Items: ") +
                    QString::number(logState.redoItems.size()) +
                    QLatin1Char('\n');
         editStateText_->setPlainText(summary);
@@ -2791,15 +2821,17 @@ namespace StableCore::Storage::Editor
             const int col = context.Column;
             if (row < 0 || col < 0 ||
                 row >= visibleRows_.size() ||
-                col >= columns_.size())
+                col == 0 ||
+                col > columns_.size())
             {
-                context.ErrorText = QStringLiteral("无效单元格");
+                context.ErrorText = QStringLiteral("Invalid cell");
                 return false;
             }
 
             const sc::RecordId recordId = visibleRows_[row].recordId;
+            const int dataColumn = col - 1;
             const QString fieldName =
-                ToQString(columns_[col].name);
+                ToQString(columns_[dataColumn].name);
             QString error;
             if (!session_->SetCellValue(
                     recordId, fieldName, QVariant(context.NewText), &error))
@@ -2851,7 +2883,7 @@ namespace StableCore::Storage::Editor
             session_->CurrentTableView()->GetColumnCount(&columnCount);
         if (sc::Failed(ccRc))
         {
-            ShowError(QStringLiteral("加载模式失败"), QString::number(ccRc));
+            ShowError(QStringLiteral("Failed to load schema"), QString::number(ccRc));
             return;
         }
 
@@ -2870,7 +2902,7 @@ namespace StableCore::Storage::Editor
         const sc::ErrorCode rc = session_->CurrentTableView()->EnumerateRecords(cursor);
         if (sc::Failed(rc))
         {
-            ShowError(QStringLiteral("枚举记录失败"), QString::number(rc));
+            ShowError(QStringLiteral("Failed to enumerate records"), QString::number(rc));
             return;
         }
 
@@ -2887,6 +2919,8 @@ namespace StableCore::Storage::Editor
         for (int row = 0; row < static_cast<int>(visibleRows_.size()); ++row)
         {
             QStringList rowTexts;
+            rowTexts.push_back(QString::number(
+                static_cast<qlonglong>(visibleRows_[row].recordId)));
             for (int col = 0;
                  col < static_cast<int>(columns_.size());
                  ++col)
@@ -2905,29 +2939,47 @@ namespace StableCore::Storage::Editor
                 rowTexts.join(QLatin1Char(' '));
         }
 
+        const int visibleColumnCount =
+            static_cast<int>(columns_.size()) + 1;
+
         dataTable_->OnGetRowCount = [this]() {
             return static_cast<int>(visibleRows_.size());
         };
 
-        dataTable_->OnGetColumnCount = [this]() {
-            return static_cast<int>(columns_.size());
+        dataTable_->OnGetColumnCount = [visibleColumnCount]() {
+            return visibleColumnCount;
         };
 
         dataTable_->OnGetColumnDef = [this](int col) {
             ::SCColumnDef def;
-            if (col >= 0 && col < static_cast<int>(columns_.size()))
+            if (col == 0)
             {
-                def.Title = ToQString(columns_[col].displayName);
-                def.Editable = columns_[col].editable;
+                def.Title = QStringLiteral("RecordId");
+                def.Editable = false;
+                def.Width = 110;
+                return def;
+            }
+
+            const int dataColumn = col - 1;
+            if (dataColumn >= 0 && dataColumn < static_cast<int>(columns_.size()))
+            {
+                def.Title = ToQString(columns_[dataColumn].displayName);
+                def.Editable = columns_[dataColumn].editable;
                 def.Width = 120;
             }
             return def;
         };
 
         dataTable_->OnGetHeaderText = [this](int col) {
-            if (col >= 0 && col < static_cast<int>(columns_.size()))
+            if (col == 0)
             {
-                return ToQString(columns_[col].displayName);
+                return QStringLiteral("RecordId");
+            }
+
+            const int dataColumn = col - 1;
+            if (dataColumn >= 0 && dataColumn < static_cast<int>(columns_.size()))
+            {
+                return ToQString(columns_[dataColumn].displayName);
             }
             return QString();
         };
@@ -2935,16 +2987,27 @@ namespace StableCore::Storage::Editor
         dataTable_->OnGetCellData = [this](int row, int col) {
             SCCellData data;
             if (row < 0 || row >= static_cast<int>(visibleRows_.size()) ||
-                col < 0 || col >= static_cast<int>(columns_.size()))
+                col < 0 || col > static_cast<int>(columns_.size()))
             {
                 return data;
             }
 
+            if (col == 0)
+            {
+                const auto recordId = visibleRows_[row].recordId;
+                data.ValueType = SCCellValueType::Text;
+                data.Text = QString::number(static_cast<qlonglong>(recordId));
+                data.DisplayText = data.Text;
+                data.ReadOnly = true;
+                return data;
+            }
+
+            const int dataColumn = col - 1;
             QVariant value;
             QString error;
             const bool ok = session_->GetCellDisplayValue(
                 visibleRows_[row].recordId,
-                QString::fromStdWString(columns_[col].name),
+                QString::fromStdWString(columns_[dataColumn].name),
                 &value, &error);
 
             if (ok)
@@ -2952,7 +3015,7 @@ namespace StableCore::Storage::Editor
                 data.ValueType = SCCellValueType::Text;
                 data.Text = value.toString();
                 data.DisplayText = value.toString();
-                data.ReadOnly = !columns_[col].editable;
+                data.ReadOnly = !columns_[dataColumn].editable;
             }
 
             return data;
@@ -2975,7 +3038,7 @@ namespace StableCore::Storage::Editor
 
         auto* databaseItem =
             new QTreeWidgetItem(objectTree_);
-        databaseItem->setText(0, QStringLiteral("数据库"));
+        databaseItem->setText(0, QStringLiteral("Database"));
         databaseItem->setData(0, kExplorerNodeTypeRole,
                               static_cast<int>(
                                   ExplorerNodeType::Database));
@@ -2988,7 +3051,7 @@ namespace StableCore::Storage::Editor
 
         auto* tablesRoot =
             new QTreeWidgetItem(databaseItem);
-        tablesRoot->setText(0, QStringLiteral("表"));
+        tablesRoot->setText(0, QStringLiteral("Tables"));
         tablesRoot->setData(0, kExplorerNodeTypeRole,
                             static_cast<int>(
                                 ExplorerNodeType::TablesRoot));
@@ -3007,6 +3070,38 @@ namespace StableCore::Storage::Editor
             tableItem->setData(
                 0, kExplorerNodeNameRole, name);
 
+            auto* columnsItem = new QTreeWidgetItem(tableItem);
+            columnsItem->setText(0, QStringLiteral("Columns"));
+            columnsItem->setText(1, QStringLiteral("Design"));
+            columnsItem->setData(
+                0, kExplorerNodeTypeRole,
+                static_cast<int>(ExplorerNodeType::TableColumns));
+            columnsItem->setData(0, kExplorerNodeNameRole, name);
+
+            auto* constraintsItem = new QTreeWidgetItem(tableItem);
+            constraintsItem->setText(0, QStringLiteral("Constraints"));
+            constraintsItem->setText(1, QStringLiteral("Design"));
+            constraintsItem->setData(
+                0, kExplorerNodeTypeRole,
+                static_cast<int>(ExplorerNodeType::TableConstraints));
+            constraintsItem->setData(0, kExplorerNodeNameRole, name);
+
+            auto* indexesItem = new QTreeWidgetItem(tableItem);
+            indexesItem->setText(0, QStringLiteral("Indexes"));
+            indexesItem->setText(1, QStringLiteral("Design"));
+            indexesItem->setData(
+                0, kExplorerNodeTypeRole,
+                static_cast<int>(ExplorerNodeType::TableIndexes));
+            indexesItem->setData(0, kExplorerNodeNameRole, name);
+
+            auto* recordsItem = new QTreeWidgetItem(tableItem);
+            recordsItem->setText(0, QStringLiteral("Records"));
+            recordsItem->setText(1, QStringLiteral("Data"));
+            recordsItem->setData(
+                0, kExplorerNodeTypeRole,
+                static_cast<int>(ExplorerNodeType::TableRecords));
+            recordsItem->setData(0, kExplorerNodeNameRole, name);
+
             if (!session_->CurrentTableName().isEmpty() &&
                 name.compare(session_->CurrentTableName(),
                              Qt::CaseInsensitive) == 0)
@@ -3022,7 +3117,7 @@ namespace StableCore::Storage::Editor
             new QTreeWidgetItem(databaseItem);
         computedRoot->setText(
             0,
-            QStringLiteral("计算列 (%1)").arg(computedColumns.size()));
+            QStringLiteral("Computed Columns (%1)").arg(computedColumns.size()));
         computedRoot->setData(0, kExplorerNodeTypeRole,
                               static_cast<int>(
                                   ExplorerNodeType::ComputedRoot));
@@ -3047,14 +3142,14 @@ namespace StableCore::Storage::Editor
 
         auto* systemRoot =
             new QTreeWidgetItem(objectTree_);
-        systemRoot->setText(0, QStringLiteral("系统"));
+        systemRoot->setText(0, QStringLiteral("Activity"));
         systemRoot->setData(0, kExplorerNodeTypeRole,
                             static_cast<int>(
-                                ExplorerNodeType::SystemRoot));
+                                ExplorerNodeType::ActivityRoot));
 
         auto* editLogItem =
             new QTreeWidgetItem(systemRoot);
-        editLogItem->setText(0, QStringLiteral("编辑日志"));
+        editLogItem->setText(0, QStringLiteral("Edit Log"));
         editLogItem->setText(
             1,
             ExplorerNodeTypeToText(ExplorerNodeType::EditLog));
@@ -3064,7 +3159,7 @@ namespace StableCore::Storage::Editor
 
         auto* journalItem =
             new QTreeWidgetItem(systemRoot);
-        journalItem->setText(0, QStringLiteral("日志"));
+        journalItem->setText(0, QStringLiteral("Journal"));
         journalItem->setText(
             1,
             ExplorerNodeTypeToText(ExplorerNodeType::Journal));
@@ -3074,7 +3169,7 @@ namespace StableCore::Storage::Editor
 
         auto* snapshotsItem =
             new QTreeWidgetItem(systemRoot);
-        snapshotsItem->setText(0, QStringLiteral("快照"));
+        snapshotsItem->setText(0, QStringLiteral("Snapshots"));
         snapshotsItem->setText(
             1,
             ExplorerNodeTypeToText(
@@ -3085,7 +3180,7 @@ namespace StableCore::Storage::Editor
 
         auto* diagnosticsItem =
             new QTreeWidgetItem(systemRoot);
-        diagnosticsItem->setText(0, QStringLiteral("诊断"));
+        diagnosticsItem->setText(0, QStringLiteral("Diagnostics"));
         diagnosticsItem->setText(
             1,
             ExplorerNodeTypeToText(
@@ -3125,18 +3220,45 @@ namespace StableCore::Storage::Editor
                     QString error;
                     if (!session_->SelectTable(nodeName, &error))
                     {
-                        ShowError(QStringLiteral("选择表失败"), error);
+                        ShowError(QStringLiteral("Failed to select table"), error);
                     }
                 }
-                if (inspectorTabs_ != nullptr)
+                if (currentDetailsTabs_ != nullptr && kCurrentDetailsRecordTab >= 0)
                 {
-                    inspectorTabs_->setCurrentIndex(kInspectorSchemaTab);
+                    currentDetailsTabs_->setCurrentIndex(kCurrentDetailsRecordTab);
                 }
+                SetWorkspaceMode(WorkspaceMode::Data);
+                break;
+            case ExplorerNodeType::TableColumns:
+            case ExplorerNodeType::TableConstraints:
+            case ExplorerNodeType::TableIndexes:
+            case ExplorerNodeType::TableRecords:
+                if (!nodeName.isEmpty() &&
+                    nodeName.compare(session_->CurrentTableName(),
+                                     Qt::CaseInsensitive) != 0)
+                {
+                    QString error;
+                    if (!session_->SelectTable(nodeName, &error))
+                    {
+                        ShowError(QStringLiteral("Select table failed"), error);
+                        break;
+                    }
+                }
+                if (nodeType == ExplorerNodeType::TableRecords &&
+                    currentDetailsTabs_ != nullptr)
+                {
+                    currentDetailsTabs_->setCurrentIndex(
+                        kCurrentDetailsRecordTab);
+                }
+                SetWorkspaceMode(
+                    nodeType == ExplorerNodeType::TableRecords
+                        ? WorkspaceMode::Data
+                        : WorkspaceMode::Design);
                 break;
             case ExplorerNodeType::ComputedColumn:
-                if (inspectorTabs_ != nullptr)
+                if (currentDetailsTabs_ != nullptr)
                 {
-                    inspectorTabs_->setCurrentIndex(kInspectorComputedTab);
+                    currentDetailsTabs_->setCurrentIndex(kCurrentDetailsComputedTab);
                 }
                 SelectComputedColumnByName(nodeName);
                 break;
@@ -3160,19 +3282,14 @@ namespace StableCore::Storage::Editor
                 }
                 break;
             case ExplorerNodeType::ComputedRoot:
-                if (inspectorTabs_ != nullptr)
+                if (currentDetailsTabs_ != nullptr)
                 {
-                    inspectorTabs_->setCurrentIndex(kInspectorComputedTab);
+                    currentDetailsTabs_->setCurrentIndex(kCurrentDetailsComputedTab);
                 }
                 break;
             case ExplorerNodeType::TablesRoot:
-                if (inspectorTabs_ != nullptr)
-                {
-                    inspectorTabs_->setCurrentIndex(kInspectorSchemaTab);
-                }
-                break;
             case ExplorerNodeType::Database:
-            case ExplorerNodeType::SystemRoot:
+            case ExplorerNodeType::ActivityRoot:
             default:
                 break;
         }
@@ -3191,13 +3308,23 @@ namespace StableCore::Storage::Editor
         update();
     }
 
+    void SCDatabaseEditorMainWindow::OnWorkspaceModeChanged(int index)
+    {
+        if (index < 0)
+        {
+            return;
+        }
+
+        SetWorkspaceMode(static_cast<WorkspaceMode>(index));
+    }
+
     void SCDatabaseEditorMainWindow::OnGridCellSelected(
         int row, int col)
     {
         Q_UNUSED(row);
         Q_UNUSED(col);
-        UpdateRecordInspector();
-        UpdateRelationInspector();
+        RefreshCurrentRecordPanel();
+        RefreshRelationPanel();
     }
 
     int SCDatabaseEditorMainWindow::CurrentRow() const
@@ -3253,21 +3380,15 @@ namespace StableCore::Storage::Editor
         return columns_[col];
     }
 
-    QString SCDatabaseEditorMainWindow::CurrentSchemaColumnName()
+    QString SCDatabaseEditorMainWindow::CurrentDesignColumnName()
         const
     {
-        if (schemaTree_ == nullptr)
+        if (tableDesignPane_ == nullptr)
         {
             return {};
         }
 
-        QTreeWidgetItem* item = schemaTree_->currentItem();
-        if (item == nullptr)
-        {
-            return {};
-        }
-
-        return item->text(0);
+        return tableDesignPane_->CurrentColumnName();
     }
 
     QString SCDatabaseEditorMainWindow::CurrentComputedColumnName()
@@ -3288,29 +3409,27 @@ namespace StableCore::Storage::Editor
         return item->text(0);
     }
 
-    void SCDatabaseEditorMainWindow::SelectSchemaColumnByName(
+    QString SCDatabaseEditorMainWindow::ExplorerSelectedTableName() const
+    {
+        if (objectTree_ == nullptr || objectTree_->currentItem() == nullptr)
+        {
+            return {};
+        }
+
+        return objectTree_->currentItem()
+            ->data(0, kExplorerNodeNameRole)
+            .toString();
+    }
+
+    void SCDatabaseEditorMainWindow::SelectDesignColumnByName(
         const QString& name)
     {
-        if (schemaTree_ == nullptr || name.isEmpty())
+        if (tableDesignPane_ == nullptr || name.isEmpty())
         {
             return;
         }
 
-        for (int index = 0;
-             index < schemaTree_->topLevelItemCount();
-             ++index)
-        {
-            QTreeWidgetItem* item =
-                schemaTree_->topLevelItem(index);
-            if (item != nullptr &&
-                item->text(0)
-                        .compare(name, Qt::CaseInsensitive) ==
-                    0)
-            {
-                schemaTree_->setCurrentItem(item);
-                return;
-            }
-        }
+        tableDesignPane_->SelectColumnByName(name);
     }
 
     void SCDatabaseEditorMainWindow::SelectComputedColumnByName(
@@ -3338,61 +3457,130 @@ namespace StableCore::Storage::Editor
         }
     }
 
-    void SCDatabaseEditorMainWindow::UpdateSchemaInspector()
+    void SCDatabaseEditorMainWindow::SelectTableInExplorer(
+        const QString& tableName)
     {
-        if (schemaTree_ == nullptr)
+        if (objectTree_ == nullptr || tableName.isEmpty())
         {
             return;
         }
 
-        schemaTree_->clear();
+        std::function<QTreeWidgetItem*(QTreeWidgetItem*)> findInBranch =
+            [&](QTreeWidgetItem* item) -> QTreeWidgetItem* {
+            if (item == nullptr)
+            {
+                return nullptr;
+            }
 
-        if (!session_->IsOpen() ||
-            session_->CurrentTableName().isEmpty())
-        {
-            return;
-        }
+            const ExplorerNodeType nodeType = static_cast<ExplorerNodeType>(
+                item->data(0, kExplorerNodeTypeRole).toInt());
+            const QString nodeName =
+                item->data(0, kExplorerNodeNameRole).toString();
+            if (nodeType == ExplorerNodeType::Table &&
+                nodeName.compare(tableName, Qt::CaseInsensitive) == 0)
+            {
+                return item;
+            }
 
-        QVector<sc::SCColumnDef> columns;
-        QString error;
-        if (!session_->BuildSchemaSnapshot(&columns, &error))
-        {
-            return;
-        }
+            for (int index = 0; index < item->childCount(); ++index)
+            {
+                if (QTreeWidgetItem* match = findInBranch(item->child(index)))
+                {
+                    return match;
+                }
+            }
 
-        for (const sc::SCColumnDef& column : columns)
-        {
-            auto* item =
-                new QTreeWidgetItem(schemaTree_);
-            item->setText(0, ToQString(column.name));
-            item->setText(1, ToQString(column.displayName));
-            item->setText(
-                2, ValueKindToText(column.valueKind));
-            item->setText(
-                3,
-                BoolToText(column.nullable));
-            item->setText(
-                4, SCValueToText(column.defaultValue));
-            item->setText(
-                5, ToQString(column.referenceTable));
-            item->setText(
-                6,
-                BoolToText(column.userDefined));
-            item->setText(
-                7,
-                BoolToText(
-                    column.participatesInCalc));
-        }
+            return nullptr;
+        };
 
-        for (int col = 0;
-             col < schemaTree_->columnCount();
-             ++col)
+        for (int index = 0; index < objectTree_->topLevelItemCount(); ++index)
         {
-            schemaTree_->resizeColumnToContents(col);
+            if (QTreeWidgetItem* match =
+                    findInBranch(objectTree_->topLevelItem(index)))
+            {
+                objectTree_->setCurrentItem(match);
+                return;
+            }
         }
     }
 
-    void SCDatabaseEditorMainWindow::UpdateRecordInspector()
+    void SCDatabaseEditorMainWindow::SetWorkspaceMode(WorkspaceMode mode)
+    {
+        workspaceMode_ = mode;
+
+        if (workspaceModeBar_ != nullptr &&
+            workspaceModeBar_->currentIndex() != static_cast<int>(mode))
+        {
+            const QSignalBlocker blocker(workspaceModeBar_);
+            workspaceModeBar_->setCurrentIndex(static_cast<int>(mode));
+        }
+
+        if (workspaceStack_ != nullptr)
+        {
+            workspaceStack_->setCurrentIndex(static_cast<int>(mode));
+        }
+
+        RefreshWorkspaceHeader();
+        RefreshWorkspacePages();
+    }
+
+    void SCDatabaseEditorMainWindow::RefreshWorkspaceHeader()
+    {
+        if (workspaceTitleLabel_ != nullptr)
+        {
+            const QString currentTableName = session_->CurrentTableName();
+            workspaceTitleLabel_->setText(
+                currentTableName.isEmpty()
+                    ? QStringLiteral("Table: -")
+                    : QStringLiteral("Table: %1").arg(currentTableName));
+        }
+
+        if (workspaceStatsLabel_ != nullptr)
+        {
+            workspaceStatsLabel_->setText(
+                QStringLiteral("Rows: %1 | Columns: %2")
+                    .arg(visibleRows_.size())
+                    .arg(columns_.size()));
+        }
+
+        if (workspaceModeStateLabel_ != nullptr)
+        {
+            QString modeText = QStringLiteral("Data");
+            switch (workspaceMode_)
+            {
+                case WorkspaceMode::Design:
+                    modeText = QStringLiteral("Design");
+                    break;
+                case WorkspaceMode::SchemaText:
+                    modeText = QStringLiteral("Schema Text");
+                    break;
+                case WorkspaceMode::Data:
+                default:
+                    break;
+            }
+
+            workspaceModeStateLabel_->setText(QStringLiteral("Mode: %1").arg(modeText));
+        }
+    }
+
+    void SCDatabaseEditorMainWindow::RefreshWorkspacePages()
+    {
+        if (tableDesignPane_ != nullptr)
+        {
+            tableDesignPane_->Refresh();
+        }
+        if (schemaTextPane_ != nullptr)
+        {
+            schemaTextPane_->Refresh();
+        }
+    }
+
+    void SCDatabaseEditorMainWindow::RefreshCurrentDetailsPanel()
+    {
+        Q_UNUSED(session_);
+    }
+
+    void SCDatabaseEditorMainWindow::RefreshCurrentRecordPanel()
     {
         if (recordTree_ == nullptr)
         {
@@ -3411,7 +3599,7 @@ namespace StableCore::Storage::Editor
             visibleRows_[row].recordId;
 
         auto* idItem = new QTreeWidgetItem(recordTree_);
-        idItem->setText(0, QStringLiteral("记录ID"));
+        idItem->setText(0, QStringLiteral("Record ID"));
         idItem->setText(1, QString::number(recordId));
 
         for (int col = 0; col < columns_.size(); ++col)
@@ -3427,7 +3615,7 @@ namespace StableCore::Storage::Editor
                 QString::fromStdWString(columns_[col].name),
                 &value, &error);
             item->setText(1, ok ? value.toString()
-                                : QStringLiteral("<错误>"));
+                                : QStringLiteral("<Error>"));
         }
 
         for (int col = 0;
@@ -3467,7 +3655,7 @@ namespace StableCore::Storage::Editor
                 (def.kind ==
                  sc::ComputedFieldKind::Expression)
                     ? ToQString(def.expression)
-                    : QStringLiteral("<自定义>"));
+                    : QStringLiteral("<Custom>"));
             item->setText(
                 3, BoolToText(def.cacheable));
         }
@@ -3481,7 +3669,7 @@ namespace StableCore::Storage::Editor
         }
     }
 
-    void SCDatabaseEditorMainWindow::UpdateRelationInspector()
+    void SCDatabaseEditorMainWindow::RefreshRelationPanel()
     {
         if (relationTree_ == nullptr)
         {
@@ -3541,7 +3729,7 @@ namespace StableCore::Storage::Editor
                 &value, &error);
             item->setText(
                 3, ok ? value.toString()
-                      : QStringLiteral("<错误>"));
+                      : QStringLiteral("<Error>"));
         }
 
         for (int col = 0;
@@ -3554,15 +3742,18 @@ namespace StableCore::Storage::Editor
 
     void SCDatabaseEditorMainWindow::UpdateGridSummary()
     {
+        sc::SCEditingDatabaseState state;
         const int rowCount =
             static_cast<int>(visibleRows_.size());
         const int colCount =
-            static_cast<int>(columns_.size());
+            (session_->IsOpen() && !session_->CurrentTableName().isEmpty())
+                ? static_cast<int>(columns_.size()) + 1
+                : 0;
 
         if (tableStatsLabel_ != nullptr)
         {
             tableStatsLabel_->setText(
-                QStringLiteral("记录: %1  列: %2")
+                QStringLiteral("Rows: %1  Columns: %2")
                     .arg(rowCount)
                     .arg(colCount));
         }
@@ -3574,46 +3765,45 @@ namespace StableCore::Storage::Editor
                 !filterEdit_->text().trimmed().isEmpty();
             filterStateLabel_->setText(
                 hasFilter
-                    ? QStringLiteral("筛选: 开启")
-                    : QStringLiteral("筛选: 关闭"));
+                    ? QStringLiteral("Filter: On")
+                    : QStringLiteral("Filter: Off"));
         }
 
         if (transactionStateLabel_ != nullptr)
         {
-            sc::SCEditingDatabaseState state;
             QString error;
             const bool ok =
                 session_->GetEditingState(&state, &error);
             if (ok && state.dirty)
             {
                 transactionStateLabel_->setText(
-                    QStringLiteral("事务: 未保存"));
+                    QStringLiteral("Transaction: Uncommitted"));
             } else if (ok)
             {
                 transactionStateLabel_->setText(
-                    QStringLiteral("事务: 空闲"));
+                    QStringLiteral("Transaction: Idle"));
             } else
             {
                 transactionStateLabel_->setText(
-                    QStringLiteral("事务: 未知"));
+                    QStringLiteral("Transaction: Unknown"));
             }
         }
     }
 
     void SCDatabaseEditorMainWindow::UpdateDatabaseStatusBar()
     {
-        QString error;
         sc::SCEditingDatabaseState state;
+        QString error;
         const bool stateLoaded =
             session_->GetEditingState(&state, &error);
 
         if (openModeLabel_ != nullptr)
         {
             openModeLabel_->setText(
-                QStringLiteral("模式: %1")
+                QStringLiteral("Mode: %1")
                     .arg(stateLoaded
                              ? OpenModeToText(state.openMode)
-                             : QStringLiteral("已关闭")));
+                             : QStringLiteral("Closed")));
         }
 
         if (closeDatabaseAction_ != nullptr)
@@ -3627,8 +3817,8 @@ namespace StableCore::Storage::Editor
                 session_->CurrentTableName();
             currentTableLabel_->setText(
                 name.isEmpty()
-                    ? QStringLiteral("表: -")
-                    : QStringLiteral("表: ") + name);
+                    ? QStringLiteral("Table: -")
+                    : QStringLiteral("Table: ") + name);
         }
 
         if (savePendingChangesAction_ != nullptr)

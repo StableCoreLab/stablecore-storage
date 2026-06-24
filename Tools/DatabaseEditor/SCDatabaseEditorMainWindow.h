@@ -7,6 +7,8 @@
 #include <QMainWindow>
 #include <QPoint>
 #include <QPlainTextEdit>
+#include <QStackedWidget>
+#include <QTabBar>
 #include <QToolBar>
 #include <QTabWidget>
 #include <QTreeWidgetItem>
@@ -60,15 +62,15 @@ namespace StableCore::Storage::Editor
         void ExportCurrentTableCsv();
         void ImportCsvIntoCurrentTable();
         void OnObjectExplorerContextMenuRequested(const QPoint& pos);
-        void OnSchemaContextMenuRequested(const QPoint& pos);
         void OnGridContextMenuRequested(const QPoint& pos);
         void OnTableSelectionChanged();
         void OnGridCellSelected(int row, int col);
         void OnFilterTextChanged(const QString& text);
-        void UpdateSchemaInspector();
-        void UpdateRecordInspector();
+        void OnWorkspaceModeChanged(int index);
+        void RefreshCurrentDetailsPanel();
+        void RefreshCurrentRecordPanel();
         void UpdateComputedColumnsPanel();
-        void UpdateRelationInspector();
+        void RefreshRelationPanel();
         void UpdateGridSummary();
         void UpdateEditLogPanel();
         void UpdateDatabaseStatusBar();
@@ -76,6 +78,13 @@ namespace StableCore::Storage::Editor
         void RefreshObjectExplorer();
 
     private:
+        enum class WorkspaceMode
+        {
+            Data = 0,
+            Design = 1,
+            SchemaText = 2,
+        };
+
         struct GridRowData
         {
             StableCore::Storage::RecordId recordId{0};
@@ -87,13 +96,18 @@ namespace StableCore::Storage::Editor
         StableCore::Storage::RecordId RecordIdAt(int row) const;
         StableCore::Storage::SCTableViewColumnDef ColumnAt(int col) const;
 
-        QString CurrentSchemaColumnName() const;
+        QString CurrentDesignColumnName() const;
         QString CurrentComputedColumnName() const;
-        void SelectSchemaColumnByName(const QString& name);
+        QString ExplorerSelectedTableName() const;
+        void SelectDesignColumnByName(const QString& name);
         void SelectComputedColumnByName(const QString& name);
+        void SelectTableInExplorer(const QString& tableName);
         void BuildUi();
         void BuildMenus();
         void WireGridCallbacks();
+        void SetWorkspaceMode(WorkspaceMode mode);
+        void RefreshWorkspaceHeader();
+        void RefreshWorkspacePages();
         void RefreshGridData();
         bool RowPassesQuickFilter(int row) const;
         void ShowError(const QString& title, const QString& message);
@@ -119,6 +133,12 @@ namespace StableCore::Storage::Editor
         QLabel* tableStatsLabel_{nullptr};
         QLabel* filterStateLabel_{nullptr};
         QLabel* transactionStateLabel_{nullptr};
+        QWidget* workspaceHeader_{nullptr};
+        QLabel* workspaceTitleLabel_{nullptr};
+        QLabel* workspaceStatsLabel_{nullptr};
+        QLabel* workspaceModeStateLabel_{nullptr};
+        QTabBar* workspaceModeBar_{nullptr};
+        QStackedWidget* workspaceStack_{nullptr};
         QWidget* tablePage_{nullptr};
         QToolBar* tableToolBar_{nullptr};
         QAction* closeDatabaseAction_{nullptr};
@@ -127,9 +147,10 @@ namespace StableCore::Storage::Editor
         QAction* savePendingChangesAction_{nullptr};
         QAction* discardPendingChangesAction_{nullptr};
         QLineEdit* filterEdit_{nullptr};
-        QDockWidget* inspectorDock_{nullptr};
-        QTabWidget* inspectorTabs_{nullptr};
-        QTreeWidget* schemaTree_{nullptr};
+        class SCTableDesignPane* tableDesignPane_{nullptr};
+        class SCSchemaTextPane* schemaTextPane_{nullptr};
+        QDockWidget* currentDetailsDock_{nullptr};
+        QTabWidget* currentDetailsTabs_{nullptr};
         QTreeWidget* recordTree_{nullptr};
         QTreeWidget* computedColumnsTree_{nullptr};
         QTreeWidget* relationTree_{nullptr};
@@ -142,6 +163,7 @@ namespace StableCore::Storage::Editor
         QPlainTextEdit* sqlPreviewText_{nullptr};
         QPlainTextEdit* debugPackageText_{nullptr};
         QLabel* statusLabel_{nullptr};
+        WorkspaceMode workspaceMode_{WorkspaceMode::Data};
     };
 
 }  // namespace StableCore::Storage::Editor

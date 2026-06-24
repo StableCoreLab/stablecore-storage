@@ -302,6 +302,43 @@ TEST(DatabaseEditorSchemaTable, BuildsCurrentTableSchemaCode)
     EXPECT_EQ(code, expected);
 }
 
+TEST(DatabaseEditorSchemaTable, FiltersLegacyIndexesUnlessRequested)
+{
+    sc::SCTableSchemaSnapshot snapshot;
+    snapshot.table.name = L"Beam";
+
+    sc::SCColumnDef id = MakeColumn(L"Id", sc::ValueKind::Int64);
+    snapshot.columns.push_back(id);
+
+    sc::SCIndexDef explicitIndex;
+    explicitIndex.name = L"idx_Beam_Id";
+    explicitIndex.sourceKind = sc::SCSchemaSourceKind::Explicit;
+    explicitIndex.columns.push_back(sc::SCIndexColumnDef{L"Id", false});
+    snapshot.indexes.push_back(explicitIndex);
+
+    sc::SCIndexDef legacyIndex;
+    legacyIndex.name = L"idx_Beam_Id_Legacy";
+    legacyIndex.sourceKind = sc::SCSchemaSourceKind::LegacyHint;
+    legacyIndex.columns.push_back(sc::SCIndexColumnDef{L"Id", false});
+    snapshot.indexes.push_back(legacyIndex);
+
+    editor::SCSchemaTableExportOptions defaultOptions;
+    const QString withoutLegacy =
+        editor::BuildSchemaTableCode(snapshot, defaultOptions);
+    EXPECT_NE(withoutLegacy.indexOf(QStringLiteral(".Index(\"idx_Beam_Id\")")), -1);
+    EXPECT_EQ(withoutLegacy.indexOf(QStringLiteral(".Index(\"idx_Beam_Id_Legacy\")")),
+              -1);
+
+    editor::SCSchemaTableExportOptions includeLegacyOptions;
+    includeLegacyOptions.includeLegacyIndexes = true;
+    const QString withLegacy =
+        editor::BuildSchemaTableCode(snapshot, includeLegacyOptions);
+    EXPECT_NE(withLegacy.indexOf(QStringLiteral(".Index(\"idx_Beam_Id\")")), -1);
+    EXPECT_NE(
+        withLegacy.indexOf(QStringLiteral(".Index(\"idx_Beam_Id_Legacy\")")),
+        -1);
+}
+
 TEST(DatabaseEditorSchemaTable, ParsesRelationReferenceStorageAndDisplayColumns)
 {
     const QString schemaText = QStringLiteral(R"(SC_SCHEMA_TABLE(Beam)

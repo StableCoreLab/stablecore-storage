@@ -28,16 +28,16 @@ namespace StableCore::Storage::Editor
                                              QWidget* parent)
         : QDialog(parent), session_(session)
     {
-        setWindowTitle(QStringLiteral("表结构"));
+        setWindowTitle(QStringLiteral("Table Design"));
         resize(1080, 720);
 
         auto* layout = new QVBoxLayout(this);
         auto* introLabel = new QLabel(
             QStringLiteral(
-                "从当前表生成 SC_SCHEMA_TABLE 代码。"
-                "默认值会被导出（如果存在）。"
-                "主键和索引会被显式导出；"
-                "旧式索引提示除非确认，否则不会被导出。"),
+                "Generate SC_SCHEMA_TABLE code from the current table."
+                " Defaults are exported when present."
+                " Primary keys and indexes are exported explicitly;"
+                " legacy index hints are excluded unless requested."),
             this);
         introLabel->setWordWrap(true);
         layout->addWidget(introLabel);
@@ -46,30 +46,30 @@ namespace StableCore::Storage::Editor
         tableNameLabel_ = new QLabel(this);
         tableNameLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
         tableNameLabel_->setText(QStringLiteral("-"));
-        form->addRow(QStringLiteral("当前表"), tableNameLabel_);
+        form->addRow(QStringLiteral("Current Table"), tableNameLabel_);
 
         tableDescriptionEdit_ = new QLineEdit(this);
         tableDescriptionEdit_->setPlaceholderText(
-            QStringLiteral("可选的表描述"));
-        form->addRow(QStringLiteral("表描述"),
+            QStringLiteral("Optional table description"));
+        form->addRow(QStringLiteral("Description"),
                      tableDescriptionEdit_);
 
         primaryKeyEdit_ = new QLineEdit(this);
         primaryKeyEdit_->setPlaceholderText(
-            QStringLiteral("显式主键列名"));
-        form->addRow(QStringLiteral("主键"), primaryKeyEdit_);
+            QStringLiteral("Explicit primary key column names"));
+        form->addRow(QStringLiteral("Primary Key"), primaryKeyEdit_);
 
         includeLegacyIndexesCheck_ = new QCheckBox(
-            QStringLiteral("包含旧式索引列"), this);
+            QStringLiteral("Include legacy index hints"), this);
         includeLegacyIndexesCheck_->setChecked(false);
-        form->addRow(QStringLiteral("旧式索引"),
+        form->addRow(QStringLiteral("Legacy Indexes"),
                      includeLegacyIndexesCheck_);
 
         legacyHintLabel_ = new QLabel(this);
         legacyHintLabel_->setWordWrap(true);
         legacyHintLabel_->setText(
-            QStringLiteral("旧式索引提示将显示在这里。"));
-        form->addRow(QStringLiteral("旧式提示"), legacyHintLabel_);
+            QStringLiteral("Legacy index hints will appear here."));
+        form->addRow(QStringLiteral("Legacy Status"), legacyHintLabel_);
         layout->addLayout(form);
 
         auto* constraintGroup = new QHBoxLayout();
@@ -77,10 +77,10 @@ namespace StableCore::Storage::Editor
         constraintGroup->addWidget(constraintList_, 1);
 
         auto* constraintButtons = new QVBoxLayout();
-        addConstraintButton_ = new QPushButton(QStringLiteral("+ New"), this);
+        addConstraintButton_ = new QPushButton(QStringLiteral("Add"), this);
         editConstraintButton_ = new QPushButton(QStringLiteral("Edit"), this);
         removeConstraintButton_ =
-            new QPushButton(QStringLiteral("- Delete"), this);
+            new QPushButton(QStringLiteral("Remove"), this);
         constraintButtons->addWidget(addConstraintButton_);
         constraintButtons->addWidget(editConstraintButton_);
         constraintButtons->addWidget(removeConstraintButton_);
@@ -90,7 +90,7 @@ namespace StableCore::Storage::Editor
 
         auto* constraintHintLabel = new QLabel(
             QStringLiteral(
-                "Primary key is edited above. Non-PK constraints are exported as comment metadata and can be imported back."),
+                "Primary keys are edited above. Non-PK constraints are exported as comment metadata and can be imported back."),
             this);
         constraintHintLabel->setWordWrap(true);
         constraintHintLabel->setStyleSheet(QStringLiteral("color: #6a6a6a;"));
@@ -101,9 +101,9 @@ namespace StableCore::Storage::Editor
         indexGroup->addWidget(indexList_, 1);
 
         auto* indexButtons = new QVBoxLayout();
-        addIndexButton_ = new QPushButton(QStringLiteral("+ 新建"), this);
-        editIndexButton_ = new QPushButton(QStringLiteral("编辑"), this);
-        removeIndexButton_ = new QPushButton(QStringLiteral("- 删除"), this);
+        addIndexButton_ = new QPushButton(QStringLiteral("Add"), this);
+        editIndexButton_ = new QPushButton(QStringLiteral("Edit"), this);
+        removeIndexButton_ = new QPushButton(QStringLiteral("Remove"), this);
         indexButtons->addWidget(addIndexButton_);
         indexButtons->addWidget(editIndexButton_);
         indexButtons->addWidget(removeIndexButton_);
@@ -115,16 +115,16 @@ namespace StableCore::Storage::Editor
         outputEdit_->setReadOnly(true);
         outputEdit_->setLineWrapMode(QPlainTextEdit::NoWrap);
         outputEdit_->setPlaceholderText(
-            QStringLiteral("生成的代码将显示在这里。"));
+            QStringLiteral("Generated code will appear here."));
         layout->addWidget(outputEdit_, 1);
 
-        statusLabel_ = new QLabel(QStringLiteral("就绪。"), this);
+        statusLabel_ = new QLabel(QStringLiteral("Ready."), this);
         layout->addWidget(statusLabel_);
 
         auto* buttonRow = new QHBoxLayout();
-        auto* refreshButton = new QPushButton(QStringLiteral("刷新"), this);
-        auto* copyButton = new QPushButton(QStringLiteral("复制代码"), this);
-        auto* closeButton = new QPushButton(QStringLiteral("关闭"), this);
+        auto* refreshButton = new QPushButton(QStringLiteral("Refresh"), this);
+        auto* copyButton = new QPushButton(QStringLiteral("Copy Code"), this);
+        auto* closeButton = new QPushButton(QStringLiteral("Close"), this);
         buttonRow->addWidget(refreshButton);
         buttonRow->addWidget(copyButton);
         buttonRow->addStretch(1);
@@ -174,7 +174,7 @@ namespace StableCore::Storage::Editor
             tableNameLabel_->setText(QStringLiteral("-"));
             outputEdit_->setPlainText(QStringLiteral("// ") + error);
             statusLabel_->setText(
-                QStringLiteral("加载当前表失败: ") + error);
+                QStringLiteral("Failed to load current table: ") + error);
             copyButton->setEnabled(false);
             refreshButton->setEnabled(false);
             constraintList_->setEnabled(false);
@@ -197,7 +197,7 @@ namespace StableCore::Storage::Editor
         {
             if (outError != nullptr)
             {
-                *outError = QStringLiteral("没有打开的数据库。");
+                *outError = QStringLiteral("No database open.");
             }
             return false;
         }
@@ -207,7 +207,7 @@ namespace StableCore::Storage::Editor
         {
             if (outError != nullptr)
             {
-                *outError = QStringLiteral("请先选择一个表。");
+                *outError = QStringLiteral("Please select a table first.");
             }
             return false;
         }
@@ -220,7 +220,7 @@ namespace StableCore::Storage::Editor
         {
             if (outError != nullptr)
             {
-                *outError = QStringLiteral("没有可用的模式快照。");
+                *outError = QStringLiteral("No schema snapshot available.");
             }
             return false;
         }
@@ -235,9 +235,9 @@ namespace StableCore::Storage::Editor
             }));
         legacyHintLabel_->setText(
             legacyHintCount > 0
-                ? QStringLiteral("检测到 %1 个旧式索引列。")
+                ? QStringLiteral("%1 legacy index hint(s) detected.")
                       .arg(legacyHintCount)
-                : QStringLiteral("未检测到旧式索引列。"));
+                : QStringLiteral("No legacy index hints detected."));
 
         UpdateConstraintList();
         UpdateIndexList();
@@ -248,9 +248,9 @@ namespace StableCore::Storage::Editor
     {
         if (tableName_.isEmpty() || schemaSnapshot_.tables.empty())
         {
-            outputEdit_->setPlainText(QStringLiteral("// 未选择表。"));
+            outputEdit_->setPlainText(QStringLiteral("// No table selected."));
             statusLabel_->setText(
-                QStringLiteral("没有当前可用的表。"));
+                QStringLiteral("No current table available."));
             return;
         }
 
@@ -276,12 +276,12 @@ namespace StableCore::Storage::Editor
             ++exportedIndexes;
         }
 
-        QString status = QStringLiteral("已生成 %1 列和 %2 个索引。")
+        QString status = QStringLiteral("Generated %1 column(s) and %2 index(es).")
                              .arg(tableSnapshot.columns.size())
                              .arg(exportedIndexes);
         if (options.primaryKeyColumnName.trimmed().isEmpty())
         {
-            status += QStringLiteral(" 未选择显式主键。");
+            status += QStringLiteral(" No explicit primary key selected.");
         }
         if (!options.includeLegacyIndexes &&
             std::any_of(tableSnapshot.indexes.begin(),
@@ -291,7 +291,7 @@ namespace StableCore::Storage::Editor
                                    sc::SCSchemaSourceKind::LegacyHint;
                         }))
         {
-            status += QStringLiteral(" 旧式提示未被导出。");
+            status += QStringLiteral(" Legacy hints were excluded.");
         }
         if (!tableSnapshot.constraints.empty())
         {
@@ -309,7 +309,7 @@ namespace StableCore::Storage::Editor
         {
             outputEdit_->setPlainText(QStringLiteral("// ") + error);
             statusLabel_->setText(
-                QStringLiteral("加载当前表失败: ") + error);
+                QStringLiteral("Failed to load current table: ") + error);
             return;
         }
 
@@ -322,7 +322,7 @@ namespace StableCore::Storage::Editor
         {
             QApplication::clipboard()->setText(outputEdit_->toPlainText());
             statusLabel_->setText(
-                QStringLiteral("代码已复制到剪贴板。"));
+                QStringLiteral("Code copied to clipboard."));
         }
     }
 
@@ -347,13 +347,13 @@ namespace StableCore::Storage::Editor
             if (!session_->AddConstraint(constraint, &error))
             {
                 statusLabel_->setText(
-                    QStringLiteral("Add constraint failed: ") + error);
+                    QStringLiteral("Failed to add constraint: ") + error);
                 return;
             }
 
             RefreshPreview();
             statusLabel_->setText(
-                QStringLiteral("Constraint added successfully."));
+                QStringLiteral("Constraint added."));
         }
     }
 
@@ -393,7 +393,7 @@ namespace StableCore::Storage::Editor
         if (it->kind == sc::SCConstraintKind::PrimaryKey)
         {
             statusLabel_->setText(
-                QStringLiteral("Primary key is edited in the field above."));
+                QStringLiteral("Primary keys are edited in the field above."));
             return;
         }
 
@@ -407,13 +407,13 @@ namespace StableCore::Storage::Editor
                                             &error))
             {
                 statusLabel_->setText(
-                    QStringLiteral("Update constraint failed: ") + error);
+                    QStringLiteral("Failed to update constraint: ") + error);
                 return;
             }
 
             RefreshPreview();
             statusLabel_->setText(
-                QStringLiteral("Constraint updated successfully."));
+                QStringLiteral("Constraint updated."));
         }
     }
 
@@ -435,13 +435,13 @@ namespace StableCore::Storage::Editor
         if (!session_->RemoveConstraint(constraintName, &error))
         {
             statusLabel_->setText(
-                QStringLiteral("Remove constraint failed: ") + error);
+                QStringLiteral("Failed to remove constraint: ") + error);
             return;
         }
 
         RefreshPreview();
         statusLabel_->setText(
-            QStringLiteral("Constraint removed successfully."));
+            QStringLiteral("Constraint removed."));
     }
 
     void SCSchemaTableDialog::UpdateConstraintList()
@@ -469,7 +469,7 @@ namespace StableCore::Storage::Editor
                     itemText = QStringLiteral("Unique %1").arg(displayName);
                     break;
                 case sc::SCConstraintKind::ForeignKey: {
-                    itemText = QStringLiteral("ForeignKey %1").arg(displayName);
+                    itemText = QStringLiteral("Foreign Key %1").arg(displayName);
                     if (!constraint.referencedTable.empty())
                     {
                         itemText += QStringLiteral(" -> ") +
@@ -480,13 +480,13 @@ namespace StableCore::Storage::Editor
                         switch (action)
                         {
                             case sc::SCForeignKeyAction::NoAction:
-                                return QStringLiteral("NoAction");
+                                return QStringLiteral("No Action");
                             case sc::SCForeignKeyAction::Cascade:
                                 return QStringLiteral("Cascade");
                             case sc::SCForeignKeyAction::SetNull:
-                                return QStringLiteral("SetNull");
+                                return QStringLiteral("Set Null");
                             case sc::SCForeignKeyAction::SetDefault:
-                                return QStringLiteral("SetDefault");
+                                return QStringLiteral("Set Default");
                             case sc::SCForeignKeyAction::Restrict:
                             default:
                                 return QStringLiteral("Restrict");
@@ -560,13 +560,13 @@ namespace StableCore::Storage::Editor
             if (!session_->AddIndex(index, &error))
             {
                 statusLabel_->setText(
-                    QStringLiteral("添加索引失败: ") + error);
+                QStringLiteral("Failed to add index: ") + error);
                 return;
             }
 
             RefreshPreview();
             statusLabel_->setText(
-                QStringLiteral("索引添加成功。"));
+                QStringLiteral("Index added."));
         }
     }
 
@@ -596,7 +596,7 @@ namespace StableCore::Storage::Editor
         if (it == tableSnapshot.indexes.end())
         {
             statusLabel_->setText(
-                QStringLiteral("未找到索引: ") + indexName);
+                QStringLiteral("Index not found: ") + indexName);
             return;
         }
 
@@ -611,13 +611,13 @@ namespace StableCore::Storage::Editor
             if (!session_->UpdateIndex(indexName, updatedIndex, &error))
             {
                 statusLabel_->setText(
-                    QStringLiteral("更新索引失败: ") + error);
+                    QStringLiteral("Failed to update index: ") + error);
                 return;
             }
 
             RefreshPreview();
             statusLabel_->setText(
-                QStringLiteral("索引更新成功。"));
+                QStringLiteral("Index updated."));
         }
     }
 
@@ -639,13 +639,13 @@ namespace StableCore::Storage::Editor
         if (!session_->RemoveIndex(indexName, &error))
         {
             statusLabel_->setText(
-                QStringLiteral("删除索引失败: ") + error);
+                QStringLiteral("Failed to remove index: ") + error);
             return;
         }
 
         RefreshPreview();
         statusLabel_->setText(
-            QStringLiteral("索引删除成功。"));
+            QStringLiteral("Index removed."));
     }
 
     void SCSchemaTableDialog::UpdateIndexList()
@@ -671,7 +671,7 @@ namespace StableCore::Storage::Editor
                 columns += QString::fromStdWString(index.columns[i].columnName);
                 if (index.columns[i].descending)
                 {
-                    columns += QStringLiteral(" (降序)");
+                    columns += QStringLiteral(" (descending)");
                 }
             }
 

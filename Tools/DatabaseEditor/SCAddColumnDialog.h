@@ -43,6 +43,7 @@ namespace StableCore::Storage::Editor
         QLineEdit* displayNameEdit_{nullptr};
         QComboBox* valueKindCombo_{nullptr};
         QCheckBox* relationCheck_{nullptr};
+        QComboBox* relationBindingCombo_{nullptr};
         QCheckBox* nullableCheck_{nullptr};
         QCheckBox* editableCheck_{nullptr};
         QCheckBox* userDefinedCheck_{nullptr};

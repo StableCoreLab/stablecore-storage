@@ -103,6 +103,19 @@ namespace
         return column;
     }
 
+    sc::SCColumnDef MakeRecordIdRelationColumn(const wchar_t* name,
+                                               const wchar_t* referenceTable)
+    {
+        sc::SCColumnDef column;
+        column.name = name;
+        column.displayName = name;
+        column.valueKind = sc::ValueKind::RecordId;
+        column.columnKind = sc::ColumnKind::Relation;
+        column.referenceTable = referenceTable;
+        column.defaultValue = sc::SCValue::FromRecordId(0);
+        return column;
+    }
+
     void AddUniqueConstraint(sc::SCSchemaPtr schema, const wchar_t* name,
                              const wchar_t* columnName)
     {
@@ -618,6 +631,74 @@ TEST(DatabaseEditorSession, RelationFieldUsesConfiguredStorageAndDisplayColumns)
                                                &error))
         << error.toStdString();
     EXPECT_EQ(storedValue.toString(), QStringLiteral("F-001"));
+}
+
+TEST(DatabaseEditorSession, RelationCandidatesSupportRecordIdBinding)
+{
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_DbEditor_RecordIdRelationCandidates.sqlite");
+
+    editor::SCDatabaseSession session;
+    QString error;
+
+    ASSERT_TRUE(session.CreateDatabase(QString::fromStdWString(dbPath.wstring()), &error)) << error.toStdString();
+    ASSERT_TRUE(session.CreateTable(QStringLiteral("Floor"), &error)) << error.toStdString();
+    ASSERT_TRUE(session.AddColumn(MakeStringColumn(L"Name"), &error)) << error.toStdString();
+    ASSERT_TRUE(session.AddRecord(&error)) << error.toStdString();
+
+    sc::SCRecordCursorPtr cursor;
+    ASSERT_EQ(session.CurrentTable()->EnumerateRecords(cursor), sc::SC_OK);
+    sc::SCRecordPtr floorRecord;
+    ASSERT_EQ(cursor->Next(floorRecord), sc::SC_OK);
+    ASSERT_TRUE(static_cast<bool>(floorRecord));
+    ASSERT_TRUE(session.SetCellValue(floorRecord->GetId(), QStringLiteral("Name"),
+                                     QStringLiteral("1F"), &error))
+        << error.toStdString();
+    ASSERT_TRUE(session.SavePendingChanges(&error)) << error.toStdString();
+
+    ASSERT_TRUE(session.CreateTable(QStringLiteral("Beam"), &error)) << error.toStdString();
+    ASSERT_TRUE(session.AddColumn(MakeRecordIdRelationColumn(L"FloorRef", L"Floor"), &error)) << error.toStdString();
+
+    sc::SCColumnDef relationColumn = MakeRecordIdRelationColumn(L"FloorRef", L"Floor");
+    QVector<editor::SCDatabaseSession::RelationCandidate> candidates;
+    ASSERT_TRUE(session.BuildRelationCandidates(QStringLiteral("Floor"), relationColumn,
+                                                &candidates, &error))
+        << error.toStdString();
+    ASSERT_FALSE(candidates.isEmpty());
+
+    const auto& candidate = candidates[0];
+    ASSERT_GE(candidate.previewFields.size(), 2);
+    EXPECT_EQ(candidate.previewFields[0].first, QStringLiteral("RecordId"));
+    EXPECT_EQ(candidate.previewFields[0].second,
+              QString::number(static_cast<qlonglong>(candidate.recordId)));
+    EXPECT_EQ(candidate.previewFields[1].first, QStringLiteral("StoredValue"));
+    EXPECT_EQ(candidate.previewFields[1].second,
+              QString::number(static_cast<qlonglong>(candidate.recordId)));
+}
+
+TEST(DatabaseEditorSession, RecordSnapshotStartsWithRecordId)
+{
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_DbEditor_RecordSnapshotRecordId.sqlite");
+
+    editor::SCDatabaseSession session;
+    QString error;
+
+    ASSERT_TRUE(session.CreateDatabase(QString::fromStdWString(dbPath.wstring()), &error)) << error.toStdString();
+    ASSERT_TRUE(session.CreateTable(QStringLiteral("Beam"), &error)) << error.toStdString();
+    ASSERT_TRUE(session.AddColumn(MakeStringColumn(L"Name"), &error)) << error.toStdString();
+    ASSERT_TRUE(session.AddRecord(&error)) << error.toStdString();
+
+    sc::SCRecordCursorPtr cursor;
+    ASSERT_EQ(session.CurrentTable()->EnumerateRecords(cursor), sc::SC_OK);
+    sc::SCRecordPtr record;
+    ASSERT_EQ(cursor->Next(record), sc::SC_OK);
+    ASSERT_TRUE(static_cast<bool>(record));
+
+    QVector<QPair<QString, QString>> fields;
+    ASSERT_TRUE(session.BuildRecordSnapshot(record->GetId(), &fields, &error)) << error.toStdString();
+    ASSERT_FALSE(fields.isEmpty());
+    EXPECT_EQ(fields[0].first, QStringLiteral("RecordId"));
+    EXPECT_EQ(fields[0].second,
+              QString::number(static_cast<qlonglong>(record->GetId())));
 }
 
 TEST(DatabaseEditorSession, PendingRequiredEditBlocksTableSwitchUntilSaved)
