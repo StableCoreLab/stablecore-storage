@@ -1,9 +1,13 @@
 #include "SCSchemaTableImport.h"
 
+#include <cstdint>
 #include <algorithm>
 #include <utility>
+#include <vector>
 
 #include <QRegularExpression>
+
+#include "SCBinaryUtils.h"
 
 namespace sc = StableCore::Storage;
 
@@ -146,6 +150,11 @@ namespace StableCore::Storage::Editor
                 *outKind = sc::ValueKind::Enum;
                 return true;
             }
+            if (token == QStringLiteral("Binary"))
+            {
+                *outKind = sc::ValueKind::Binary;
+                return true;
+            }
             if (token == QStringLiteral("Int32"))
             {
                 *outKind = sc::ValueKind::Int64;
@@ -181,6 +190,8 @@ namespace StableCore::Storage::Editor
                     return sc::SCValue::FromRecordId(0);
                 case sc::ValueKind::Enum:
                     return sc::SCValue::FromEnum(L"");
+                case sc::ValueKind::Binary:
+                    return sc::SCValue::FromBinary(std::vector<std::uint8_t>{});
                 case sc::ValueKind::Null:
                 default:
                     return sc::SCValue::Null();
@@ -289,6 +300,15 @@ namespace StableCore::Storage::Editor
                     }
                     return true;
                 }
+                case sc::ValueKind::Binary: {
+                    std::vector<std::uint8_t> bytes;
+                    if (!ParseBinaryHex(trimmed, &bytes, outError))
+                    {
+                        return false;
+                    }
+                    *outValue = sc::SCValue::FromBinary(std::move(bytes));
+                    return true;
+                }
                 case sc::ValueKind::RecordId: {
                     bool ok = false;
                     const qlonglong value = trimmed.toLongLong(&ok);
@@ -308,7 +328,6 @@ namespace StableCore::Storage::Editor
                     return true;
                 }
                 case sc::ValueKind::Null:
-                case sc::ValueKind::Binary:
                 default:
                     if (outError != nullptr)
                     {

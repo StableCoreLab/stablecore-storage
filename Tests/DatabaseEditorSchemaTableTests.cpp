@@ -1,5 +1,8 @@
 #include <gtest/gtest.h>
 
+#include <cstdint>
+#include <vector>
+
 #include "SCSchemaTableImport.h"
 #include "SCSchemaTableGenerator.h"
 
@@ -32,6 +35,15 @@ namespace
         ASSERT_EQ(value.GetKind(), sc::ValueKind::Enum);
         std::wstring actual;
         EXPECT_EQ(value.AsEnumCopy(&actual), sc::SC_OK);
+        EXPECT_EQ(actual, expected);
+    }
+
+    void ExpectBinaryValue(const sc::SCValue& value,
+                           const std::vector<std::uint8_t>& expected)
+    {
+        ASSERT_EQ(value.GetKind(), sc::ValueKind::Binary);
+        std::vector<std::uint8_t> actual;
+        EXPECT_EQ(value.AsBinaryCopy(&actual), sc::SC_OK);
         EXPECT_EQ(actual, expected);
     }
 
@@ -112,6 +124,8 @@ TEST(DatabaseEditorSchemaTable, ParsesDefaultValues)
             .Default("Beam \"A\"")
         .Column("Category", SCType::Enum)
             .Default("Primary")
+        .Column("Payload", SCType::Binary)
+            .Default(0xAABBCC)
         .Column("FloorRef", SCType::RecordId)
             .Default(42);
 })");
@@ -120,7 +134,7 @@ TEST(DatabaseEditorSchemaTable, ParsesDefaultValues)
     QString error;
     EXPECT_TRUE(editor::ParseSchemaTableDescription(schemaText, &result, &error)) << error.toStdString();
 
-    ASSERT_EQ(result.columns.size(), 7);
+    ASSERT_EQ(result.columns.size(), 8);
 
     EXPECT_EQ(result.columns[0].defaultValue.GetKind(), sc::ValueKind::Int64);
     std::int64_t widthDefault = 0;
@@ -140,10 +154,12 @@ TEST(DatabaseEditorSchemaTable, ParsesDefaultValues)
     ExpectStringValue(result.columns[3].defaultValue, L"");
     ExpectStringValue(result.columns[4].defaultValue, L"Beam \"A\"");
     ExpectEnumValue(result.columns[5].defaultValue, L"Primary");
+    ExpectBinaryValue(result.columns[6].defaultValue,
+                      {0xAA, 0xBB, 0xCC});
 
-    EXPECT_EQ(result.columns[6].defaultValue.GetKind(), sc::ValueKind::RecordId);
+    EXPECT_EQ(result.columns[7].defaultValue.GetKind(), sc::ValueKind::RecordId);
     sc::RecordId floorRefDefault = 0;
-    EXPECT_EQ(result.columns[6].defaultValue.AsRecordId(&floorRefDefault), sc::SC_OK);
+    EXPECT_EQ(result.columns[7].defaultValue.AsRecordId(&floorRefDefault), sc::SC_OK);
     EXPECT_EQ(floorRefDefault, 42);
 }
 
@@ -209,6 +225,13 @@ TEST(DatabaseEditorSchemaTable, BuildsCurrentTableSchemaCode)
     category.defaultValue = sc::SCValue::FromEnum(L"Primary");
     snapshot.columns.push_back(category);
 
+    sc::SCColumnDef payload = MakeColumn(L"Payload", sc::ValueKind::Binary);
+    payload.displayName = L"Payload bytes";
+    payload.nullable = false;
+    payload.defaultValue =
+        sc::SCValue::FromBinary(std::vector<std::uint8_t>{0xAA, 0xBB, 0xCC});
+    snapshot.columns.push_back(payload);
+
     sc::SCColumnDef floorCode = MakeColumn(L"FloorCode", sc::ValueKind::String);
     floorCode.displayName = L"Belongs to floor";
     floorCode.nullable = false;
@@ -259,6 +282,10 @@ TEST(DatabaseEditorSchemaTable, BuildsCurrentTableSchemaCode)
         "        .Column(\"Category\", SCType::Enum)\n"
         "            .NotNull()\n"
         "            .Default(\"Primary\")\n"
+        "        .Column(\"Payload\", SCType::Binary)\n"
+        "            .NotNull()\n"
+        "            .Default(0xAABBCC)\n"
+        "            .Description(\"Payload bytes\")\n"
         "        .Column(\"FloorCode\", SCType::String)\n"
         "            .NotNull()\n"
         "            .Default(\"F-001\")\n"

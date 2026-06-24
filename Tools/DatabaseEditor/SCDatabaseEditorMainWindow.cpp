@@ -1,5 +1,6 @@
 #include "SCDatabaseEditorMainWindow.h"
 
+#include <cstdint>
 #include <QAction>
 #include <QByteArray>
 #include <QDateTime>
@@ -29,6 +30,7 @@
 #include <vector>
 
 #include "SCBatch.h"
+#include "SCBinaryUtils.h"
 #include "SCSchemaTableImportDialog.h"
 #include "SCSchemaTableDialog.h"
 
@@ -87,6 +89,8 @@ namespace StableCore::Storage::Editor
                     return QStringLiteral("RecordId");
                 case sc::ValueKind::Enum:
                     return QStringLiteral("Enum");
+                case sc::ValueKind::Binary:
+                    return QStringLiteral("Binary");
                 case sc::ValueKind::Null:
                 default:
                     return QStringLiteral("Null");
@@ -147,6 +151,14 @@ namespace StableCore::Storage::Editor
                     if (value.AsEnumCopy(&v) == sc::SC_OK)
                     {
                         return ToQString(v);
+                    }
+                    break;
+                }
+                case sc::ValueKind::Binary: {
+                    std::vector<std::uint8_t> v;
+                    if (value.AsBinaryCopy(&v) == sc::SC_OK)
+                    {
+                        return BinaryToHex(v);
                     }
                     break;
                 }
@@ -624,6 +636,15 @@ namespace StableCore::Storage::Editor
                 case sc::ValueKind::Enum:
                     *outValue = sc::SCValue::FromEnum(text.toStdWString());
                     return true;
+                case sc::ValueKind::Binary: {
+                    std::vector<std::uint8_t> bytes;
+                    if (!ParseBinaryHex(text, &bytes, outError))
+                    {
+                        return false;
+                    }
+                    *outValue = sc::SCValue::FromBinary(std::move(bytes));
+                    return true;
+                }
                 case sc::ValueKind::Null:
                 default:
                     if (outError != nullptr)
@@ -3663,4 +3684,3 @@ namespace StableCore::Storage::Editor
     }
 
 }  // namespace StableCore::Storage::Editor
-

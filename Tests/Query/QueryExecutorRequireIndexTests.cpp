@@ -1,4 +1,5 @@
 #include <filesystem>
+#include <vector>
 
 #include <gtest/gtest.h>
 
@@ -106,6 +107,126 @@ TEST(QueryExecutorRequireIndexTests, SqliteExecutorReportsDirectAndPartialModes)
     EXPECT_EQ(partialResult.matchedRows, 2u);
     EXPECT_EQ(partialResult.returnedRows, 2u);
     EXPECT_FALSE(partialResult.usedIndexIds.empty());
+}
+
+TEST(QueryExecutorRequireIndexTests, PlannerRejectsBinaryRangeAndPrefixConditions)
+{
+    auto planner = sc::CreateDefaultQueryPlanner();
+    ASSERT_NE(planner, nullptr);
+
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_QuerySqlite_BinaryRejected.sqlite");
+    sc::SCDbPtr db;
+    EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
+    sc::SCTablePtr table = CreateQueryableBeamTable(db);
+    SeedQueryableBeamRows(table, db);
+
+    sc::QueryPlan rangePlan;
+    EXPECT_EQ(
+        planner->BuildPlan(sc::QueryTarget{L"Beam", sc::QueryTargetType::Table},
+                           {sc::QueryConditionGroup{sc::QueryLogicOperator::And,
+                                                    {sc::QueryCondition{L"Attachment",
+                                                                        sc::QueryConditionOperator::GreaterThan,
+                                                                        {sc::SCValue::FromBinary(std::vector<std::uint8_t>{0x01, 0x02})}}}}},
+                           sc::QueryLogicOperator::And,
+                           {},
+                           {},
+                           {},
+                           {},
+                           &rangePlan),
+        sc::SC_OK);
+    EXPECT_EQ(rangePlan.state, sc::QueryPlanState::Unsupported);
+    EXPECT_EQ(rangePlan.fallbackReason, L"binary-condition-unsupported");
+
+    sc::SCRecordCursorPtr cursor;
+    sc::QueryExecutionContext context;
+    context.backendKind = sc::QueryBackendKind::SQLite;
+    context.database = db.Get();
+    context.backendHandle = db.Get();
+    context.resultCursor = &cursor;
+    sc::QueryExecutionResult result;
+    EXPECT_EQ(sc::ExecuteQueryPlan(rangePlan, context, &result), sc::SC_E_INVALIDARG);
+    EXPECT_EQ(result.mode, sc::QueryExecutionMode::Unsupported);
+
+    sc::QueryPlan prefixPlan;
+    EXPECT_EQ(
+        planner->BuildPlan(sc::QueryTarget{L"Beam", sc::QueryTargetType::Table},
+                           {sc::QueryConditionGroup{sc::QueryLogicOperator::And,
+                                                    {sc::QueryCondition{L"Attachment",
+                                                                        sc::QueryConditionOperator::StartsWith,
+                                                                        {sc::SCValue::FromBinary(std::vector<std::uint8_t>{0x01})}}}}},
+                           sc::QueryLogicOperator::And,
+                           {},
+                           {},
+                           {},
+                           {},
+                           &prefixPlan),
+        sc::SC_OK);
+    EXPECT_EQ(prefixPlan.state, sc::QueryPlanState::Unsupported);
+    EXPECT_EQ(prefixPlan.fallbackReason, L"binary-condition-unsupported");
+}
+
+TEST(QueryExecutorRequireIndexTests, BinaryEqualityFallsBackToScanSafely)
+{
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_QuerySqlite_BinaryEqualityScan.sqlite");
+
+    sc::SCDbPtr db;
+    EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
+
+    sc::SCTablePtr table;
+    EXPECT_EQ(db->CreateTable(L"Beam", table), sc::SC_OK);
+
+    sc::SCSchemaPtr schema;
+    EXPECT_EQ(table->GetSchema(schema), sc::SC_OK);
+
+    sc::SCColumnDef attachment;
+    attachment.name = L"Attachment";
+    attachment.displayName = L"Attachment";
+    attachment.valueKind = sc::ValueKind::Binary;
+    attachment.defaultValue = sc::SCValue::FromBinary(std::vector<std::uint8_t>{});
+    EXPECT_EQ(schema->AddColumn(attachment), sc::SC_OK);
+
+    sc::SCEditPtr edit;
+    EXPECT_EQ(db->BeginEdit(L"seed binary", edit), sc::SC_OK);
+
+    sc::SCRecordPtr record;
+    EXPECT_EQ(table->CreateRecord(record), sc::SC_OK);
+    const std::vector<std::uint8_t> payload{0x01, 0x03};
+    EXPECT_EQ(record->SetBinary(L"Attachment", payload.data(), payload.size()), sc::SC_OK);
+    EXPECT_EQ(db->Commit(edit.Get()), sc::SC_OK);
+
+    auto planner = sc::CreateDefaultQueryPlanner();
+    ASSERT_NE(planner, nullptr);
+
+    sc::QueryPlan plan;
+    EXPECT_EQ(
+        planner->BuildPlan(sc::QueryTarget{L"Beam", sc::QueryTargetType::Table},
+                           {sc::QueryConditionGroup{sc::QueryLogicOperator::And,
+                                                    {sc::QueryCondition{L"Attachment",
+                                                                        sc::QueryConditionOperator::Equal,
+                                                                        {sc::SCValue::FromBinary(payload)}}}}},
+                           sc::QueryLogicOperator::And,
+                           {},
+                           {},
+                           {},
+                           {},
+                           &plan),
+        sc::SC_OK);
+    EXPECT_EQ(plan.state, sc::QueryPlanState::ScanFallback);
+
+    sc::SCRecordCursorPtr cursor;
+    sc::QueryExecutionContext context;
+    context.backendKind = sc::QueryBackendKind::SQLite;
+    context.database = db.Get();
+    context.backendHandle = db.Get();
+    context.resultCursor = &cursor;
+
+    sc::QueryExecutionResult result;
+    EXPECT_EQ(sc::ExecuteQueryPlan(plan, context, &result), sc::SC_OK);
+    EXPECT_EQ(result.mode, sc::QueryExecutionMode::FallbackScan);
+    EXPECT_TRUE(result.fallbackTriggered);
+    EXPECT_EQ(result.matchedRows, 1u);
+    EXPECT_EQ(result.returnedRows, 1u);
+    EXPECT_TRUE(result.usedIndexIds.empty());
 }
 
 TEST(QueryExecutorRequireIndexTests, ExecutorRejectsRequireIndexOnPartialPlans)

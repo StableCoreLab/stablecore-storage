@@ -1,4 +1,6 @@
 #include <filesystem>
+#include <cstdint>
+#include <vector>
 
 #include <gtest/gtest.h>
 #include <QStringList>
@@ -6,6 +8,7 @@
 
 #include "SCBatch.h"
 #include "SCDatabaseSession.h"
+#include "SCSchemaTableImport.h"
 
 namespace sc = StableCore::Storage;
 namespace editor = StableCore::Storage::Editor;
@@ -56,6 +59,16 @@ namespace
         column.displayName = name;
         column.valueKind = sc::ValueKind::String;
         column.defaultValue = sc::SCValue::FromString(L"");
+        return column;
+    }
+
+    sc::SCColumnDef MakeBinaryColumn(const wchar_t* name)
+    {
+        sc::SCColumnDef column;
+        column.name = name;
+        column.displayName = name;
+        column.valueKind = sc::ValueKind::Binary;
+        column.nullable = false;
         return column;
     }
 
@@ -248,6 +261,91 @@ TEST(DatabaseEditorSession, AddRecordAllowsExplicitRequiredValuesBeforeSave)
     std::int64_t width = 0;
     ASSERT_EQ(record->GetInt64(L"Width", &width), sc::SC_OK);
     EXPECT_EQ(width, 42);
+}
+
+TEST(DatabaseEditorSession, BinaryCellValuesRoundTripThroughEditorSession)
+{
+    const fs::path dbPath =
+        MakeTempDbPath(L"StableCoreStorage_DbEditor_BinaryRoundTrip.sqlite");
+
+    editor::SCDatabaseSession session;
+    QString error;
+
+    ASSERT_TRUE(session.CreateDatabase(QString::fromStdWString(dbPath.wstring()), &error)) << error.toStdString();
+    ASSERT_TRUE(session.CreateTable(QStringLiteral("Beam"), &error)) << error.toStdString();
+    ASSERT_TRUE(session.AddColumn(MakeBinaryColumn(L"Attachment"), &error)) << error.toStdString();
+    ASSERT_TRUE(session.AddRecord(&error)) << error.toStdString();
+
+    ASSERT_TRUE(session.CurrentTable() != nullptr);
+    sc::SCRecordCursorPtr cursor;
+    ASSERT_EQ(session.CurrentTable()->EnumerateRecords(cursor), sc::SC_OK);
+    sc::SCRecordPtr record;
+    ASSERT_EQ(cursor->Next(record), sc::SC_OK);
+    ASSERT_TRUE(static_cast<bool>(record));
+
+    const sc::RecordId recordId = record->GetId();
+    ASSERT_TRUE(session.SetCellValue(recordId, QStringLiteral("Attachment"),
+                                     QStringLiteral("0xAABBCC"), &error))
+        << error.toStdString();
+
+    QVariant displayValue;
+    ASSERT_TRUE(session.GetCellDisplayValue(recordId, QStringLiteral("Attachment"),
+                                            &displayValue, &error))
+        << error.toStdString();
+    EXPECT_EQ(displayValue.toString(), QStringLiteral("0xAABBCC"));
+
+    QVariant storedValue;
+    ASSERT_TRUE(session.GetCellStoredValue(recordId, QStringLiteral("Attachment"),
+                                           &storedValue, &error))
+        << error.toStdString();
+    EXPECT_EQ(storedValue.toString(), QStringLiteral("0xAABBCC"));
+
+    ASSERT_TRUE(session.SavePendingChanges(&error)) << error.toStdString();
+
+    editor::SCDatabaseSession reopened;
+    ASSERT_TRUE(reopened.OpenDatabase(QString::fromStdWString(dbPath.wstring()), &error))
+        << error.toStdString();
+    ASSERT_TRUE(reopened.SelectTable(QStringLiteral("Beam"), &error)) << error.toStdString();
+    ASSERT_TRUE(reopened.CurrentTable() != nullptr);
+    ASSERT_EQ(reopened.CurrentTable()->EnumerateRecords(cursor), sc::SC_OK);
+    ASSERT_EQ(cursor->Next(record), sc::SC_OK);
+    ASSERT_TRUE(static_cast<bool>(record));
+
+    std::vector<std::uint8_t> bytes;
+    EXPECT_EQ(record->GetBinaryCopy(L"Attachment", &bytes), sc::SC_OK);
+    EXPECT_EQ(bytes, (std::vector<std::uint8_t>{0xAA, 0xBB, 0xCC}));
+}
+
+TEST(DatabaseEditorSession, CreateTableFromSchemaSupportsBinaryNotNullWithoutExplicitDefault)
+{
+    const fs::path dbPath =
+        MakeTempDbPath(L"StableCoreStorage_DbEditor_BinarySchemaImport.sqlite");
+
+    editor::SCDatabaseSession session;
+    QString error;
+
+    ASSERT_TRUE(session.CreateDatabase(QString::fromStdWString(dbPath.wstring()), &error))
+        << error.toStdString();
+
+    editor::SCSchemaTableImportResult schema;
+    schema.tableMacroName = QStringLiteral("Beam");
+    schema.tableName = QStringLiteral("Beam");
+
+    sc::SCColumnDef attachment;
+    attachment.name = L"Attachment";
+    attachment.displayName = L"Attachment";
+    attachment.valueKind = sc::ValueKind::Binary;
+    attachment.nullable = false;
+    schema.columns.push_back(attachment);
+
+    ASSERT_TRUE(session.CreateTableFromSchema(schema, &error)) << error.toStdString();
+
+    QVector<sc::SCColumnDef> columns;
+    ASSERT_TRUE(session.BuildSchemaSnapshot(&columns, &error)) << error.toStdString();
+    ASSERT_EQ(columns.size(), 1);
+    EXPECT_EQ(columns[0].name, L"Attachment");
+    EXPECT_EQ(columns[0].valueKind, sc::ValueKind::Binary);
+    EXPECT_FALSE(columns[0].nullable);
 }
 
 TEST(DatabaseEditorSession, RelationFieldUsesConfiguredStorageAndDisplayColumns)

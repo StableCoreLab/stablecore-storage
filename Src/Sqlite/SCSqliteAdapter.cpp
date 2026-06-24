@@ -8015,6 +8015,25 @@ namespace StableCore::Storage
                     continue;
                 }
 
+                bool hasBinaryColumn = false;
+                for (const SCIndexColumnDef& indexColumn : indexDef.columns)
+                {
+                    const SCColumnDef* columnDef = schema->FindColumnDef(indexColumn.columnName);
+                    if (columnDef == nullptr)
+                    {
+                        return SC_E_COLUMN_NOT_FOUND;
+                    }
+                    if (columnDef->valueKind == ValueKind::Binary)
+                    {
+                        hasBinaryColumn = true;
+                        break;
+                    }
+                }
+                if (hasBinaryColumn)
+                {
+                    continue;
+                }
+
                 QueryMatchedIndexSpec candidate;
                 candidate.indexName = indexDef.name;
                 for (const SCIndexColumnDef& column : indexDef.columns)

@@ -188,7 +188,8 @@ namespace StableCore::Storage::Editor
         StableCore::Storage::ErrorCode ConvertVariantToValue(
             const StableCore::Storage::SCColumnDef& column,
             const QVariant& input,
-            StableCore::Storage::SCValue* outValue) const;
+            StableCore::Storage::SCValue* outValue,
+            QString* outError = nullptr) const;
         QString ErrorToString(StableCore::Storage::ErrorCode error) const;
 
         StableCore::Storage::SCDbPtr db_;

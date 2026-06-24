@@ -1,12 +1,17 @@
-﻿#include "SCDatabaseSession.h"
+#include "SCDatabaseSession.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <utility>
+#include <vector>
 
+#include <QByteArray>
 #include <QIODevice>
+#include <QMetaType>
 #include <QSaveFile>
 #include <QStringList>
 
+#include "SCBinaryUtils.h"
 #include "SCSchemaTableImport.h"
 
 namespace sc = StableCore::Storage;
@@ -403,9 +408,19 @@ namespace StableCore::Storage::Editor
                     SCValue.AsEnumCopy(&v);
                     return ToQString(v);
                 }
+                case sc::ValueKind::Binary: {
+                    std::vector<std::uint8_t> v;
+                    if (SCValue.AsBinaryCopy(&v) == sc::SC_OK)
+                    {
+                        return BinaryToHex(v);
+                    }
+                    break;
+                }
                 default:
-                    return QStringLiteral("<unsupported>");
+                    break;
             }
+
+            return QStringLiteral("<unsupported>");
         }
 
         QVariant ValueToVariant(const sc::SCValue& SCValue)
@@ -459,6 +474,14 @@ namespace StableCore::Storage::Editor
                     if (SCValue.AsEnumCopy(&v) == sc::SC_OK)
                     {
                         return ToQString(v);
+                    }
+                    break;
+                }
+                case sc::ValueKind::Binary: {
+                    std::vector<std::uint8_t> v;
+                    if (SCValue.AsBinaryCopy(&v) == sc::SC_OK)
+                    {
+                        return BinaryToHex(v);
                     }
                     break;
                 }
@@ -2136,12 +2159,15 @@ namespace StableCore::Storage::Editor
         }
 
         sc::SCValue storageValue;
-        rc = ConvertVariantToValue(column, SCValue, &storageValue);
+        QString convertError;
+        rc = ConvertVariantToValue(column, SCValue, &storageValue,
+                                   &convertError);
         if (sc::Failed(rc))
         {
             if (outError != nullptr)
             {
-                *outError = ErrorToString(rc);
+                *outError = convertError.isEmpty() ? ErrorToString(rc)
+                                                   : convertError;
             }
             return false;
         }
@@ -4149,10 +4175,14 @@ namespace StableCore::Storage::Editor
 
     sc::ErrorCode SCDatabaseSession::ConvertVariantToValue(
         const sc::SCColumnDef& column, const QVariant& input,
-        sc::SCValue* outValue) const
+        sc::SCValue* outValue, QString* outError) const
     {
         if (outValue == nullptr)
         {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("Output value is null.");
+            }
             return sc::SC_E_POINTER;
         }
 
@@ -4186,6 +4216,30 @@ namespace StableCore::Storage::Editor
                 *outValue =
                     sc::SCValue::FromEnum(input.toString().toStdWString());
                 return sc::SC_OK;
+            case sc::ValueKind::Binary: {
+                std::vector<std::uint8_t> bytes;
+                if (input.metaType().id() == qMetaTypeId<QByteArray>())
+                {
+                    const QByteArray raw = input.toByteArray();
+                    if (!raw.isEmpty())
+                    {
+                        bytes.assign(
+                            reinterpret_cast<const std::uint8_t*>(
+                                raw.constData()),
+                            reinterpret_cast<const std::uint8_t*>(
+                                raw.constData()) + raw.size());
+                    }
+                    *outValue = sc::SCValue::FromBinary(std::move(bytes));
+                    return sc::SC_OK;
+                }
+
+                if (!ParseBinaryHex(input.toString(), &bytes, outError))
+                {
+                    return sc::SC_E_INVALIDARG;
+                }
+                *outValue = sc::SCValue::FromBinary(std::move(bytes));
+                return sc::SC_OK;
+            }
             case sc::ValueKind::Null:
             default:
                 return sc::SC_E_TYPE_MISMATCH;

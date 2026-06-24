@@ -1,8 +1,11 @@
 #include "SCAddColumnDialog.h"
 
+#include "SCBinaryUtils.h"
 #include "SCDatabaseSession.h"
 
+#include <cstdint>
 #include <algorithm>
+#include <vector>
 
 #include <QDialogButtonBox>
 #include <QVBoxLayout>
@@ -54,33 +57,60 @@ namespace StableCore::Storage::Editor
             return false;
         }
 
-        sc::SCValue ParseDefaultValue(sc::ValueKind kind, const QString& text)
+        bool ParseDefaultValue(sc::ValueKind kind, const QString& text,
+                               sc::SCValue* outValue, QString* outError)
         {
+            if (outValue == nullptr)
+            {
+                if (outError != nullptr)
+                {
+                    *outError = QStringLiteral("Output value is null.");
+                }
+                return false;
+            }
+
             if (text.trimmed().isEmpty())
             {
-                return sc::SCValue::Null();
+                *outValue = sc::SCValue::Null();
+                return true;
             }
 
             switch (kind)
             {
                 case sc::ValueKind::Int64:
-                    return sc::SCValue::FromInt64(text.toLongLong());
+                    *outValue = sc::SCValue::FromInt64(text.toLongLong());
+                    return true;
                 case sc::ValueKind::Double:
-                    return sc::SCValue::FromDouble(text.toDouble());
+                    *outValue = sc::SCValue::FromDouble(text.toDouble());
+                    return true;
                 case sc::ValueKind::Bool:
-                    return sc::SCValue::FromBool(
+                    *outValue = sc::SCValue::FromBool(
                         text.compare(QStringLiteral("true"),
                                      Qt::CaseInsensitive) == 0 ||
                         text == QStringLiteral("1"));
+                    return true;
                 case sc::ValueKind::String:
-                    return sc::SCValue::FromString(text.toStdWString());
+                    *outValue = sc::SCValue::FromString(text.toStdWString());
+                    return true;
                 case sc::ValueKind::RecordId:
-                    return sc::SCValue::FromRecordId(text.toLongLong());
+                    *outValue = sc::SCValue::FromRecordId(text.toLongLong());
+                    return true;
                 case sc::ValueKind::Enum:
-                    return sc::SCValue::FromEnum(text.toStdWString());
+                    *outValue = sc::SCValue::FromEnum(text.toStdWString());
+                    return true;
+                case sc::ValueKind::Binary: {
+                    std::vector<std::uint8_t> bytes;
+                    if (!ParseBinaryHex(text, &bytes, outError))
+                    {
+                        return false;
+                    }
+                    *outValue = sc::SCValue::FromBinary(std::move(bytes));
+                    return true;
+                }
                 case sc::ValueKind::Null:
                 default:
-                    return sc::SCValue::Null();
+                    *outValue = sc::SCValue::Null();
+                    return true;
             }
         }
     }  // namespace
@@ -144,6 +174,8 @@ namespace StableCore::Storage::Editor
                                  static_cast<int>(sc::ValueKind::RecordId));
         valueKindCombo_->addItem(QStringLiteral("Enum"),
                                  static_cast<int>(sc::ValueKind::Enum));
+        valueKindCombo_->addItem(QStringLiteral("Binary (Blob)"),
+                                 static_cast<int>(sc::ValueKind::Binary));
 
         nullableCheck_->setChecked(true);
         editableCheck_->setChecked(true);
@@ -276,6 +308,12 @@ namespace StableCore::Storage::Editor
                     defaultValueEdit_->setText(QString::fromStdWString(result));
                     break;
                 }
+                case sc::ValueKind::Binary: {
+                    std::vector<std::uint8_t> result;
+                    value.defaultValue.AsBinaryCopy(&result);
+                    defaultValueEdit_->setText(BinaryToHex(result));
+                    break;
+                }
                 case sc::ValueKind::Null:
                 default:
                     defaultValueEdit_->clear();
@@ -305,7 +343,12 @@ namespace StableCore::Storage::Editor
         column.indexed = indexedCheck_->isChecked();
         column.participatesInCalc = participatesInCalcCheck_->isChecked();
         column.unit = unitEdit_->text().toStdWString();
-        column.defaultValue = ParseDefaultValue(column.valueKind, defaultValueEdit_->text());
+        sc::SCValue defaultValue;
+        if (ParseDefaultValue(column.valueKind, defaultValueEdit_->text(),
+                              &defaultValue, nullptr))
+        {
+            column.defaultValue = std::move(defaultValue);
+        }
         if (column.columnKind == sc::ColumnKind::Relation)
         {
             column.referenceTable = referenceTableEdit_->text().toStdWString();
@@ -465,6 +508,17 @@ namespace StableCore::Storage::Editor
     {
         const bool hasDefaultValue =
             !defaultValueEdit_->text().trimmed().isEmpty();
+        const sc::ValueKind selectedKind = static_cast<sc::ValueKind>(
+            valueKindCombo_->currentData().toInt());
+        bool defaultValid = true;
+        QString defaultError;
+        if (hasDefaultValue)
+        {
+            sc::SCValue parsedDefault;
+            defaultValid = ParseDefaultValue(selectedKind,
+                                             defaultValueEdit_->text(),
+                                             &parsedDefault, &defaultError);
+        }
         const bool nonNullableWithoutDefault =
             !nullableCheck_->isChecked() && !hasDefaultValue;
         const bool requiresDefault =
@@ -527,6 +581,11 @@ namespace StableCore::Storage::Editor
                 validationLabel_->setStyleSheet(QStringLiteral("color: #b00020;"));
                 validationLabel_->setText(relationError);
                 validationLabel_->setVisible(true);
+            } else if (!defaultValid)
+            {
+                validationLabel_->setStyleSheet(QStringLiteral("color: #b00020;"));
+                validationLabel_->setText(defaultError);
+                validationLabel_->setVisible(true);
             } else if (nonNullableWithoutDefault)
             {
                 if (currentTableHasRecords_)
@@ -576,7 +635,7 @@ namespace StableCore::Storage::Editor
 
         if (okButton_ != nullptr)
         {
-            okButton_->setEnabled(relationValid && !requiresDefault);
+            okButton_->setEnabled(relationValid && defaultValid && !requiresDefault);
         }
     }
 

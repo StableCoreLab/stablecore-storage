@@ -1,7 +1,10 @@
 #include "SCSchemaTableGenerator.h"
 
+#include <cstdint>
 #include <QRegularExpression>
 #include <QStringList>
+
+#include "SCBinaryUtils.h"
 
 namespace sc = StableCore::Storage;
 
@@ -40,6 +43,8 @@ namespace StableCore::Storage::Editor
                     return QStringLiteral("SCType::RecordId");
                 case sc::ValueKind::Enum:
                     return QStringLiteral("SCType::Enum");
+                case sc::ValueKind::Binary:
+                    return QStringLiteral("SCType::Binary");
                 case sc::ValueKind::Null:
                 default:
                     return QStringLiteral("SCType::Null");
@@ -170,7 +175,14 @@ namespace StableCore::Storage::Editor
                     }
                     break;
                 }
-                case sc::ValueKind::Binary:
+                case sc::ValueKind::Binary: {
+                    std::vector<std::uint8_t> value;
+                    if (column.defaultValue.AsBinaryCopy(&value) == sc::SC_OK)
+                    {
+                        return BinaryToHex(value);
+                    }
+                    break;
+                }
                 case sc::ValueKind::Null:
                 default:
                     break;

@@ -1,5 +1,6 @@
 #include "ISCQuery.h"
 
+#include <algorithm>
 #include <memory>
 #include <sstream>
 #include <utility>
@@ -61,6 +62,13 @@ namespace StableCore::Storage
             }
         }
 
+        bool HasBinaryValue(const QueryCondition& condition)
+        {
+            return std::any_of(condition.values.begin(), condition.values.end(), [](const SCValue& value) {
+                return value.GetKind() == ValueKind::Binary;
+            });
+        }
+
         PlanStrength ClassifyCondition(const QueryCondition& condition, std::wstring* outReason)
         {
             if (condition.fieldName.empty())
@@ -75,6 +83,24 @@ namespace StableCore::Storage
                 if (outReason)
                     *outReason = L"condition-arity-invalid";
                 return PlanStrength::Unsupported;
+            }
+
+            if (HasBinaryValue(condition))
+            {
+                switch (condition.op)
+                {
+                    case QueryConditionOperator::Equal:
+                    case QueryConditionOperator::NotEqual:
+                    case QueryConditionOperator::In:
+                        return PlanStrength::Fallback;
+                    case QueryConditionOperator::IsNull:
+                    case QueryConditionOperator::IsNotNull:
+                        return PlanStrength::Direct;
+                    default:
+                        if (outReason)
+                            *outReason = L"binary-condition-unsupported";
+                        return PlanStrength::Unsupported;
+                }
             }
 
             switch (condition.op)

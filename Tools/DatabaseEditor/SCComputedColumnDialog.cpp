@@ -149,7 +149,6 @@ namespace StableCore::Storage::Editor
                                  static_cast<int>(sc::ValueKind::RecordId));
         valueKindCombo_->addItem(QStringLiteral("枚举 (Enum)"),
                                  static_cast<int>(sc::ValueKind::Enum));
-
         kindCombo_ = new QComboBox(this);
         kindCombo_->addItem(
             QStringLiteral("表达式"),

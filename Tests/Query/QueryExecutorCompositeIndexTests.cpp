@@ -1,5 +1,4 @@
 #include <filesystem>
-
 #include <gtest/gtest.h>
 
 #include "ISCQuery.h"
@@ -51,6 +50,58 @@ TEST(QueryExecutorCompositeIndexTests, ExplicitCompositeIndexSupportsPrefixLooku
     EXPECT_EQ(analyzedPlan.matchedIndex->indexName, L"idx_Beam_Width_Name");
     EXPECT_EQ(analyzedPlan.state, sc::QueryPlanState::DirectIndex);
     EXPECT_TRUE(analyzedPlan.pushdown.residualConditions.empty());
+}
+
+TEST(QueryExecutorCompositeIndexTests, CompositeIndexWithBinaryColumnIsExcluded)
+{
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_QuerySqlite_BinaryColumnExclusion.sqlite");
+
+    sc::SCDbPtr db;
+    EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
+
+    sc::SCTablePtr table;
+    EXPECT_EQ(db->CreateTable(L"Beam", table), sc::SC_OK);
+
+    sc::SCSchemaPtr schema;
+    EXPECT_EQ(table->GetSchema(schema), sc::SC_OK);
+
+    sc::SCColumnDef width;
+    width.name = L"Width";
+    width.displayName = L"Width";
+    width.valueKind = sc::ValueKind::Int64;
+    width.defaultValue = sc::SCValue::FromInt64(0);
+    EXPECT_EQ(schema->AddColumn(width), sc::SC_OK);
+
+    sc::SCColumnDef attachment;
+    attachment.name = L"Attachment";
+    attachment.displayName = L"Attachment";
+    attachment.valueKind = sc::ValueKind::Binary;
+    attachment.defaultValue = sc::SCValue::FromBinary(std::vector<std::uint8_t>{});
+    EXPECT_EQ(schema->AddColumn(attachment), sc::SC_OK);
+
+    sc::SCIndexDef compositeIndex;
+    compositeIndex.name = L"idx_Beam_Width_Attachment";
+    compositeIndex.columns.push_back(sc::SCIndexColumnDef{L"Width", false});
+    compositeIndex.columns.push_back(sc::SCIndexColumnDef{L"Attachment", false});
+    EXPECT_EQ(schema->AddIndex(compositeIndex), sc::SC_OK);
+
+    auto* indexAccess = dynamic_cast<sc::ISqliteQueryIndexAccess*>(db.Get());
+    ASSERT_NE(indexAccess, nullptr);
+
+    sc::QueryPlan plan;
+    plan.target = sc::QueryTarget{L"Beam", sc::QueryTargetType::Table};
+    plan.conditionGroups = {sc::QueryConditionGroup{
+        sc::QueryLogicOperator::And,
+        {sc::QueryCondition{L"Width",
+                            sc::QueryConditionOperator::Equal,
+                            {sc::SCValue::FromInt64(100)}}}}};
+    plan.conditionGroupLogic = sc::QueryLogicOperator::And;
+    plan.state = sc::QueryPlanState::DirectIndex;
+
+    sc::QueryPlan analyzedPlan;
+    EXPECT_EQ(indexAccess->AnalyzeCompositeIndexPlan(plan, &analyzedPlan), sc::SC_OK);
+    EXPECT_FALSE(analyzedPlan.matchedIndex.has_value());
+    EXPECT_TRUE(analyzedPlan.pushdown.pushdownConditions.empty());
 }
 
 TEST(QueryExecutorCompositeIndexTests, ExplicitCompositeIndexSupportsThreeColumnHappyPath)
