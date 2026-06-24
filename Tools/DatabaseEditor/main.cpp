@@ -10,6 +10,6 @@ int main(int argc, char* argv[])
     QApplication::setOrganizationName(QStringLiteral("StableCore"));
 
     StableCore::Storage::Editor::SCDatabaseEditorMainWindow window;
-    window.show();
+    window.showMaximized();
     return app.exec();
 }

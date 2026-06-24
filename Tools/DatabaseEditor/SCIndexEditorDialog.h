@@ -25,6 +25,9 @@ namespace StableCore::Storage::Editor
 
         StableCore::Storage::SCIndexDef GetIndex() const { return index_; }
 
+    protected:
+        void accept() override;
+
     private slots:
         void AddColumn();
         void RemoveColumn();

@@ -72,6 +72,14 @@ namespace
         return column;
     }
 
+    sc::SCIndexDef MakeIndex(const wchar_t* name, const wchar_t* columnName)
+    {
+        sc::SCIndexDef index;
+        index.name = name;
+        index.columns.push_back(sc::SCIndexColumnDef{columnName, false});
+        return index;
+    }
+
     sc::SCComputedColumnDef MakeExpressionComputedColumn(const wchar_t* name,
                                                          const wchar_t* expression,
                                                          const wchar_t* dependencyField)
@@ -211,6 +219,69 @@ TEST(DatabaseEditorSession, AddColumnRejectsNonNullableColumnsWithoutDefaultWhen
 
     EXPECT_FALSE(session.AddColumn(MakeRequiredIntColumnWithoutDefault(L"Width"), &error));
     EXPECT_EQ(error, QStringLiteral("Storage error: 0xffffffffa0010008"));
+}
+
+TEST(DatabaseEditorSession, AddIndexPersistsAcrossReopen)
+{
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_DbEditor_AddIndexReopen.sqlite");
+
+    editor::SCDatabaseSession session;
+    QString error;
+
+    ASSERT_TRUE(session.CreateDatabase(QString::fromStdWString(dbPath.wstring()), &error))
+        << error.toStdString();
+    ASSERT_TRUE(session.CreateTable(QStringLiteral("Beam"), &error)) << error.toStdString();
+    ASSERT_TRUE(session.AddColumn(MakeIntColumn(L"Id"), &error)) << error.toStdString();
+    ASSERT_TRUE(session.AddColumn(MakeStringColumn(L"Code"), &error)) << error.toStdString();
+
+    sc::SCIndexDef index = MakeIndex(L"idx_Beam_Code", L"Code");
+    ASSERT_TRUE(session.AddIndex(index, &error)) << error.toStdString();
+
+    ASSERT_TRUE(session.CurrentTable() != nullptr);
+    sc::SCSchemaPtr schema;
+    ASSERT_EQ(session.CurrentTable()->GetSchema(schema), sc::SC_OK);
+    sc::SCIndexDef loadedIndex;
+    EXPECT_EQ(schema->FindIndex(L"idx_Beam_Code", &loadedIndex), sc::SC_OK);
+    ASSERT_EQ(loadedIndex.columns.size(), 1u);
+    EXPECT_EQ(loadedIndex.columns[0].columnName, L"Code");
+
+    editor::SCDatabaseSession reopened;
+    ASSERT_TRUE(reopened.OpenDatabase(QString::fromStdWString(dbPath.wstring()), &error))
+        << error.toStdString();
+    ASSERT_TRUE(reopened.SelectTable(QStringLiteral("Beam"), &error)) << error.toStdString();
+    ASSERT_TRUE(reopened.CurrentTable() != nullptr);
+    ASSERT_EQ(reopened.CurrentTable()->GetSchema(schema), sc::SC_OK);
+    EXPECT_EQ(schema->FindIndex(L"idx_Beam_Code", &loadedIndex), sc::SC_OK);
+    ASSERT_EQ(loadedIndex.columns.size(), 1u);
+    EXPECT_EQ(loadedIndex.columns[0].columnName, L"Code");
+}
+
+TEST(DatabaseEditorSession, AddIndexRejectsWhilePendingEditIsActive)
+{
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_DbEditor_AddIndexPendingEdit.sqlite");
+
+    editor::SCDatabaseSession session;
+    QString error;
+
+    ASSERT_TRUE(session.CreateDatabase(QString::fromStdWString(dbPath.wstring()), &error))
+        << error.toStdString();
+    ASSERT_TRUE(session.CreateTable(QStringLiteral("Beam"), &error)) << error.toStdString();
+    ASSERT_TRUE(session.AddColumn(MakeIntColumn(L"Id"), &error)) << error.toStdString();
+    ASSERT_TRUE(session.AddColumn(MakeStringColumn(L"Code"), &error)) << error.toStdString();
+    ASSERT_TRUE(session.AddColumn(MakeRequiredIntColumnWithoutDefault(L"Width"), &error))
+        << error.toStdString();
+    ASSERT_TRUE(session.AddRecord(&error)) << error.toStdString();
+
+    ASSERT_TRUE(session.HasPendingEdit());
+
+    sc::SCIndexDef index = MakeIndex(L"idx_Beam_Code", L"Code");
+    EXPECT_FALSE(session.AddIndex(index, &error));
+    EXPECT_EQ(
+        error,
+        QStringLiteral(
+            "A pending edit is active. Save or discard it before starting a new action."));
+
+    ASSERT_TRUE(session.DiscardPendingChanges(&error)) << error.toStdString();
 }
 
 TEST(DatabaseEditorSession, AddRecordCreatesPendingEditForRequiredColumnsAndSaveRequiresValues)

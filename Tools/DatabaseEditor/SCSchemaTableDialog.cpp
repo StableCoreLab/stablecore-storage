@@ -549,9 +549,28 @@ namespace StableCore::Storage::Editor
 
     void SCSchemaTableDialog::AddIndex()
     {
+        if (session_ == nullptr || !session_->IsOpen())
+        {
+            statusLabel_->setText(
+                QStringLiteral("Open a database before adding indexes."));
+            return;
+        }
+        if (schemaSnapshot_.tables.empty())
+        {
+            statusLabel_->setText(
+                QStringLiteral("Please select a table before adding indexes."));
+            return;
+        }
+        if (session_->HasPendingEdit())
+        {
+            statusLabel_->setText(
+                QStringLiteral("Save or discard pending changes before editing the schema."));
+            return;
+        }
+
         sc::SCIndexDef newIndex;
         auto availableColumns = GetAvailableColumnNames();
-        
+
         SCIndexEditorDialog dialog(newIndex, availableColumns, this);
         if (dialog.exec() == QDialog::Accepted)
         {
@@ -560,7 +579,7 @@ namespace StableCore::Storage::Editor
             if (!session_->AddIndex(index, &error))
             {
                 statusLabel_->setText(
-                QStringLiteral("Failed to add index: ") + error);
+                    QStringLiteral("Failed to add index: ") + error);
                 return;
             }
 

@@ -831,6 +831,23 @@ namespace StableCore::Storage::Editor
 
     void SCTableDesignPane::AddIndex()
     {
+        if (session_ == nullptr || !session_->IsOpen())
+        {
+            SetStatus(QStringLiteral("Open a database to add indexes."));
+            return;
+        }
+        if (tableName_.isEmpty())
+        {
+            SetStatus(QStringLiteral("Select a table before adding indexes."));
+            return;
+        }
+        if (session_->HasPendingEdit())
+        {
+            SetStatus(QStringLiteral(
+                "Save or discard pending changes before editing the schema."));
+            return;
+        }
+
         sc::SCIndexDef index;
         SCIndexEditorDialog dialog(index, GetAvailableColumnNames(), this);
         if (dialog.exec() != QDialog::Accepted)

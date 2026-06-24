@@ -70,11 +70,18 @@ namespace StableCore::Storage::Editor
                 &SCIndexEditorDialog::UpdateColumnOrder);
         connect(indexNameEdit_, &QLineEdit::textChanged, this,
                 &SCIndexEditorDialog::ValidateInput);
-        connect(okButton_, &QPushButton::clicked, this, &QDialog::accept);
+        connect(okButton_, &QPushButton::clicked, this,
+                &SCIndexEditorDialog::accept);
         connect(cancelButton, &QPushButton::clicked, this, &QDialog::reject);
 
         PopulateColumnList();
         ValidateInput();
+    }
+
+    void SCIndexEditorDialog::accept()
+    {
+        index_.name = indexNameEdit_->text().trimmed().toStdWString();
+        QDialog::accept();
     }
 
     void SCIndexEditorDialog::PopulateColumnList()
