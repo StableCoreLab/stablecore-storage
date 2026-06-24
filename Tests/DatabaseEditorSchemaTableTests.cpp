@@ -243,6 +243,7 @@ TEST(DatabaseEditorSchemaTable, BuildsCurrentTableSchemaCode)
 
     sc::SCConstraintDef primaryKey;
     primaryKey.kind = sc::SCConstraintKind::PrimaryKey;
+    primaryKey.name = L"pk_Element_Id";
     primaryKey.columns.push_back(L"Id");
     snapshot.constraints.push_back(primaryKey);
 
@@ -291,6 +292,10 @@ TEST(DatabaseEditorSchemaTable, BuildsCurrentTableSchemaCode)
         "            .Default(\"F-001\")\n"
         "            .Ref(\"Floor\", \"Code\", \"Name\")\n"
         "            .Description(\"Belongs to floor\")\n"
+        "\n"
+        "// .Constraint(\"pk_Element_Id\", PrimaryKey)\n"
+        "//     .Columns(\"Id\")\n"
+        "\n"
         "        .Index(\"idx_Element_FloorCode\").Columns(\"FloorCode\");\n"
         "}\n");
 
@@ -335,4 +340,164 @@ TEST(DatabaseEditorSchemaTable, ParsesRelationReferenceStorageColumnOnly)
     EXPECT_EQ(result.columns[0].referenceTable, L"Floor");
     EXPECT_EQ(result.columns[0].referenceStorageColumn, L"Code");
     EXPECT_EQ(result.columns[0].referenceDisplayColumn, L"Code");
+}
+
+TEST(DatabaseEditorSchemaTable, RoundTripsConstraintMetadataThroughGeneratedComments)
+{
+    sc::SCTableSchemaSnapshot snapshot;
+    snapshot.table.name = L"Beam";
+    snapshot.table.description = L"Beam schema";
+
+    sc::SCColumnDef id = MakeColumn(L"Id", sc::ValueKind::Int64);
+    id.nullable = false;
+    snapshot.columns.push_back(id);
+
+    sc::SCColumnDef codeColumn = MakeColumn(L"Code", sc::ValueKind::String);
+    codeColumn.nullable = false;
+    snapshot.columns.push_back(codeColumn);
+
+    sc::SCColumnDef floorRef = MakeColumn(L"FloorRef", sc::ValueKind::String);
+    floorRef.nullable = false;
+    snapshot.columns.push_back(floorRef);
+
+    sc::SCConstraintDef primaryKey;
+    primaryKey.kind = sc::SCConstraintKind::PrimaryKey;
+    primaryKey.name = L"pk_Beam_Id";
+    primaryKey.columns.push_back(L"Id");
+    snapshot.constraints.push_back(primaryKey);
+
+    sc::SCConstraintDef uniqueConstraint;
+    uniqueConstraint.kind = sc::SCConstraintKind::Unique;
+    uniqueConstraint.name = L"uq_Beam_Code";
+    uniqueConstraint.columns.push_back(L"Code");
+    snapshot.constraints.push_back(uniqueConstraint);
+
+    sc::SCConstraintDef foreignKey;
+    foreignKey.kind = sc::SCConstraintKind::ForeignKey;
+    foreignKey.name = L"fk_Beam_FloorRef";
+    foreignKey.columns.push_back(L"FloorRef");
+    foreignKey.referencedTable = L"Floor";
+    foreignKey.referencedColumns.push_back(L"Code");
+    foreignKey.onDelete = sc::SCForeignKeyAction::Cascade;
+    foreignKey.onUpdate = sc::SCForeignKeyAction::Restrict;
+    snapshot.constraints.push_back(foreignKey);
+
+    sc::SCConstraintDef checkConstraint;
+    checkConstraint.kind = sc::SCConstraintKind::Check;
+    checkConstraint.name = L"ck_Beam_Code";
+    checkConstraint.columns.push_back(L"Code");
+    checkConstraint.checkExpression = L"Code <> ''";
+    snapshot.constraints.push_back(checkConstraint);
+
+    const QString generatedCode = editor::BuildSchemaTableCode(snapshot);
+
+    editor::SCSchemaTableImportResult result;
+    QString error;
+    EXPECT_TRUE(editor::ParseSchemaTableDescription(generatedCode, &result, &error))
+        << error.toStdString();
+
+    ASSERT_EQ(result.constraints.size(), 4);
+    EXPECT_EQ(result.constraints[0].kind, sc::SCConstraintKind::PrimaryKey);
+    EXPECT_EQ(result.constraints[0].name, L"pk_Beam_Id");
+    EXPECT_EQ(result.constraints[0].columns, (std::vector<std::wstring>{L"Id"}));
+
+    EXPECT_EQ(result.constraints[1].kind, sc::SCConstraintKind::Unique);
+    EXPECT_EQ(result.constraints[1].name, L"uq_Beam_Code");
+    EXPECT_EQ(result.constraints[1].columns,
+              (std::vector<std::wstring>{L"Code"}));
+
+    EXPECT_EQ(result.constraints[2].kind, sc::SCConstraintKind::ForeignKey);
+    EXPECT_EQ(result.constraints[2].name, L"fk_Beam_FloorRef");
+    EXPECT_EQ(result.constraints[2].columns,
+              (std::vector<std::wstring>{L"FloorRef"}));
+    EXPECT_EQ(result.constraints[2].referencedTable, L"Floor");
+    EXPECT_EQ(result.constraints[2].referencedColumns,
+              (std::vector<std::wstring>{L"Code"}));
+    EXPECT_EQ(result.constraints[2].onDelete, sc::SCForeignKeyAction::Cascade);
+    EXPECT_EQ(result.constraints[2].onUpdate, sc::SCForeignKeyAction::Restrict);
+
+    EXPECT_EQ(result.constraints[3].kind, sc::SCConstraintKind::Check);
+    EXPECT_EQ(result.constraints[3].name, L"ck_Beam_Code");
+    EXPECT_EQ(result.constraints[3].columns,
+              (std::vector<std::wstring>{L"Code"}));
+    EXPECT_EQ(result.constraints[3].checkExpression, L"Code <> ''");
+}
+
+TEST(DatabaseEditorSchemaTable, IgnoresConstraintCommentsOutsideSchemaBlock)
+{
+    const QString schemaText = QStringLiteral(R"(// .Constraint("ignored_outside", Unique)
+//     .Columns("Ghost")
+SC_SCHEMA_TABLE(Beam)
+{
+    Table("Beam")
+        .Column("Id", SCType::Int64)
+// .Constraint("pk_Beam_Id", PrimaryKey)
+//     .Columns("Id")
+})");
+
+    editor::SCSchemaTableImportResult result;
+    QString error;
+    EXPECT_TRUE(editor::ParseSchemaTableDescription(schemaText, &result, &error))
+        << error.toStdString();
+
+    ASSERT_EQ(result.constraints.size(), 1);
+    EXPECT_EQ(result.constraints[0].name, L"pk_Beam_Id");
+    EXPECT_EQ(result.constraints[0].kind, sc::SCConstraintKind::PrimaryKey);
+    EXPECT_EQ(result.constraints[0].columns, (std::vector<std::wstring>{L"Id"}));
+}
+
+TEST(DatabaseEditorSchemaTable, RoundTripsDescendingIndexesThroughGeneratedCode)
+{
+    sc::SCTableSchemaSnapshot snapshot;
+    snapshot.table.name = L"Beam";
+
+    snapshot.columns.push_back(MakeColumn(L"Code", sc::ValueKind::String));
+    snapshot.columns.push_back(MakeColumn(L"FloorCode", sc::ValueKind::String));
+
+    sc::SCIndexDef index;
+    index.name = L"idx_Beam_Code_FloorCode";
+    index.columns.push_back(sc::SCIndexColumnDef{L"Code", false});
+    index.columns.push_back(sc::SCIndexColumnDef{L"FloorCode", true});
+    snapshot.indexes.push_back(index);
+
+    const QString generatedCode = editor::BuildSchemaTableCode(snapshot);
+
+    editor::SCSchemaTableImportResult result;
+    QString error;
+    EXPECT_TRUE(editor::ParseSchemaTableDescription(generatedCode, &result, &error))
+        << error.toStdString();
+
+    ASSERT_EQ(result.indexes.size(), 1);
+    EXPECT_EQ(result.indexes[0].name, QStringLiteral("idx_Beam_Code_FloorCode"));
+    ASSERT_EQ(result.indexes[0].columns.size(), 2);
+    EXPECT_EQ(result.indexes[0].columns[0].columnName, L"Code");
+    EXPECT_FALSE(result.indexes[0].columns[0].descending);
+    EXPECT_EQ(result.indexes[0].columns[1].columnName, L"FloorCode");
+    EXPECT_TRUE(result.indexes[0].columns[1].descending);
+}
+
+TEST(DatabaseEditorSchemaTable, ParsesThreeLineDescendingIndexFormat)
+{
+    const QString schemaText = QStringLiteral(R"(SC_SCHEMA_TABLE(Beam)
+{
+    Table("Beam")
+        .Column("Code", SCType::String)
+        .Column("FloorCode", SCType::String)
+        .Index("idx_Beam_Code_FloorCode")
+            .Columns("Code", "FloorCode")
+            .Desc("FloorCode");
+})");
+
+    editor::SCSchemaTableImportResult result;
+    QString error;
+    EXPECT_TRUE(editor::ParseSchemaTableDescription(schemaText, &result, &error))
+        << error.toStdString();
+
+    ASSERT_EQ(result.indexes.size(), 1);
+    EXPECT_EQ(result.indexes[0].name, QStringLiteral("idx_Beam_Code_FloorCode"));
+    ASSERT_EQ(result.indexes[0].columns.size(), 2);
+    EXPECT_EQ(result.indexes[0].columns[0].columnName, L"Code");
+    EXPECT_FALSE(result.indexes[0].columns[0].descending);
+    EXPECT_EQ(result.indexes[0].columns[1].columnName, L"FloorCode");
+    EXPECT_TRUE(result.indexes[0].columns[1].descending);
 }

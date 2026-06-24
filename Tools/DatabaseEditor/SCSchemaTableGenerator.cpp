@@ -238,6 +238,147 @@ namespace StableCore::Storage::Editor
             return indexes;
         }
 
+        QString MakeConstraintName(
+            const QString& tableName,
+            sc::SCConstraintKind kind,
+            const std::vector<std::wstring>& columns)
+        {
+            QStringList parts;
+            switch (kind)
+            {
+                case sc::SCConstraintKind::PrimaryKey:
+                    parts.push_back(QStringLiteral("pk"));
+                    break;
+                case sc::SCConstraintKind::Unique:
+                    parts.push_back(QStringLiteral("uq"));
+                    break;
+                case sc::SCConstraintKind::ForeignKey:
+                    parts.push_back(QStringLiteral("fk"));
+                    break;
+                case sc::SCConstraintKind::Check:
+                default:
+                    parts.push_back(QStringLiteral("ck"));
+                    break;
+            }
+            parts.push_back(tableName);
+            for (const std::wstring& column : columns)
+            {
+                parts.push_back(ToQString(column));
+            }
+            QString name = parts.join(QLatin1Char('_'));
+            name.replace(
+                QRegularExpression(QStringLiteral(R"([^A-Za-z0-9_]+)")),
+                QStringLiteral("_"));
+            return name;
+        }
+
+        QString ConstraintKindToText(sc::SCConstraintKind kind)
+        {
+            switch (kind)
+            {
+                case sc::SCConstraintKind::PrimaryKey:
+                    return QStringLiteral("PrimaryKey");
+                case sc::SCConstraintKind::Unique:
+                    return QStringLiteral("Unique");
+                case sc::SCConstraintKind::ForeignKey:
+                    return QStringLiteral("ForeignKey");
+                case sc::SCConstraintKind::Check:
+                default:
+                    return QStringLiteral("Check");
+            }
+        }
+
+        QString ForeignKeyActionToText(sc::SCForeignKeyAction action)
+        {
+            switch (action)
+            {
+                case sc::SCForeignKeyAction::Restrict:
+                    return QStringLiteral("Restrict");
+                case sc::SCForeignKeyAction::NoAction:
+                    return QStringLiteral("NoAction");
+                case sc::SCForeignKeyAction::Cascade:
+                    return QStringLiteral("Cascade");
+                case sc::SCForeignKeyAction::SetNull:
+                    return QStringLiteral("SetNull");
+                case sc::SCForeignKeyAction::SetDefault:
+                default:
+                    return QStringLiteral("SetDefault");
+            }
+        }
+
+        QString FormatQuotedList(const std::vector<std::wstring>& values)
+        {
+            QStringList parts;
+            for (const std::wstring& value : values)
+            {
+                parts.push_back(QStringLiteral("\"") +
+                                EscapeCppString(ToQString(value)) +
+                                QStringLiteral("\""));
+            }
+            return parts.join(QStringLiteral(", "));
+        }
+
+        QString FormatConstraintComment(const QString& tableName,
+                                        const sc::SCConstraintDef& constraint)
+        {
+            QString constraintName = ToQString(constraint.name).trimmed();
+            if (constraintName.isEmpty())
+            {
+                constraintName =
+                    MakeConstraintName(tableName, constraint.kind,
+                                       constraint.columns);
+            }
+
+            QStringList lines;
+            lines.push_back(QStringLiteral("// .Constraint(\"") +
+                            EscapeCppString(constraintName) +
+                            QStringLiteral("\", ") +
+                            ConstraintKindToText(constraint.kind) +
+                            QStringLiteral(")"));
+
+            if (!constraint.columns.empty())
+            {
+                lines.push_back(QStringLiteral("//     .Columns(") +
+                                FormatQuotedList(constraint.columns) +
+                                QStringLiteral(")"));
+            }
+
+            if (constraint.kind == sc::SCConstraintKind::ForeignKey)
+            {
+                QStringList refParts;
+                refParts.push_back(QStringLiteral("\"") +
+                                   EscapeCppString(
+                                       ToQString(constraint.referencedTable)) +
+                                   QStringLiteral("\""));
+                for (const std::wstring& refColumn : constraint.referencedColumns)
+                {
+                    refParts.push_back(QStringLiteral("\"") +
+                                       EscapeCppString(ToQString(refColumn)) +
+                                       QStringLiteral("\""));
+                }
+                lines.push_back(QStringLiteral("//     .Ref(") +
+                                refParts.join(QStringLiteral(", ")) +
+                                QStringLiteral(")"));
+                lines.push_back(QStringLiteral("//     .OnDelete(") +
+                                ForeignKeyActionToText(constraint.onDelete) +
+                                QStringLiteral(")"));
+                lines.push_back(QStringLiteral("//     .OnUpdate(") +
+                                ForeignKeyActionToText(constraint.onUpdate) +
+                                QStringLiteral(")"));
+            } else if (constraint.kind == sc::SCConstraintKind::Check)
+            {
+                if (!constraint.checkExpression.empty())
+                {
+                    lines.push_back(QStringLiteral("//     .Expr(\"") +
+                                    EscapeCppString(
+                                        ToQString(constraint.checkExpression)) +
+                                    QStringLiteral("\")"));
+                }
+            }
+
+            return lines.join(QStringLiteral("\n"));
+        }
+
         QString FormatIndexColumns(
             const std::vector<sc::SCIndexColumnDef>& columns,
             QString* outDescColumns)
@@ -337,6 +478,17 @@ namespace StableCore::Storage::Editor
                         EscapeCppString(description) + QStringLiteral("\")\n");
             }
             code += line;
+        }
+
+        if (!snapshot.constraints.empty())
+        {
+            code += QStringLiteral("\n");
+            for (const sc::SCConstraintDef& constraint : snapshot.constraints)
+            {
+                code += FormatConstraintComment(tableName, constraint) +
+                        QStringLiteral("\n");
+            }
+            code += QStringLiteral("\n");
         }
 
         for (const sc::SCIndexDef& index : indexes)

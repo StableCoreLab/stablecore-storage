@@ -12,7 +12,7 @@ namespace StableCore::Storage::Editor
     struct SCSchemaTableImportIndex
     {
         QString name;
-        QStringList columns;
+        QVector<StableCore::Storage::SCIndexColumnDef> columns;
     };
 
     struct SCSchemaTableImportResult
@@ -22,6 +22,7 @@ namespace StableCore::Storage::Editor
         QString tableDescription;
         QString primaryKeyColumnName;
         QVector<StableCore::Storage::SCColumnDef> columns;
+        QVector<StableCore::Storage::SCConstraintDef> constraints;
         QVector<SCSchemaTableImportIndex> indexes;
         QStringList warnings;
     };

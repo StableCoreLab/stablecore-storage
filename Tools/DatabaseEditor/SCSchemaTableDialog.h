@@ -29,9 +29,13 @@ namespace StableCore::Storage::Editor
     private slots:
         void RefreshPreview();
         void CopyOutput();
+        void AddConstraint();
+        void EditConstraint();
+        void RemoveConstraint();
         void AddIndex();
         void EditIndex();
         void RemoveIndex();
+        void UpdateConstraintList();
         void UpdateIndexList();
 
     private:
@@ -49,6 +53,10 @@ namespace StableCore::Storage::Editor
         class QLabel* legacyHintLabel_{nullptr};
         class QPlainTextEdit* outputEdit_{nullptr};
         class QLabel* statusLabel_{nullptr};
+        class QListWidget* constraintList_{nullptr};
+        class QPushButton* addConstraintButton_{nullptr};
+        class QPushButton* editConstraintButton_{nullptr};
+        class QPushButton* removeConstraintButton_{nullptr};
         class QListWidget* indexList_{nullptr};
         class QPushButton* addIndexButton_{nullptr};
         class QPushButton* editIndexButton_{nullptr};

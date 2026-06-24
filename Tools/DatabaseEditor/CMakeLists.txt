@@ -3,6 +3,8 @@ add_executable(SCStorageDatabaseEditor WIN32
     SCAddColumnDialog.h
     SCComputedColumnDialog.cpp
     SCComputedColumnDialog.h
+    SCConstraintEditorDialog.cpp
+    SCConstraintEditorDialog.h
     SCDatabaseEditorMainWindow.cpp
     SCDatabaseEditorMainWindow.h
     SCDatabaseSession.cpp
@@ -30,6 +32,8 @@ SCStorageSourceGroupTree("${CMAKE_CURRENT_SOURCE_DIR}"
     SCAddColumnDialog.h
     SCComputedColumnDialog.cpp
     SCComputedColumnDialog.h
+    SCConstraintEditorDialog.cpp
+    SCConstraintEditorDialog.h
     SCDatabaseEditorMainWindow.cpp
     SCDatabaseEditorMainWindow.h
     SCDatabaseSession.cpp
@@ -71,4 +75,3 @@ target_compile_features(SCStorageDatabaseEditor PRIVATE cxx_std_20)
 if (MSVC)
     target_compile_options(SCStorageDatabaseEditor PRIVATE /MP)
 endif()
-

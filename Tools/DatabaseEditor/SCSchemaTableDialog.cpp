@@ -12,9 +12,11 @@
 #include <QListWidget>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QStringList>
 #include <QVBoxLayout>
 
 #include "SCDatabaseSession.h"
+#include "SCConstraintEditorDialog.h"
 #include "SCSchemaTableGenerator.h"
 #include "SCIndexEditorDialog.h"
 
@@ -70,6 +72,30 @@ namespace StableCore::Storage::Editor
         form->addRow(QStringLiteral("旧式提示"), legacyHintLabel_);
         layout->addLayout(form);
 
+        auto* constraintGroup = new QHBoxLayout();
+        constraintList_ = new QListWidget(this);
+        constraintGroup->addWidget(constraintList_, 1);
+
+        auto* constraintButtons = new QVBoxLayout();
+        addConstraintButton_ = new QPushButton(QStringLiteral("+ New"), this);
+        editConstraintButton_ = new QPushButton(QStringLiteral("Edit"), this);
+        removeConstraintButton_ =
+            new QPushButton(QStringLiteral("- Delete"), this);
+        constraintButtons->addWidget(addConstraintButton_);
+        constraintButtons->addWidget(editConstraintButton_);
+        constraintButtons->addWidget(removeConstraintButton_);
+        constraintButtons->addStretch(1);
+        constraintGroup->addLayout(constraintButtons);
+        layout->addLayout(constraintGroup);
+
+        auto* constraintHintLabel = new QLabel(
+            QStringLiteral(
+                "Primary key is edited above. Non-PK constraints are exported as comment metadata and can be imported back."),
+            this);
+        constraintHintLabel->setWordWrap(true);
+        constraintHintLabel->setStyleSheet(QStringLiteral("color: #6a6a6a;"));
+        layout->addWidget(constraintHintLabel);
+
         auto* indexGroup = new QHBoxLayout();
         indexList_ = new QListWidget(this);
         indexGroup->addWidget(indexList_, 1);
@@ -116,6 +142,19 @@ namespace StableCore::Storage::Editor
                 &SCSchemaTableDialog::UpdateOutput);
         connect(includeLegacyIndexesCheck_, &QCheckBox::toggled, this,
                 &SCSchemaTableDialog::UpdateOutput);
+        connect(addConstraintButton_, &QPushButton::clicked, this,
+                &SCSchemaTableDialog::AddConstraint);
+        connect(editConstraintButton_, &QPushButton::clicked, this,
+                &SCSchemaTableDialog::EditConstraint);
+        connect(removeConstraintButton_, &QPushButton::clicked, this,
+                &SCSchemaTableDialog::RemoveConstraint);
+        connect(constraintList_, &QListWidget::itemSelectionChanged, this,
+                [this]() {
+                    const bool hasSelection =
+                        !constraintList_->selectedItems().isEmpty();
+                    editConstraintButton_->setEnabled(hasSelection);
+                    removeConstraintButton_->setEnabled(hasSelection);
+                });
         connect(addIndexButton_, &QPushButton::clicked, this,
                 &SCSchemaTableDialog::AddIndex);
         connect(editIndexButton_, &QPushButton::clicked, this,
@@ -138,6 +177,10 @@ namespace StableCore::Storage::Editor
                 QStringLiteral("加载当前表失败: ") + error);
             copyButton->setEnabled(false);
             refreshButton->setEnabled(false);
+            constraintList_->setEnabled(false);
+            addConstraintButton_->setEnabled(false);
+            editConstraintButton_->setEnabled(false);
+            removeConstraintButton_->setEnabled(false);
             includeLegacyIndexesCheck_->setEnabled(false);
             return;
         }
@@ -196,6 +239,7 @@ namespace StableCore::Storage::Editor
                       .arg(legacyHintCount)
                 : QStringLiteral("未检测到旧式索引列。"));
 
+        UpdateConstraintList();
         UpdateIndexList();
         return true;
     }
@@ -249,15 +293,10 @@ namespace StableCore::Storage::Editor
         {
             status += QStringLiteral(" 旧式提示未被导出。");
         }
-        if (std::any_of(tableSnapshot.constraints.begin(),
-                        tableSnapshot.constraints.end(),
-                        [](const sc::SCConstraintDef& constraint) {
-                            return constraint.kind !=
-                                   sc::SCConstraintKind::PrimaryKey;
-                        }))
+        if (!tableSnapshot.constraints.empty())
         {
             status += QStringLiteral(
-                " 快照包含此 DSL 中未导出的约束。");
+                " 约束元数据以注释形式导出。");
         }
 
         statusLabel_->setText(status);
@@ -285,6 +324,227 @@ namespace StableCore::Storage::Editor
             statusLabel_->setText(
                 QStringLiteral("代码已复制到剪贴板。"));
         }
+    }
+
+    void SCSchemaTableDialog::AddConstraint()
+    {
+        if (session_ == nullptr || schemaSnapshot_.tables.empty())
+        {
+            return;
+        }
+
+        sc::SCConstraintDef newConstraint;
+        newConstraint.kind = sc::SCConstraintKind::Unique;
+        newConstraint.sourceKind = sc::SCSchemaSourceKind::Explicit;
+
+        auto availableColumns = GetAvailableColumnNames();
+        SCConstraintEditorDialog dialog(session_, newConstraint,
+                                        availableColumns, this);
+        if (dialog.exec() == QDialog::Accepted)
+        {
+            QString error;
+            sc::SCConstraintDef constraint = dialog.GetConstraint();
+            if (!session_->AddConstraint(constraint, &error))
+            {
+                statusLabel_->setText(
+                    QStringLiteral("Add constraint failed: ") + error);
+                return;
+            }
+
+            RefreshPreview();
+            statusLabel_->setText(
+                QStringLiteral("Constraint added successfully."));
+        }
+    }
+
+    void SCSchemaTableDialog::EditConstraint()
+    {
+        QList<QListWidgetItem*> selected = constraintList_->selectedItems();
+        if (selected.isEmpty())
+        {
+            return;
+        }
+
+        QString constraintName = selected.first()->data(Qt::UserRole).toString();
+        if (constraintName.isEmpty())
+        {
+            return;
+        }
+
+        if (schemaSnapshot_.tables.empty())
+        {
+            return;
+        }
+
+        const auto& tableSnapshot = schemaSnapshot_.tables.front();
+        auto it = std::find_if(
+            tableSnapshot.constraints.begin(), tableSnapshot.constraints.end(),
+            [&constraintName](const sc::SCConstraintDef& def) {
+                return QString::fromStdWString(def.name)
+                           .compare(constraintName, Qt::CaseInsensitive) == 0;
+            });
+        if (it == tableSnapshot.constraints.end())
+        {
+            statusLabel_->setText(
+                QStringLiteral("Constraint not found: ") + constraintName);
+            return;
+        }
+
+        if (it->kind == sc::SCConstraintKind::PrimaryKey)
+        {
+            statusLabel_->setText(
+                QStringLiteral("Primary key is edited in the field above."));
+            return;
+        }
+
+        auto availableColumns = GetAvailableColumnNames();
+        SCConstraintEditorDialog dialog(session_, *it, availableColumns, this);
+        if (dialog.exec() == QDialog::Accepted)
+        {
+            QString error;
+            sc::SCConstraintDef updatedConstraint = dialog.GetConstraint();
+            if (!session_->UpdateConstraint(constraintName, updatedConstraint,
+                                            &error))
+            {
+                statusLabel_->setText(
+                    QStringLiteral("Update constraint failed: ") + error);
+                return;
+            }
+
+            RefreshPreview();
+            statusLabel_->setText(
+                QStringLiteral("Constraint updated successfully."));
+        }
+    }
+
+    void SCSchemaTableDialog::RemoveConstraint()
+    {
+        QList<QListWidgetItem*> selected = constraintList_->selectedItems();
+        if (selected.isEmpty())
+        {
+            return;
+        }
+
+        QString constraintName = selected.first()->data(Qt::UserRole).toString();
+        if (constraintName.isEmpty())
+        {
+            return;
+        }
+
+        QString error;
+        if (!session_->RemoveConstraint(constraintName, &error))
+        {
+            statusLabel_->setText(
+                QStringLiteral("Remove constraint failed: ") + error);
+            return;
+        }
+
+        RefreshPreview();
+        statusLabel_->setText(
+            QStringLiteral("Constraint removed successfully."));
+    }
+
+    void SCSchemaTableDialog::UpdateConstraintList()
+    {
+        constraintList_->clear();
+
+        if (schemaSnapshot_.tables.empty())
+        {
+            return;
+        }
+
+        const auto& tableSnapshot = schemaSnapshot_.tables.front();
+        for (const sc::SCConstraintDef& constraint : tableSnapshot.constraints)
+        {
+            if (constraint.kind == sc::SCConstraintKind::PrimaryKey)
+            {
+                continue;
+            }
+
+            QString displayName = QString::fromStdWString(constraint.name);
+            QString itemText;
+            switch (constraint.kind)
+            {
+                case sc::SCConstraintKind::Unique:
+                    itemText = QStringLiteral("Unique %1").arg(displayName);
+                    break;
+                case sc::SCConstraintKind::ForeignKey: {
+                    itemText = QStringLiteral("ForeignKey %1").arg(displayName);
+                    if (!constraint.referencedTable.empty())
+                    {
+                        itemText += QStringLiteral(" -> ") +
+                                    QString::fromStdWString(
+                                        constraint.referencedTable);
+                    }
+                    auto actionToText = [](sc::SCForeignKeyAction action) {
+                        switch (action)
+                        {
+                            case sc::SCForeignKeyAction::NoAction:
+                                return QStringLiteral("NoAction");
+                            case sc::SCForeignKeyAction::Cascade:
+                                return QStringLiteral("Cascade");
+                            case sc::SCForeignKeyAction::SetNull:
+                                return QStringLiteral("SetNull");
+                            case sc::SCForeignKeyAction::SetDefault:
+                                return QStringLiteral("SetDefault");
+                            case sc::SCForeignKeyAction::Restrict:
+                            default:
+                                return QStringLiteral("Restrict");
+                        }
+                    };
+                    itemText += QStringLiteral(" onDelete=") +
+                                actionToText(constraint.onDelete) +
+                                QStringLiteral(" onUpdate=") +
+                                actionToText(constraint.onUpdate);
+                    break;
+                }
+                case sc::SCConstraintKind::Check:
+                    itemText = QStringLiteral("Check %1").arg(displayName);
+                    if (!constraint.checkExpression.empty())
+                    {
+                        itemText += QStringLiteral(" expr=") +
+                                    QString::fromStdWString(
+                                        constraint.checkExpression).trimmed()
+                                        .left(48);
+                    }
+                    break;
+                case sc::SCConstraintKind::PrimaryKey:
+                default:
+                    continue;
+            }
+
+            if (!constraint.columns.empty())
+            {
+                QStringList columns;
+                for (const std::wstring& column : constraint.columns)
+                {
+                    columns.push_back(QString::fromStdWString(column));
+                }
+                itemText += QStringLiteral(" [") +
+                            columns.join(QStringLiteral(", ")) +
+                            QStringLiteral("]");
+            }
+
+            if (constraint.kind == sc::SCConstraintKind::ForeignKey &&
+                !constraint.referencedColumns.empty())
+            {
+                QStringList columns;
+                for (const std::wstring& column : constraint.referencedColumns)
+                {
+                    columns.push_back(QString::fromStdWString(column));
+                }
+                itemText += QStringLiteral(" (") +
+                            columns.join(QStringLiteral(", ")) +
+                            QStringLiteral(")");
+            }
+
+            auto* item = new QListWidgetItem(itemText);
+            item->setData(Qt::UserRole, displayName);
+            constraintList_->addItem(item);
+        }
+
+        editConstraintButton_->setEnabled(false);
+        removeConstraintButton_->setEnabled(false);
     }
 
     void SCSchemaTableDialog::AddIndex()

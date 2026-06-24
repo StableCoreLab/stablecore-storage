@@ -348,6 +348,188 @@ TEST(DatabaseEditorSession, CreateTableFromSchemaSupportsBinaryNotNullWithoutExp
     EXPECT_FALSE(columns[0].nullable);
 }
 
+TEST(DatabaseEditorSession, CreateTableFromSchemaImportsConstraintsAndIndexes)
+{
+    const fs::path dbPath =
+        MakeTempDbPath(L"StableCoreStorage_DbEditor_ConstraintIndexImport.sqlite");
+
+    editor::SCDatabaseSession session;
+    QString error;
+
+    ASSERT_TRUE(session.CreateDatabase(QString::fromStdWString(dbPath.wstring()), &error))
+        << error.toStdString();
+
+    ASSERT_TRUE(session.CreateTable(QStringLiteral("Floor"), &error)) << error.toStdString();
+    ASSERT_TRUE(session.AddColumn(MakeStringColumn(L"Code"), &error)) << error.toStdString();
+    ASSERT_TRUE(session.CurrentTable() != nullptr);
+    {
+        sc::SCSchemaPtr floorSchema;
+        ASSERT_EQ(session.CurrentTable()->GetSchema(floorSchema), sc::SC_OK);
+        sc::SCConstraintDef uniqueConstraint;
+        uniqueConstraint.kind = sc::SCConstraintKind::Unique;
+        uniqueConstraint.name = L"uq_Floor_Code";
+        uniqueConstraint.columns.push_back(L"Code");
+        ASSERT_EQ(floorSchema->AddConstraint(uniqueConstraint), sc::SC_OK);
+    }
+
+    editor::SCSchemaTableImportResult schema;
+    schema.tableMacroName = QStringLiteral("Beam");
+    schema.tableName = QStringLiteral("Beam");
+
+    sc::SCColumnDef id = MakeRequiredIntColumnWithoutDefault(L"Id");
+    schema.columns.push_back(id);
+
+    sc::SCColumnDef code = MakeStringColumn(L"Code");
+    code.nullable = false;
+    schema.columns.push_back(code);
+
+    sc::SCColumnDef floorCode = MakeStringColumn(L"FloorCode");
+    floorCode.nullable = false;
+    schema.columns.push_back(floorCode);
+
+    sc::SCConstraintDef primaryKey;
+    primaryKey.kind = sc::SCConstraintKind::PrimaryKey;
+    primaryKey.name = L"pk_Beam_Id";
+    primaryKey.columns.push_back(L"Id");
+    primaryKey.sourceKind = sc::SCSchemaSourceKind::Explicit;
+    schema.constraints.push_back(primaryKey);
+
+    sc::SCConstraintDef uniqueConstraint;
+    uniqueConstraint.kind = sc::SCConstraintKind::Unique;
+    uniqueConstraint.name = L"uq_Beam_Code";
+    uniqueConstraint.columns.push_back(L"Code");
+    uniqueConstraint.sourceKind = sc::SCSchemaSourceKind::Explicit;
+    schema.constraints.push_back(uniqueConstraint);
+
+    sc::SCConstraintDef checkConstraint;
+    checkConstraint.kind = sc::SCConstraintKind::Check;
+    checkConstraint.name = L"ck_Beam_Code";
+    checkConstraint.columns.push_back(L"Code");
+    checkConstraint.checkExpression = L"Code <> ''";
+    checkConstraint.sourceKind = sc::SCSchemaSourceKind::Explicit;
+    schema.constraints.push_back(checkConstraint);
+
+    sc::SCConstraintDef foreignKey;
+    foreignKey.kind = sc::SCConstraintKind::ForeignKey;
+    foreignKey.name = L"fk_Beam_FloorCode";
+    foreignKey.columns.push_back(L"FloorCode");
+    foreignKey.referencedTable = L"Floor";
+    foreignKey.referencedColumns.push_back(L"Code");
+    foreignKey.onDelete = sc::SCForeignKeyAction::Cascade;
+    foreignKey.onUpdate = sc::SCForeignKeyAction::Restrict;
+    foreignKey.sourceKind = sc::SCSchemaSourceKind::Explicit;
+    schema.constraints.push_back(foreignKey);
+
+    editor::SCSchemaTableImportIndex index;
+    index.name = QStringLiteral("idx_Beam_Code");
+    index.columns.push_back(sc::SCIndexColumnDef{L"Code", false});
+    schema.indexes.push_back(index);
+
+    ASSERT_TRUE(session.CreateTableFromSchema(schema, &error)) << error.toStdString();
+    ASSERT_TRUE(session.SelectTable(QStringLiteral("Beam"), &error)) << error.toStdString();
+    ASSERT_TRUE(session.CurrentTable() != nullptr);
+
+    sc::SCSchemaPtr beamSchema;
+    ASSERT_EQ(session.CurrentTable()->GetSchema(beamSchema), sc::SC_OK);
+
+    sc::SCConstraintDef loadedConstraint;
+    EXPECT_EQ(beamSchema->FindConstraint(L"pk_Beam_Id", &loadedConstraint), sc::SC_OK);
+    EXPECT_EQ(loadedConstraint.kind, sc::SCConstraintKind::PrimaryKey);
+
+    EXPECT_EQ(beamSchema->FindConstraint(L"uq_Beam_Code", &loadedConstraint), sc::SC_OK);
+    EXPECT_EQ(loadedConstraint.kind, sc::SCConstraintKind::Unique);
+
+    EXPECT_EQ(beamSchema->FindConstraint(L"ck_Beam_Code", &loadedConstraint), sc::SC_OK);
+    EXPECT_EQ(loadedConstraint.kind, sc::SCConstraintKind::Check);
+    EXPECT_EQ(loadedConstraint.checkExpression, L"Code <> ''");
+
+    EXPECT_EQ(beamSchema->FindConstraint(L"fk_Beam_FloorCode", &loadedConstraint), sc::SC_OK);
+    EXPECT_EQ(loadedConstraint.kind, sc::SCConstraintKind::ForeignKey);
+    EXPECT_EQ(loadedConstraint.referencedTable, L"Floor");
+    EXPECT_EQ(loadedConstraint.referencedColumns,
+              (std::vector<std::wstring>{L"Code"}));
+    EXPECT_EQ(loadedConstraint.onDelete, sc::SCForeignKeyAction::Cascade);
+    EXPECT_EQ(loadedConstraint.onUpdate, sc::SCForeignKeyAction::Restrict);
+
+    sc::SCIndexDef loadedIndex;
+    EXPECT_EQ(beamSchema->FindIndex(L"idx_Beam_Code", &loadedIndex), sc::SC_OK);
+    ASSERT_EQ(loadedIndex.columns.size(), 1u);
+    EXPECT_EQ(loadedIndex.columns[0].columnName, L"Code");
+}
+
+TEST(DatabaseEditorSession, CreateTableFromSchemaPreservesDescendingIndexColumns)
+{
+    const fs::path dbPath =
+        MakeTempDbPath(L"StableCoreStorage_DbEditor_DescendingIndexImport.sqlite");
+
+    editor::SCDatabaseSession session;
+    QString error;
+
+    ASSERT_TRUE(session.CreateDatabase(QString::fromStdWString(dbPath.wstring()), &error))
+        << error.toStdString();
+
+    editor::SCSchemaTableImportResult schema;
+    schema.tableMacroName = QStringLiteral("Beam");
+    schema.tableName = QStringLiteral("Beam");
+    schema.columns.push_back(MakeStringColumn(L"Code"));
+    schema.columns.push_back(MakeStringColumn(L"FloorCode"));
+
+    editor::SCSchemaTableImportIndex index;
+    index.name = QStringLiteral("idx_Beam_Code_FloorCode");
+    index.columns.push_back(sc::SCIndexColumnDef{L"Code", false});
+    index.columns.push_back(sc::SCIndexColumnDef{L"FloorCode", true});
+    schema.indexes.push_back(index);
+
+    ASSERT_TRUE(session.CreateTableFromSchema(schema, &error)) << error.toStdString();
+    ASSERT_TRUE(session.CurrentTable() != nullptr);
+
+    sc::SCSchemaPtr beamSchema;
+    ASSERT_EQ(session.CurrentTable()->GetSchema(beamSchema), sc::SC_OK);
+
+    sc::SCIndexDef loadedIndex;
+    ASSERT_EQ(beamSchema->FindIndex(L"idx_Beam_Code_FloorCode", &loadedIndex),
+              sc::SC_OK);
+    ASSERT_EQ(loadedIndex.columns.size(), 2u);
+    EXPECT_EQ(loadedIndex.columns[0].columnName, L"Code");
+    EXPECT_FALSE(loadedIndex.columns[0].descending);
+    EXPECT_EQ(loadedIndex.columns[1].columnName, L"FloorCode");
+    EXPECT_TRUE(loadedIndex.columns[1].descending);
+}
+
+TEST(DatabaseEditorSession, CreateTableFromSchemaDeletesImportedTableWhenConstraintCreationFails)
+{
+    const fs::path dbPath =
+        MakeTempDbPath(L"StableCoreStorage_DbEditor_ConstraintImportRollback.sqlite");
+
+    editor::SCDatabaseSession session;
+    QString error;
+
+    ASSERT_TRUE(session.CreateDatabase(QString::fromStdWString(dbPath.wstring()), &error))
+        << error.toStdString();
+
+    editor::SCSchemaTableImportResult schema;
+    schema.tableMacroName = QStringLiteral("Beam");
+    schema.tableName = QStringLiteral("Beam");
+    schema.columns.push_back(MakeRequiredIntColumnWithoutDefault(L"Id"));
+    schema.columns.push_back(MakeIntColumn(L"FloorId"));
+
+    sc::SCConstraintDef foreignKey;
+    foreignKey.kind = sc::SCConstraintKind::ForeignKey;
+    foreignKey.name = L"fk_Beam_FloorId";
+    foreignKey.columns.push_back(L"FloorId");
+    foreignKey.referencedTable = L"Floor";
+    foreignKey.referencedColumns.push_back(L"Id");
+    foreignKey.sourceKind = sc::SCSchemaSourceKind::Explicit;
+    schema.constraints.push_back(foreignKey);
+
+    EXPECT_FALSE(session.CreateTableFromSchema(schema, &error));
+
+    ASSERT_TRUE(session.Database() != nullptr);
+    sc::SCTablePtr beamTable;
+    EXPECT_EQ(session.Database()->GetTable(L"Beam", beamTable),
+              sc::SC_E_TABLE_NOT_FOUND);
+}
+
 TEST(DatabaseEditorSession, RelationFieldUsesConfiguredStorageAndDisplayColumns)
 {
     const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_DbEditor_RelationBusinessKey.sqlite");

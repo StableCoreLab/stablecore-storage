@@ -1111,6 +1111,28 @@ namespace StableCore::Storage::Editor
             seenColumns.push_back(columnName);
         }
 
+        QVector<sc::SCConstraintDef> sortedConstraints = schema.constraints;
+        std::stable_sort(
+            sortedConstraints.begin(), sortedConstraints.end(),
+            [](const sc::SCConstraintDef& lhs, const sc::SCConstraintDef& rhs) {
+                const auto rank = [](sc::SCConstraintKind kind) {
+                    switch (kind)
+                    {
+                        case sc::SCConstraintKind::PrimaryKey:
+                            return 0;
+                        case sc::SCConstraintKind::Unique:
+                            return 1;
+                        case sc::SCConstraintKind::Check:
+                            return 2;
+                        case sc::SCConstraintKind::ForeignKey:
+                            return 3;
+                        default:
+                            return 4;
+                    }
+                };
+                return rank(lhs.kind) < rank(rhs.kind);
+            });
+
         QString createError;
         if (!CreateTable(tableName, &createError))
         {
@@ -1121,48 +1143,125 @@ namespace StableCore::Storage::Editor
             return false;
         }
 
-        std::int32_t addedColumns = 0;
+        const auto cleanupImportedTable = [this, &previousTableName,
+                                           &tableName](QString* outCleanupError) {
+            QString deleteError;
+            const bool deleted = DeleteTable(tableName, &deleteError);
+
+            QString restoreError;
+            if (!previousTableName.isEmpty() &&
+                previousTableName.compare(tableName, Qt::CaseInsensitive) != 0)
+            {
+                SelectTable(previousTableName, &restoreError);
+            }
+
+            if (outCleanupError != nullptr)
+            {
+                if (!deleted)
+                {
+                    *outCleanupError = QStringLiteral(
+                                           "cleanup delete failed: ") +
+                                       deleteError;
+                    if (!restoreError.isEmpty())
+                    {
+                        *outCleanupError += QStringLiteral(
+                                                " (restore selection failed: ") +
+                                            restoreError + QStringLiteral(")");
+                    }
+                } else if (!restoreError.isEmpty())
+                {
+                    *outCleanupError = QStringLiteral(
+                                           "restore selection failed: ") +
+                                       restoreError;
+                } else
+                {
+                    outCleanupError->clear();
+                }
+            }
+
+            return deleted;
+        };
+
         for (const sc::SCColumnDef& column : schema.columns)
         {
             QString addError;
             if (!AddColumn(column, &addError))
             {
-                while (addedColumns > 0)
-                {
-                    QString undoError;
-                    if (!Undo(&undoError))
-                    {
-                        if (outError != nullptr)
-                        {
-                            *outError = QStringLiteral(
-                                            "Failed to add imported column: ") +
-                                        addError +
-                                        QStringLiteral(" (rollback failed: ") +
-                                        undoError + QStringLiteral(")");
-                        }
-                        return false;
-                    }
-                    --addedColumns;
-                }
+                QString cleanupError;
+                cleanupImportedTable(&cleanupError);
 
                 Refresh(nullptr);
-                if (!previousTableName.isEmpty() &&
-                    previousTableName.compare(tableName, Qt::CaseInsensitive) !=
-                        0)
-                {
-                    QString restoreError;
-                    SelectTable(previousTableName, &restoreError);
-                }
                 if (outError != nullptr)
                 {
                     *outError =
                         QStringLiteral("Failed to add imported column \"") +
                         ToQString(column.name) + QStringLiteral("\": ") +
                         addError;
+                    if (!cleanupError.isEmpty())
+                    {
+                        *outError += QStringLiteral(" (") + cleanupError +
+                                     QStringLiteral(")");
+                    }
                 }
                 return false;
             }
-            ++addedColumns;
+        }
+
+        for (const sc::SCConstraintDef& constraint : sortedConstraints)
+        {
+            QString addError;
+            if (!AddConstraint(constraint, &addError))
+            {
+                QString cleanupError;
+                cleanupImportedTable(&cleanupError);
+
+                Refresh(nullptr);
+                if (outError != nullptr)
+                {
+                    *outError =
+                        QStringLiteral("Failed to add imported constraint \"") +
+                        ToQString(constraint.name) + QStringLiteral("\": ") +
+                        addError;
+                    if (!cleanupError.isEmpty())
+                    {
+                        *outError += QStringLiteral(" (") + cleanupError +
+                                     QStringLiteral(")");
+                    }
+                }
+                return false;
+            }
+        }
+
+        for (const SCSchemaTableImportIndex& index : schema.indexes)
+        {
+            sc::SCIndexDef indexDef;
+            indexDef.name = index.name.toStdWString();
+            indexDef.sourceKind = sc::SCSchemaSourceKind::Explicit;
+            for (const sc::SCIndexColumnDef& column : index.columns)
+            {
+                indexDef.columns.push_back(column);
+            }
+
+            QString addError;
+            if (!AddIndex(indexDef, &addError))
+            {
+                QString cleanupError;
+                cleanupImportedTable(&cleanupError);
+
+                Refresh(nullptr);
+                if (outError != nullptr)
+                {
+                    *outError =
+                        QStringLiteral("Failed to add imported index \"") +
+                        index.name + QStringLiteral("\": ") + addError;
+                    if (!cleanupError.isEmpty())
+                    {
+                        *outError += QStringLiteral(" (") + cleanupError +
+                                     QStringLiteral(")");
+                    }
+                }
+                return false;
+            }
         }
 
         return true;
@@ -2932,6 +3031,132 @@ namespace StableCore::Storage::Editor
                 }
 
                 return schema->AddIndex(newIndex);
+            },
+            outError);
+    }
+
+    bool SCDatabaseSession::AddConstraint(
+        const sc::SCConstraintDef& constraint, QString* outError)
+    {
+        if (!currentTable_)
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("No table is selected.");
+            }
+            return false;
+        }
+
+        if (constraint.name.empty() || constraint.columns.empty())
+        {
+            if (outError != nullptr)
+            {
+                *outError =
+                    QStringLiteral("Constraint name and columns are required.");
+            }
+            return false;
+        }
+
+        return BeginAndCommitSingleAction(
+            L"Add Constraint",
+            [this, constraint]() {
+                sc::SCSchemaPtr schema;
+                sc::ErrorCode rc = currentTable_->GetSchema(schema);
+                if (sc::Failed(rc))
+                {
+                    return rc;
+                }
+                return schema->AddConstraint(constraint);
+            },
+            outError);
+    }
+
+    bool SCDatabaseSession::RemoveConstraint(const QString& constraintName,
+                                             QString* outError)
+    {
+        if (!currentTable_)
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("No table is selected.");
+            }
+            return false;
+        }
+
+        const QString name = constraintName.trimmed();
+        if (name.isEmpty())
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("Constraint name is required.");
+            }
+            return false;
+        }
+
+        return BeginAndCommitSingleAction(
+            L"Remove Constraint",
+            [this, name]() {
+                sc::SCSchemaPtr schema;
+                sc::ErrorCode rc = currentTable_->GetSchema(schema);
+                if (sc::Failed(rc))
+                {
+                    return rc;
+                }
+                return schema->RemoveConstraint(name.toStdWString().c_str());
+            },
+            outError);
+    }
+
+    bool SCDatabaseSession::UpdateConstraint(
+        const QString& originalName, const sc::SCConstraintDef& newConstraint,
+        QString* outError)
+    {
+        if (!currentTable_)
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("No table is selected.");
+            }
+            return false;
+        }
+
+        const QString original = originalName.trimmed();
+        if (original.isEmpty() || newConstraint.name.empty())
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("Constraint name is required.");
+            }
+            return false;
+        }
+
+        if (newConstraint.columns.empty())
+        {
+            if (outError != nullptr)
+            {
+                *outError =
+                    QStringLiteral("Constraint must have at least one column.");
+            }
+            return false;
+        }
+
+        return BeginAndCommitSingleAction(
+            L"Update Constraint",
+            [this, original, newConstraint]() {
+                sc::SCSchemaPtr schema;
+                sc::ErrorCode rc = currentTable_->GetSchema(schema);
+                if (sc::Failed(rc))
+                {
+                    return rc;
+                }
+
+                rc = schema->RemoveConstraint(original.toStdWString().c_str());
+                if (sc::Failed(rc))
+                {
+                    return rc;
+                }
+
+                return schema->AddConstraint(newConstraint);
             },
             outError);
     }

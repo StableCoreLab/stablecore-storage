@@ -142,6 +142,14 @@ namespace StableCore::Storage::Editor
         bool UpdateIndex(const QString& originalName,
                          const StableCore::Storage::SCIndexDef& newIndex,
                          QString* outError);
+        bool AddConstraint(const StableCore::Storage::SCConstraintDef& constraint,
+                           QString* outError);
+        bool RemoveConstraint(const QString& constraintName,
+                              QString* outError);
+        bool UpdateConstraint(
+            const QString& originalName,
+            const StableCore::Storage::SCConstraintDef& newConstraint,
+            QString* outError);
 
         QString BuildHealthSummary() const;
         bool BuildSchemaSnapshot(

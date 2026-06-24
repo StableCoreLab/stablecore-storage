@@ -382,8 +382,72 @@ namespace StableCore::Storage::Editor
             return true;
         }
 
+        bool ApplyDescendingColumns(
+            const QStringList& descendingColumns,
+            QVector<sc::SCIndexColumnDef>* columns, QString* outError)
+        {
+            if (columns == nullptr)
+            {
+                return false;
+            }
+
+            for (const QString& descendingColumn : descendingColumns)
+            {
+                bool found = false;
+                for (sc::SCIndexColumnDef& indexColumn : *columns)
+                {
+                    if (QString::fromStdWString(indexColumn.columnName)
+                            .compare(descendingColumn, Qt::CaseInsensitive) == 0)
+                    {
+                        indexColumn.descending = true;
+                        found = true;
+                        break;
+                    }
+                }
+
+                if (!found)
+                {
+                    if (outError != nullptr)
+                    {
+                        *outError = QStringLiteral(
+                                        "Descending index column not found: ") +
+                                    descendingColumn;
+                    }
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        bool ParseIndexColumns(const QString& text,
+                               QVector<sc::SCIndexColumnDef>* outColumns,
+                               QString* outError)
+        {
+            if (outColumns == nullptr)
+            {
+                return false;
+            }
+
+            QStringList columns;
+            if (!ParseQuotedList(text, &columns, outError))
+            {
+                return false;
+            }
+
+            outColumns->clear();
+            outColumns->reserve(columns.size());
+            for (const QString& column : columns)
+            {
+                outColumns->push_back(
+                    sc::SCIndexColumnDef{column.toStdWString(), false});
+            }
+            return true;
+        }
+
         bool ParseIndexDeclaration(const QString& line, QString* outName,
-                                   QStringList* outColumns, QString* outError)
+                                   QVector<sc::SCIndexColumnDef>* outColumns,
+                                   QString* outError)
         {
             if (outName == nullptr || outColumns == nullptr)
             {
@@ -392,13 +456,30 @@ namespace StableCore::Storage::Editor
 
             const QRegularExpression sameLineRegex(
                 QStringLiteral("^\\s*\\.Index\\(\\s*\"((?:\\\\.|[^\"])*)\"\\s*"
-                               "\\)\\.Columns\\((.*)\\)\\s*;?\\s*$"));
+                               "\\)\\.Columns\\((.*?)\\)"
+                               "(?:\\.Desc\\((.*)\\))?\\s*;?\\s*$"));
             const auto sameLineMatch = sameLineRegex.match(line);
             if (sameLineMatch.hasMatch())
             {
                 *outName = UnescapeCppString(sameLineMatch.captured(1));
-                return ParseQuotedList(sameLineMatch.captured(2), outColumns,
-                                       outError);
+                if (!ParseIndexColumns(sameLineMatch.captured(2), outColumns,
+                                       outError))
+                {
+                    return false;
+                }
+
+                if (!sameLineMatch.captured(3).isEmpty())
+                {
+                    QStringList descendingColumns;
+                    if (!ParseQuotedList(sameLineMatch.captured(3),
+                                         &descendingColumns, outError))
+                    {
+                        return false;
+                    }
+                    return ApplyDescendingColumns(descendingColumns, outColumns,
+                                                  outError);
+                }
+                return true;
             }
 
             const QRegularExpression indexOnlyRegex(QStringLiteral(
@@ -411,6 +492,250 @@ namespace StableCore::Storage::Editor
 
             *outName = UnescapeCppString(indexOnlyMatch.captured(1));
             return true;
+        }
+
+        bool ParseConstraintKindToken(const QString& token,
+                                      sc::SCConstraintKind* outKind,
+                                      QString* outError)
+        {
+            if (outKind == nullptr)
+            {
+                return false;
+            }
+
+            if (token.compare(QStringLiteral("PrimaryKey"),
+                              Qt::CaseInsensitive) == 0)
+            {
+                *outKind = sc::SCConstraintKind::PrimaryKey;
+                return true;
+            }
+            if (token.compare(QStringLiteral("Unique"),
+                              Qt::CaseInsensitive) == 0)
+            {
+                *outKind = sc::SCConstraintKind::Unique;
+                return true;
+            }
+            if (token.compare(QStringLiteral("ForeignKey"),
+                              Qt::CaseInsensitive) == 0)
+            {
+                *outKind = sc::SCConstraintKind::ForeignKey;
+                return true;
+            }
+            if (token.compare(QStringLiteral("Check"),
+                              Qt::CaseInsensitive) == 0)
+            {
+                *outKind = sc::SCConstraintKind::Check;
+                return true;
+            }
+
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("Unsupported constraint kind: ") +
+                            token;
+            }
+            return false;
+        }
+
+        bool ParseConstraintActionToken(const QString& token,
+                                        sc::SCForeignKeyAction* outAction,
+                                        QString* outError)
+        {
+            if (outAction == nullptr)
+            {
+                return false;
+            }
+
+            if (token.compare(QStringLiteral("Restrict"),
+                              Qt::CaseInsensitive) == 0)
+            {
+                *outAction = sc::SCForeignKeyAction::Restrict;
+                return true;
+            }
+            if (token.compare(QStringLiteral("NoAction"),
+                              Qt::CaseInsensitive) == 0)
+            {
+                *outAction = sc::SCForeignKeyAction::NoAction;
+                return true;
+            }
+            if (token.compare(QStringLiteral("Cascade"),
+                              Qt::CaseInsensitive) == 0)
+            {
+                *outAction = sc::SCForeignKeyAction::Cascade;
+                return true;
+            }
+            if (token.compare(QStringLiteral("SetNull"),
+                              Qt::CaseInsensitive) == 0)
+            {
+                *outAction = sc::SCForeignKeyAction::SetNull;
+                return true;
+            }
+            if (token.compare(QStringLiteral("SetDefault"),
+                              Qt::CaseInsensitive) == 0)
+            {
+                *outAction = sc::SCForeignKeyAction::SetDefault;
+                return true;
+            }
+
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("Unsupported foreign key action: ") +
+                            token;
+            }
+            return false;
+        }
+
+        bool ParseConstraintCommentStart(const QString& comment,
+                                        sc::SCConstraintDef* outConstraint,
+                                        QString* outError)
+        {
+            if (outConstraint == nullptr)
+            {
+                return false;
+            }
+
+            const QRegularExpression regex(QStringLiteral(
+                "^\\.Constraint\\(\\s*\"((?:\\\\.|[^\"])*)\"\\s*,\\s*"
+                "([A-Za-z_][A-Za-z0-9_]*)\\s*\\)\\s*$"));
+            const auto match = regex.match(comment);
+            if (!match.hasMatch())
+            {
+                if (outError != nullptr)
+                {
+                    *outError = QStringLiteral("Invalid constraint comment: ") +
+                                EscapeForMessage(comment);
+                }
+                return false;
+            }
+
+            sc::SCConstraintDef constraint;
+            constraint.name = UnescapeCppString(match.captured(1)).toStdWString();
+            if (!ParseConstraintKindToken(match.captured(2), &constraint.kind,
+                                          outError))
+            {
+                return false;
+            }
+            constraint.sourceKind = sc::SCSchemaSourceKind::Explicit;
+            *outConstraint = std::move(constraint);
+            return true;
+        }
+
+        bool ParseConstraintCommentContinuation(
+            const QString& comment, sc::SCConstraintDef* constraint,
+            QString* outError)
+        {
+            if (constraint == nullptr)
+            {
+                return false;
+            }
+
+            if (comment.startsWith(QStringLiteral(".Columns(")))
+            {
+                QStringList columns;
+                if (!ParseQuotedList(comment.mid(QStringLiteral(".Columns").size()),
+                                     &columns, outError))
+                {
+                    return false;
+                }
+                constraint->columns.clear();
+                for (const QString& column : columns)
+                {
+                    constraint->columns.push_back(column.toStdWString());
+                }
+                return true;
+            }
+
+            if (comment.startsWith(QStringLiteral(".Ref(")))
+            {
+                QStringList refs;
+                if (!ParseQuotedList(comment.mid(QStringLiteral(".Ref").size()),
+                                     &refs, outError))
+                {
+                    return false;
+                }
+                if (refs.isEmpty())
+                {
+                    if (outError != nullptr)
+                    {
+                        *outError = QStringLiteral(
+                            "Foreign key reference requires at least one quoted value.");
+                    }
+                    return false;
+                }
+                constraint->referencedTable = refs.first().toStdWString();
+                constraint->referencedColumns.clear();
+                for (int index = 1; index < refs.size(); ++index)
+                {
+                    constraint->referencedColumns.push_back(
+                        refs[index].toStdWString());
+                }
+                return true;
+            }
+
+            if (comment.startsWith(QStringLiteral(".OnDelete(")))
+            {
+                const QRegularExpression tokenRegex(QStringLiteral(
+                    "^\\.OnDelete\\(\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*\\)\\s*$"));
+                const auto match = tokenRegex.match(comment);
+                if (!match.hasMatch())
+                {
+                    if (outError != nullptr)
+                    {
+                        *outError = QStringLiteral(
+                            "Invalid foreign key action syntax: ") +
+                                    EscapeForMessage(comment);
+                    }
+                    return false;
+                }
+                return ParseConstraintActionToken(match.captured(1),
+                                                  &constraint->onDelete,
+                                                  outError);
+            }
+
+            if (comment.startsWith(QStringLiteral(".OnUpdate(")))
+            {
+                const QRegularExpression tokenRegex(QStringLiteral(
+                    "^\\.OnUpdate\\(\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*\\)\\s*$"));
+                const auto match = tokenRegex.match(comment);
+                if (!match.hasMatch())
+                {
+                    if (outError != nullptr)
+                    {
+                        *outError = QStringLiteral(
+                            "Invalid foreign key action syntax: ") +
+                                    EscapeForMessage(comment);
+                    }
+                    return false;
+                }
+                return ParseConstraintActionToken(match.captured(1),
+                                                  &constraint->onUpdate,
+                                                  outError);
+            }
+
+            if (comment.startsWith(QStringLiteral(".Expr(")))
+            {
+                const QRegularExpression exprRegex(QStringLiteral(
+                    "^\\.Expr\\(\\s*(\"((?:\\\\.|[^\"])*)\")\\s*\\)\\s*$"));
+                const auto exprMatch = exprRegex.match(comment);
+                if (!exprMatch.hasMatch())
+                {
+                    if (outError != nullptr)
+                    {
+                        *outError = QStringLiteral("Invalid check expression: ") +
+                                    EscapeForMessage(comment);
+                    }
+                    return false;
+                }
+                constraint->checkExpression =
+                    UnescapeCppString(exprMatch.captured(2)).toStdWString();
+                return true;
+            }
+
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("Unsupported constraint comment token: ") +
+                            EscapeForMessage(comment);
+            }
+            return false;
         }
 
         void ApplyNeutralDefaultIfNeeded(sc::SCColumnDef* column)
@@ -470,10 +795,13 @@ namespace StableCore::Storage::Editor
             QRegularExpression(QStringLiteral("\\r?\\n")), Qt::KeepEmptyParts);
 
         bool inBlock = false;
+        bool inBlockBody = false;
         bool haveCurrentColumn = false;
         sc::SCColumnDef currentColumn;
         bool haveCurrentIndex = false;
         SCSchemaTableImportIndex currentIndex;
+        bool haveCurrentConstraint = false;
+        sc::SCConstraintDef currentConstraint;
 
         const auto flushColumn = [&]() {
             if (!haveCurrentColumn)
@@ -499,31 +827,105 @@ namespace StableCore::Storage::Editor
             haveCurrentIndex = false;
         };
 
+        const auto flushConstraint = [&]() {
+            if (!haveCurrentConstraint)
+            {
+                return;
+            }
+            outResult->constraints.push_back(currentConstraint);
+            currentConstraint = sc::SCConstraintDef{};
+            haveCurrentConstraint = false;
+        };
+
         for (QString rawLine : lines)
         {
             QString line = rawLine.trimmed();
-            if (line.isEmpty() || line.startsWith(QStringLiteral("//")))
-            {
-                continue;
-            }
 
             if (!inBlock)
             {
-                if (!macroRegex.match(line).hasMatch())
+                if (macroRegex.match(line).hasMatch())
                 {
-                    continue;
+                    inBlock = true;
                 }
-                inBlock = true;
                 continue;
             }
 
-            if (line == QStringLiteral("{"))
+            if (!inBlockBody)
+            {
+                if (line == QStringLiteral("{"))
+                {
+                    inBlockBody = true;
+                }
+                continue;
+            }
+
+            bool reprocess = true;
+            while (reprocess)
+            {
+                reprocess = false;
+                if (line.isEmpty())
+                {
+                    flushConstraint();
+                    break;
+                }
+
+                if (line.startsWith(QStringLiteral("//")))
+                {
+                    QString comment = line.mid(2).trimmed();
+                    if (comment.startsWith(QStringLiteral(".Constraint(")))
+                    {
+                        flushColumn();
+                        flushIndex();
+                        flushConstraint();
+                        if (!ParseConstraintCommentStart(comment,
+                                                         &currentConstraint,
+                                                         outError))
+                        {
+                            return false;
+                        }
+                        haveCurrentConstraint = true;
+                        break;
+                    }
+                    if (haveCurrentConstraint &&
+                        (comment.startsWith(QStringLiteral(".Columns(")) ||
+                         comment.startsWith(QStringLiteral(".Ref(")) ||
+                         comment.startsWith(QStringLiteral(".OnDelete(")) ||
+                         comment.startsWith(QStringLiteral(".OnUpdate(")) ||
+                         comment.startsWith(QStringLiteral(".Expr("))))
+                    {
+                        if (ParseConstraintCommentContinuation(
+                                comment, &currentConstraint, outError))
+                        {
+                            break;
+                        }
+                        return false;
+                    }
+                    if (haveCurrentConstraint)
+                    {
+                        flushConstraint();
+                        reprocess = true;
+                        continue;
+                    }
+                    break;
+                }
+
+                if (haveCurrentConstraint)
+                {
+                    flushConstraint();
+                    reprocess = true;
+                    continue;
+                }
+                break;
+            }
+
+            if (line.isEmpty())
             {
                 continue;
             }
 
             if (line.startsWith(QStringLiteral("}")))
             {
+                flushConstraint();
                 break;
             }
 
@@ -576,6 +978,7 @@ namespace StableCore::Storage::Editor
 
             if (line.startsWith(QStringLiteral(".Column(")))
             {
+                flushConstraint();
                 flushColumn();
                 flushIndex();
                 if (!ParseColumnDeclaration(line, &currentColumn,
@@ -588,25 +991,21 @@ namespace StableCore::Storage::Editor
             }
 
             QString indexName;
-            QStringList indexColumns;
+            QVector<sc::SCIndexColumnDef> indexColumns;
             if (ParseIndexDeclaration(line, &indexName, &indexColumns,
                                       outError))
             {
+                flushConstraint();
                 flushColumn();
                 if (!indexName.isEmpty())
                 {
                     flushIndex();
                     currentIndex.name = indexName;
                     haveCurrentIndex = true;
-                    if (!indexColumns.isEmpty())
-                    {
-                        currentIndex.columns = indexColumns;
-                        flushIndex();
-                    }
+                    currentIndex.columns = indexColumns;
                 } else if (!indexColumns.isEmpty())
                 {
                     currentIndex.columns = indexColumns;
-                    flushIndex();
                 }
                 continue;
             }
@@ -679,13 +1078,41 @@ namespace StableCore::Storage::Editor
             if (haveCurrentIndex &&
                 line.startsWith(QStringLiteral(".Columns(")))
             {
-                if (!ParseQuotedList(
+                if (!ParseIndexColumns(
                         line.mid(QStringLiteral(".Columns").size()),
                         &indexColumns, outError))
                 {
                     return false;
                 }
                 currentIndex.columns = indexColumns;
+                continue;
+            }
+
+            if (haveCurrentIndex &&
+                line.startsWith(QStringLiteral(".Desc(")))
+            {
+                if (currentIndex.columns.isEmpty())
+                {
+                    if (outError != nullptr)
+                    {
+                        *outError = QStringLiteral(
+                            "Index descending columns require a preceding .Columns(...).");
+                    }
+                    return false;
+                }
+
+                QStringList descendingColumns;
+                if (!ParseQuotedList(
+                        line.mid(QStringLiteral(".Desc").size()),
+                        &descendingColumns, outError))
+                {
+                    return false;
+                }
+                if (!ApplyDescendingColumns(descendingColumns,
+                                            &currentIndex.columns, outError))
+                {
+                    return false;
+                }
                 flushIndex();
                 continue;
             }
@@ -701,6 +1128,41 @@ namespace StableCore::Storage::Editor
 
         flushColumn();
         flushIndex();
+        flushConstraint();
+
+        const auto primaryKeyConstraintIt = std::find_if(
+            outResult->constraints.begin(), outResult->constraints.end(),
+            [](const sc::SCConstraintDef& constraint) {
+                return constraint.kind == sc::SCConstraintKind::PrimaryKey;
+            });
+        if (primaryKeyConstraintIt == outResult->constraints.end() &&
+            !outResult->primaryKeyColumnName.trimmed().isEmpty())
+        {
+            sc::SCConstraintDef primaryKeyConstraint;
+            primaryKeyConstraint.kind = sc::SCConstraintKind::PrimaryKey;
+            primaryKeyConstraint.name =
+                (QStringLiteral("pk_") + outResult->tableMacroName)
+                    .toStdWString();
+            primaryKeyConstraint.columns.push_back(
+                outResult->primaryKeyColumnName.toStdWString());
+            primaryKeyConstraint.sourceKind = sc::SCSchemaSourceKind::Explicit;
+            outResult->constraints.insert(outResult->constraints.begin(),
+                                          std::move(primaryKeyConstraint));
+        }
+        if (outResult->primaryKeyColumnName.trimmed().isEmpty())
+        {
+            for (const sc::SCConstraintDef& constraint : outResult->constraints)
+            {
+                if (constraint.kind != sc::SCConstraintKind::PrimaryKey ||
+                    constraint.columns.empty())
+                {
+                    continue;
+                }
+                outResult->primaryKeyColumnName =
+                    QString::fromStdWString(constraint.columns.front());
+                break;
+            }
+        }
 
         if (outResult->tableName.trimmed().isEmpty())
         {
@@ -718,11 +1180,7 @@ namespace StableCore::Storage::Editor
                                "the current create-table flow."));
         }
 
-        if (outResult->primaryKeyColumnName.trimmed().isEmpty())
-        {
-            outResult->warnings.push_back(
-                QStringLiteral("No explicit primary key was imported."));
-        } else
+        if (!outResult->primaryKeyColumnName.trimmed().isEmpty())
         {
             const auto columnIt = std::find_if(
                 outResult->columns.begin(), outResult->columns.end(),
@@ -740,10 +1198,18 @@ namespace StableCore::Storage::Editor
             {
                 columnIt->nullable = false;
                 ApplyNeutralDefaultIfNeeded(&*columnIt);
-                outResult->warnings.push_back(
-                    QStringLiteral("Primary key was imported as a non-null "
-                                   "column hint only."));
             }
+        }
+
+        if (std::none_of(outResult->constraints.begin(),
+                         outResult->constraints.end(),
+                         [](const sc::SCConstraintDef& constraint) {
+                             return constraint.kind ==
+                                    sc::SCConstraintKind::PrimaryKey;
+                         }))
+        {
+            outResult->warnings.push_back(
+                QStringLiteral("No explicit primary key was imported."));
         }
 
         for (const SCSchemaTableImportIndex& index : outResult->indexes)
@@ -753,15 +1219,10 @@ namespace StableCore::Storage::Editor
                 continue;
             }
 
-            if (index.columns.size() > 1)
+            for (const sc::SCIndexColumnDef& indexColumn : index.columns)
             {
-                outResult->warnings.push_back(
-                    QStringLiteral("Composite indexes are imported as "
-                                   "per-column indexed hints only."));
-            }
-
-            for (const QString& columnName : index.columns)
-            {
+                const QString columnName =
+                    QString::fromStdWString(indexColumn.columnName);
                 const auto columnIt = std::find_if(
                     outResult->columns.begin(), outResult->columns.end(),
                     [&columnName](const sc::SCColumnDef& column) {
@@ -778,14 +1239,6 @@ namespace StableCore::Storage::Editor
                 }
                 columnIt->indexed = true;
             }
-        }
-
-        if (!outResult->indexes.isEmpty())
-        {
-            outResult->warnings.push_back(
-                QStringLiteral("Index names are not stored by the current "
-                               "create-table flow; indexed columns were "
-                               "imported as single-column hints."));
         }
 
         if (outResult->columns.isEmpty())
