@@ -115,6 +115,7 @@ namespace StableCore::Storage::Editor
         tableDescriptionEdit_->setPlaceholderText(QStringLiteral("Optional schema text description"));
         includeLegacyIndexesCheck_ = new QCheckBox(QStringLiteral("Include legacy index hints in generated schema"),
                                                    overviewGroup);
+        includeLegacyIndexesCheck_->setChecked(true);
 
         overviewLayout->addRow(QStringLiteral("Table"), tableNameValueLabel_);
         overviewLayout->addRow(QStringLiteral("Primary Key"), primaryKeyValueLabel_);

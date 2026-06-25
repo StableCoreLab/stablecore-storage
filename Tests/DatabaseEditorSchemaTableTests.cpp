@@ -1,16 +1,27 @@
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <filesystem>
 #include <vector>
 
+#include "SCDatabaseSession.h"
 #include "SCSchemaTableImport.h"
 #include "SCSchemaTableGenerator.h"
 
 namespace sc = StableCore::Storage;
 namespace editor = StableCore::Storage::Editor;
+namespace fs = std::filesystem;
 
 namespace
 {
+
+    fs::path MakeTempDbPath(const wchar_t* fileName)
+    {
+        fs::path path = fs::temp_directory_path() / fileName;
+        std::error_code ec;
+        fs::remove(path, ec);
+        return path;
+    }
 
     sc::SCColumnDef MakeColumn(const wchar_t* name, sc::ValueKind kind, bool nullable = false)
     {
@@ -302,7 +313,7 @@ TEST(DatabaseEditorSchemaTable, BuildsCurrentTableSchemaCode)
     EXPECT_EQ(code, expected);
 }
 
-TEST(DatabaseEditorSchemaTable, FiltersLegacyIndexesUnlessRequested)
+TEST(DatabaseEditorSchemaTable, ExportsLegacyIndexesByDefaultAndCanHideThem)
 {
     sc::SCTableSchemaSnapshot snapshot;
     snapshot.table.name = L"Beam";
@@ -323,20 +334,87 @@ TEST(DatabaseEditorSchemaTable, FiltersLegacyIndexesUnlessRequested)
     snapshot.indexes.push_back(legacyIndex);
 
     editor::SCSchemaTableExportOptions defaultOptions;
-    const QString withoutLegacy =
-        editor::BuildSchemaTableCode(snapshot, defaultOptions);
-    EXPECT_NE(withoutLegacy.indexOf(QStringLiteral(".Index(\"idx_Beam_Id\")")), -1);
-    EXPECT_EQ(withoutLegacy.indexOf(QStringLiteral(".Index(\"idx_Beam_Id_Legacy\")")),
-              -1);
-
-    editor::SCSchemaTableExportOptions includeLegacyOptions;
-    includeLegacyOptions.includeLegacyIndexes = true;
     const QString withLegacy =
-        editor::BuildSchemaTableCode(snapshot, includeLegacyOptions);
+        editor::BuildSchemaTableCode(snapshot, defaultOptions);
     EXPECT_NE(withLegacy.indexOf(QStringLiteral(".Index(\"idx_Beam_Id\")")), -1);
     EXPECT_NE(
         withLegacy.indexOf(QStringLiteral(".Index(\"idx_Beam_Id_Legacy\")")),
         -1);
+
+    editor::SCSchemaTableExportOptions hideLegacyOptions;
+    hideLegacyOptions.includeLegacyIndexes = false;
+    const QString withoutLegacy =
+        editor::BuildSchemaTableCode(snapshot, hideLegacyOptions);
+    EXPECT_NE(withoutLegacy.indexOf(QStringLiteral(".Index(\"idx_Beam_Id\")")),
+              -1);
+    EXPECT_EQ(
+        withoutLegacy.indexOf(QStringLiteral(".Index(\"idx_Beam_Id_Legacy\")")),
+        -1);
+}
+
+TEST(DatabaseEditorSchemaTable, ImportedIndexesDoNotCreateLegacyHints)
+{
+    const QString schemaText = QStringLiteral(R"(SC_SCHEMA_TABLE(Beam)
+{
+    Table("Beam")
+        .Column("Width", SCType::Int64)
+        .Column("Name", SCType::String)
+        .Index("idx_Beam_Width").Columns("Width");
+})");
+
+    editor::SCSchemaTableImportResult result;
+    QString error;
+    EXPECT_TRUE(editor::ParseSchemaTableDescription(schemaText, &result, &error))
+        << error.toStdString();
+
+    ASSERT_EQ(result.indexes.size(), 1);
+    ASSERT_EQ(result.columns.size(), 2);
+    EXPECT_FALSE(result.columns[0].indexed);
+    EXPECT_FALSE(result.columns[1].indexed);
+
+    const fs::path dbPath =
+        MakeTempDbPath(L"StableCoreStorage_DbEditor_ImportedIndexExplicit.sqlite");
+    editor::SCDatabaseSession session;
+    ASSERT_TRUE(session.CreateDatabase(QString::fromStdWString(dbPath.wstring()),
+                                       &error))
+        << error.toStdString();
+
+    EXPECT_TRUE(session.CreateTableFromSchema(result, &error))
+        << error.toStdString();
+
+    sc::SCSchemaPtr schema;
+    ASSERT_TRUE(session.CurrentTable() != nullptr);
+    ASSERT_EQ(session.CurrentTable()->GetSchema(schema), sc::SC_OK);
+
+    sc::SCIndexDef loadedIndex;
+    EXPECT_EQ(schema->FindIndex(L"idx_Beam_Width", &loadedIndex), sc::SC_OK);
+    EXPECT_EQ(loadedIndex.sourceKind, sc::SCSchemaSourceKind::Explicit);
+    EXPECT_EQ(schema->FindIndex(L"idx_legacy_Width", &loadedIndex),
+              sc::SC_E_INDEX_NOT_FOUND);
+}
+
+TEST(DatabaseEditorSchemaTable, ParseSchemaTableDescriptionDedupesDuplicateNames)
+{
+    const QString schemaText = QStringLiteral(R"(SC_SCHEMA_TABLE(Beam)
+{
+    Table("Beam")
+        .Column("Width", SCType::Int64)
+        .Index("idx_Beam_Width").Columns("Width")
+        .Index("idx_Beam_Width").Columns("Width");
+
+// .Constraint("uq_Beam_Width", Unique)
+//     .Columns("Width")
+// .Constraint("uq_Beam_Width", Unique)
+//     .Columns("Width")
+})");
+
+    editor::SCSchemaTableImportResult result;
+    QString error;
+    EXPECT_TRUE(editor::ParseSchemaTableDescription(schemaText, &result, &error))
+        << error.toStdString();
+
+    EXPECT_EQ(result.indexes.size(), 1);
+    EXPECT_EQ(result.constraints.size(), 1);
 }
 
 TEST(DatabaseEditorSchemaTable, ParsesRelationReferenceStorageAndDisplayColumns)

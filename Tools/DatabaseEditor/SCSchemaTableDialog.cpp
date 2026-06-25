@@ -37,7 +37,7 @@ namespace StableCore::Storage::Editor
                 "Generate SC_SCHEMA_TABLE code from the current table."
                 " Defaults are exported when present."
                 " Primary keys and indexes are exported explicitly;"
-                " legacy index hints are excluded unless requested."),
+                " legacy index hints are included by default and can be hidden."),
             this);
         introLabel->setWordWrap(true);
         layout->addWidget(introLabel);
@@ -61,7 +61,7 @@ namespace StableCore::Storage::Editor
 
         includeLegacyIndexesCheck_ = new QCheckBox(
             QStringLiteral("Include legacy index hints"), this);
-        includeLegacyIndexesCheck_->setChecked(false);
+        includeLegacyIndexesCheck_->setChecked(true);
         form->addRow(QStringLiteral("Legacy Indexes"),
                      includeLegacyIndexesCheck_);
 

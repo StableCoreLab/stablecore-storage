@@ -22,8 +22,13 @@ TEST(QueryExecutorRequireIndexTests, LegacyFindRecordsRoutesThroughExecutor)
     sc::SCDbPtr db;
     EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
 
-    sc::SCTablePtr table = CreateQueryableBeamTable(db);
-    SeedQueryableBeamRows(table, db);
+    sc::SCTablePtr table = CreateWidthOnlyBeamTable(db);
+    sc::SCEditPtr edit;
+    EXPECT_EQ(db->BeginEdit(L"seed", edit), sc::SC_OK);
+    sc::SCRecordPtr row;
+    EXPECT_EQ(table->CreateRecord(row), sc::SC_OK);
+    EXPECT_EQ(row->SetInt64(L"Width", 200), sc::SC_OK);
+    EXPECT_EQ(db->Commit(edit.Get()), sc::SC_OK);
 
     sc::SCRecordCursorPtr cursor;
     EXPECT_EQ(table->FindRecords({L"Width", sc::SCValue::FromInt64(200)}, cursor), sc::SC_OK);
@@ -44,7 +49,7 @@ TEST(QueryExecutorRequireIndexTests, SqliteExecutorReportsDirectAndPartialModes)
     sc::SCDbPtr db;
     EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
 
-    sc::SCTablePtr table = CreateQueryableBeamTable(db);
+    sc::SCTablePtr table = CreateCompositeIndexedBeamTable(db);
     SeedQueryableBeamRows(table, db);
 
     auto planner = sc::CreateDefaultQueryPlanner();
@@ -81,18 +86,22 @@ TEST(QueryExecutorRequireIndexTests, SqliteExecutorReportsDirectAndPartialModes)
     EXPECT_NE(directResult.executionNote.find(L"SELECT record_id"), std::wstring::npos);
 
     sc::QueryPlan partialPlan;
-    EXPECT_EQ(planner->BuildPlan(sc::QueryTarget{L"Beam", sc::QueryTargetType::Table},
-                                 {sc::QueryConditionGroup{sc::QueryLogicOperator::And,
-                                                          {sc::QueryCondition{L"Name",
-                                                                              sc::QueryConditionOperator::StartsWith,
-                                                                              {sc::SCValue::FromString(L"Al")}}}}},
-                                 sc::QueryLogicOperator::And,
-                                 {},
-                                 {},
-                                 {},
-                                 {},
-                                 &partialPlan),
-              sc::SC_OK);
+    EXPECT_EQ(
+        planner->BuildPlan(
+            sc::QueryTarget{L"Beam", sc::QueryTargetType::Table},
+            {sc::QueryConditionGroup{
+                sc::QueryLogicOperator::And,
+                {sc::QueryCondition{L"Width", sc::QueryConditionOperator::Equal, {sc::SCValue::FromInt64(100)}},
+                 sc::QueryCondition{L"Name",
+                                    sc::QueryConditionOperator::StartsWith,
+                                    {sc::SCValue::FromString(L"Al")}}}}},
+            sc::QueryLogicOperator::And,
+            {},
+            {},
+            {},
+            {},
+            &partialPlan),
+        sc::SC_OK);
 
     sc::SCRecordCursorPtr partialCursor;
     sc::QueryExecutionResult partialResult;
@@ -104,8 +113,8 @@ TEST(QueryExecutorRequireIndexTests, SqliteExecutorReportsDirectAndPartialModes)
     EXPECT_EQ(sc::ExecuteQueryPlan(partialPlan, partialContext, &partialResult), sc::SC_OK);
     EXPECT_EQ(partialResult.mode, sc::QueryExecutionMode::PartialIndex);
     EXPECT_FALSE(partialResult.fallbackTriggered);
-    EXPECT_EQ(partialResult.matchedRows, 2u);
-    EXPECT_EQ(partialResult.returnedRows, 2u);
+    EXPECT_EQ(partialResult.matchedRows, 1u);
+    EXPECT_EQ(partialResult.returnedRows, 1u);
     EXPECT_FALSE(partialResult.usedIndexIds.empty());
 }
 
@@ -117,8 +126,18 @@ TEST(QueryExecutorRequireIndexTests, PlannerRejectsBinaryRangeAndPrefixCondition
     const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_QuerySqlite_BinaryRejected.sqlite");
     sc::SCDbPtr db;
     EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
-    sc::SCTablePtr table = CreateQueryableBeamTable(db);
-    SeedQueryableBeamRows(table, db);
+    sc::SCTablePtr table;
+    EXPECT_EQ(db->CreateTable(L"Beam", table), sc::SC_OK);
+
+    sc::SCSchemaPtr schema;
+    EXPECT_EQ(table->GetSchema(schema), sc::SC_OK);
+
+    sc::SCColumnDef attachment;
+    attachment.name = L"Attachment";
+    attachment.displayName = L"Attachment";
+    attachment.valueKind = sc::ValueKind::Binary;
+    attachment.defaultValue = sc::SCValue::FromBinary(std::vector<std::uint8_t>{});
+    EXPECT_EQ(schema->AddColumn(attachment), sc::SC_OK);
 
     sc::QueryPlan rangePlan;
     EXPECT_EQ(
@@ -236,8 +255,13 @@ TEST(QueryExecutorRequireIndexTests, ExecutorRejectsRequireIndexOnPartialPlans)
     sc::SCDbPtr db;
     EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
 
-    sc::SCTablePtr table = CreateQueryableBeamTable(db);
-    SeedQueryableBeamRows(table, db);
+    sc::SCTablePtr table = CreateWidthOnlyBeamTable(db);
+    sc::SCEditPtr edit;
+    EXPECT_EQ(db->BeginEdit(L"seed", edit), sc::SC_OK);
+    sc::SCRecordPtr row;
+    EXPECT_EQ(table->CreateRecord(row), sc::SC_OK);
+    EXPECT_EQ(row->SetInt64(L"Width", 100), sc::SC_OK);
+    EXPECT_EQ(db->Commit(edit.Get()), sc::SC_OK);
 
     sc::QueryPlan plan;
     plan.target = sc::QueryTarget{L"Beam", sc::QueryTargetType::Table};
@@ -269,14 +293,19 @@ TEST(QueryExecutorRequireIndexTests, ExecutorRejectsRequireIndexOnDirectPlansWit
     sc::SCDbPtr db;
     EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
 
-    sc::SCTablePtr table = CreateQueryableBeamTable(db);
-    SeedQueryableBeamRows(table, db);
+    sc::SCTablePtr table = CreateWidthOnlyBeamTable(db);
+    sc::SCEditPtr edit;
+    EXPECT_EQ(db->BeginEdit(L"seed", edit), sc::SC_OK);
+    sc::SCRecordPtr row;
+    EXPECT_EQ(table->CreateRecord(row), sc::SC_OK);
+    EXPECT_EQ(row->SetInt64(L"Width", 100), sc::SC_OK);
+    EXPECT_EQ(db->Commit(edit.Get()), sc::SC_OK);
 
     sc::QueryPlan plan;
     plan.target = sc::QueryTarget{L"Beam", sc::QueryTargetType::Table};
     plan.conditionGroups = {sc::QueryConditionGroup{
         sc::QueryLogicOperator::And,
-        {sc::QueryCondition{L"Width", sc::QueryConditionOperator::Equal, {sc::SCValue::FromInt64(100)}}}}};
+        {sc::QueryCondition{L"Name", sc::QueryConditionOperator::Equal, {sc::SCValue::FromString(L"Alpha")}}}}};
     plan.conditionGroupLogic = sc::QueryLogicOperator::And;
     plan.state = sc::QueryPlanState::DirectIndex;
     plan.constraints.requireIndex = true;
@@ -294,15 +323,20 @@ TEST(QueryExecutorRequireIndexTests, ExecutorRejectsRequireIndexOnDirectPlansWit
     EXPECT_NE(result.executionNote.find(L"executor-unsupported:index-required"), std::wstring::npos);
 }
 
-TEST(QueryExecutorRequireIndexTests, RequireIndexRejectsLegacySingleColumnIndexesWithoutExplicitSchemaIndex)
+TEST(QueryExecutorRequireIndexTests, RequireIndexRejectsWidthOnlyLookupWithoutExplicitSchemaIndex)
 {
     const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_QuerySqlite_RequireIndexLegacy.sqlite");
 
     sc::SCDbPtr db;
     EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
 
-    sc::SCTablePtr table = CreateQueryableBeamTable(db);
-    SeedQueryableBeamRows(table, db);
+    sc::SCTablePtr table = CreateWidthOnlyBeamTable(db);
+    sc::SCEditPtr edit;
+    EXPECT_EQ(db->BeginEdit(L"seed", edit), sc::SC_OK);
+    sc::SCRecordPtr row;
+    EXPECT_EQ(table->CreateRecord(row), sc::SC_OK);
+    EXPECT_EQ(row->SetInt64(L"Width", 200), sc::SC_OK);
+    EXPECT_EQ(db->Commit(edit.Get()), sc::SC_OK);
 
     auto planner = sc::CreateDefaultQueryPlanner();
     ASSERT_NE(planner, nullptr);
@@ -387,7 +421,7 @@ TEST(QueryExecutorRequireIndexTests, RequireIndexAcceptsExplicitCompositeSchemaI
     EXPECT_EQ(result.usedIndexIds.front(), L"idx_Beam_Width_Name");
 }
 
-TEST(QueryExecutorRequireIndexTests, RequireIndexPrefersExplicitCompositeIndexWhenLegacyHintAlsoExists)
+TEST(QueryExecutorRequireIndexTests, RequireIndexUsesExplicitSingleColumnIndexAlongsideComposite)
 {
     const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_QuerySqlite_RequireIndexExplicitWins.sqlite");
 
@@ -429,7 +463,7 @@ TEST(QueryExecutorRequireIndexTests, RequireIndexPrefersExplicitCompositeIndexWh
     EXPECT_EQ(sc::ExecuteQueryPlan(plan, context, &result), sc::SC_OK);
     EXPECT_EQ(result.mode, sc::QueryExecutionMode::DirectIndex);
     ASSERT_EQ(result.usedIndexIds.size(), 1u);
-    EXPECT_EQ(result.usedIndexIds.front(), L"idx_Beam_Width_Name");
+    EXPECT_EQ(result.usedIndexIds.front(), L"idx_Beam_Width");
 }
 
 TEST(QueryExecutorRequireIndexTests, RequireIndexRejectsNonPrefixCompositeLookupWithoutLegacyIndex)

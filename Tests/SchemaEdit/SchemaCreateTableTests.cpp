@@ -116,6 +116,38 @@ TEST(SchemaEdit, CreateTableFromSchemaBuildsConstraintsAndIndexes)
     EXPECT_EQ(index.columns.front().columnName, L"Name");
 }
 
+TEST(SchemaEdit, CreateTableFromSchemaMarksIndexedColumnsAsExplicitIndexes)
+{
+    const fs::path dbPath = MakeTempDbPath(
+        L"StableCoreStorage_SchemaEdit_CreateTableIndexedColumnExplicit.sqlite");
+    sc::SCDbPtr db;
+    EXPECT_EQ(sc::CreateFileDatabase(dbPath.c_str(), sc::SCOpenDatabaseOptions{}, db),
+              sc::SC_OK);
+
+    sc::SCTableSchemaSnapshot schema;
+    schema.table.name = L"Beam";
+
+    sc::SCColumnDef width = MakeIntColumn(L"Width");
+    width.indexed = true;
+    schema.columns.push_back(width);
+
+    sc::SCSchemaEditResult result;
+    EXPECT_EQ(sc::CreateTableFromSchema(db.Get(), schema, &result), sc::SC_OK);
+    EXPECT_TRUE(result.applied);
+
+    sc::SCTablePtr table;
+    EXPECT_EQ(db->GetTable(L"Beam", table), sc::SC_OK);
+
+    sc::SCSchemaPtr loadedSchema;
+    EXPECT_EQ(table->GetSchema(loadedSchema), sc::SC_OK);
+
+    sc::SCIndexDef index;
+    EXPECT_EQ(loadedSchema->FindIndex(L"idx_Beam_Width", &index), sc::SC_OK);
+    EXPECT_EQ(index.sourceKind, sc::SCSchemaSourceKind::Explicit);
+    ASSERT_EQ(index.columns.size(), 1u);
+    EXPECT_EQ(index.columns.front().columnName, L"Width");
+}
+
 TEST(SchemaEdit, BackendCreateTableFailureDoesNotLeaveVisibleTable)
 {
     const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_SchemaEdit_BackendCreateFailureCleanup.sqlite");

@@ -3826,7 +3826,7 @@ namespace StableCore::Storage
 
                 SCIndexDef index;
                 index.name = indexName;
-                index.sourceKind = SCSchemaSourceKind::LegacyHint;
+                index.sourceKind = SCSchemaSourceKind::Explicit;
                 index.columns.push_back(SCIndexColumnDef{columnName, false});
                 if (indexIt != indexes_.end())
                 {
@@ -11719,6 +11719,10 @@ namespace StableCore::Storage
             }
 
             const std::wstring indexName = schema->LegacyIndexName(columnName);
+            SCIndexDef index;
+            index.name = indexName;
+            index.sourceKind = SCSchemaSourceKind::Explicit;
+            index.columns.push_back(SCIndexColumnDef{columnName, false});
 
             {
                 SqliteStmt deleteColumnsStmt = db_.Prepare(
@@ -11747,9 +11751,20 @@ namespace StableCore::Storage
                 }
             }
 
+            {
+                const ErrorCode removeQueryIndexRc =
+                    RemoveQueryIndexDefinition(schema, indexName.c_str(), false);
+                if (Failed(removeQueryIndexRc))
+                {
+                    return removeQueryIndexRc;
+                }
+            }
+
             if (!indexed)
             {
-                schema->SetLegacyIndexState(columnName, false);
+                schema->UnloadIndex(indexName.c_str());
+                queryIndexRowIdsByTableAndName_.erase(
+                    BuildQueryIndexStorageKey(schema->TableRowId(), indexName));
                 return SC_OK;
             }
 
@@ -11758,7 +11773,7 @@ namespace StableCore::Storage
                 "VALUES(?, ?, ?);");
             insertIndexStmt.BindInt64(1, schema->TableRowId());
             insertIndexStmt.BindText(2, indexName);
-            insertIndexStmt.BindInt(3, ToSqliteSchemaSourceKind(SCSchemaSourceKind::LegacyHint));
+            insertIndexStmt.BindInt(3, ToSqliteSchemaSourceKind(SCSchemaSourceKind::Explicit));
             const ErrorCode insertRc = insertIndexStmt.Step();
             if (Failed(insertRc))
             {
@@ -11777,7 +11792,32 @@ namespace StableCore::Storage
                 return columnRc;
             }
 
-            schema->SetLegacyIndexState(columnName, true);
+            const ErrorCode queryIndexRc = PersistQueryIndexDefinition(schema, index, indexId);
+            if (Failed(queryIndexRc))
+            {
+                return queryIndexRc;
+            }
+
+            // Keep the legacy indexed-column path aligned with query-index storage so the executor can resolve it.
+            const auto tableIt = std::find_if(
+                tables_.begin(),
+                tables_.end(),
+                [tableRowId = schema->TableRowId()](const std::pair<const std::wstring, SCTablePtr>& entry) {
+                    const auto* table = static_cast<const SqliteTable*>(entry.second.Get());
+                    return table != nullptr && table->TableRowId() == tableRowId;
+                });
+            if (tableIt != tables_.end())
+            {
+                auto* table = static_cast<SqliteTable*>(tableIt->second.Get());
+                const ErrorCode rebuildRc = RebuildCompositeIndexEntriesForTable(table, index, indexId);
+                if (Failed(rebuildRc))
+                {
+                    return rebuildRc;
+                }
+            }
+
+            schema->UnloadIndex(indexName.c_str());
+            schema->LoadIndex(index, indexId);
             return SC_OK;
         }
 

@@ -12,7 +12,7 @@ namespace StableCore::Storage::Editor
     {
         QString tableDescription;
         QString primaryKeyColumnName;
-        bool includeLegacyIndexes{false};
+        bool includeLegacyIndexes{true};
     };
 
     QString BuildSchemaTableCode(

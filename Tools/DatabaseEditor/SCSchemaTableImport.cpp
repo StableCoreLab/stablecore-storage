@@ -494,6 +494,28 @@ namespace StableCore::Storage::Editor
             return true;
         }
 
+        bool HasConstraintName(const QVector<sc::SCConstraintDef>& constraints,
+                               const std::wstring& name)
+        {
+            return std::any_of(
+                constraints.begin(), constraints.end(),
+                [&name](const sc::SCConstraintDef& constraint) {
+                    return QString::fromStdWString(constraint.name)
+                               .compare(QString::fromStdWString(name),
+                                        Qt::CaseInsensitive) == 0;
+                });
+        }
+
+        bool HasIndexName(const QVector<SCSchemaTableImportIndex>& indexes,
+                          const QString& name)
+        {
+            return std::any_of(
+                indexes.begin(), indexes.end(),
+                [&name](const SCSchemaTableImportIndex& index) {
+                    return index.name.compare(name, Qt::CaseInsensitive) == 0;
+                });
+        }
+
         bool ParseConstraintKindToken(const QString& token,
                                       sc::SCConstraintKind* outKind,
                                       QString* outError)
@@ -819,7 +841,8 @@ namespace StableCore::Storage::Editor
             {
                 return;
             }
-            if (!currentIndex.columns.isEmpty())
+            if (!currentIndex.columns.isEmpty() &&
+                !HasIndexName(outResult->indexes, currentIndex.name))
             {
                 outResult->indexes.push_back(currentIndex);
             }
@@ -832,7 +855,12 @@ namespace StableCore::Storage::Editor
             {
                 return;
             }
-            outResult->constraints.push_back(currentConstraint);
+            if (!currentConstraint.name.empty() &&
+                !HasConstraintName(outResult->constraints,
+                                   currentConstraint.name))
+            {
+                outResult->constraints.push_back(currentConstraint);
+            }
             currentConstraint = sc::SCConstraintDef{};
             haveCurrentConstraint = false;
         };
@@ -1237,7 +1265,6 @@ namespace StableCore::Storage::Editor
                         columnName);
                     continue;
                 }
-                columnIt->indexed = true;
             }
         }
 

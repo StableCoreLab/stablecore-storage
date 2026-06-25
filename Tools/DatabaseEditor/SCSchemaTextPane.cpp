@@ -46,6 +46,7 @@ namespace StableCore::Storage::Editor
         exportDescriptionEdit_ = new QLineEdit(this);
         exportDescriptionEdit_->setPlaceholderText(QStringLiteral("Optional exported description"));
         includeLegacyIndexesCheck_ = new QCheckBox(QStringLiteral("Include legacy index hints"), this);
+        includeLegacyIndexesCheck_->setChecked(true);
         optionsRow->addWidget(exportStatusLabel_, 1);
         optionsRow->addWidget(exportDescriptionEdit_, 1);
         optionsRow->addWidget(includeLegacyIndexesCheck_);

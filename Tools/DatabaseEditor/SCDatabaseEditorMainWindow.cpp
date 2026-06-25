@@ -198,35 +198,6 @@ namespace StableCore::Storage::Editor
             }
         }
 
-        QString ExplorerNodeTypeToText(ExplorerNodeType type)
-        {
-            switch (type)
-            {
-                case ExplorerNodeType::Database:
-                    return QStringLiteral("Database");
-                case ExplorerNodeType::TablesRoot:
-                    return QStringLiteral("Tables");
-                case ExplorerNodeType::Table:
-                    return QStringLiteral("Table");
-                case ExplorerNodeType::ComputedRoot:
-                    return QStringLiteral("Computed Column");
-                case ExplorerNodeType::ComputedColumn:
-                    return QStringLiteral("Computed Column");
-                case ExplorerNodeType::ActivityRoot:
-                    return QStringLiteral("Activity");
-                case ExplorerNodeType::EditLog:
-                    return QStringLiteral("Edit Log");
-                case ExplorerNodeType::Journal:
-                    return QStringLiteral("Journal");
-                case ExplorerNodeType::Snapshots:
-                    return QStringLiteral("Snapshots");
-                case ExplorerNodeType::Diagnostics:
-                    return QStringLiteral("Diagnostics");
-                default:
-                    return QStringLiteral("Unknown");
-            }
-        }
-
         QString EditLogActionKindToText(sc::SCEditLogActionKind kind)
         {
             switch (kind)
@@ -850,8 +821,7 @@ namespace StableCore::Storage::Editor
         objectExplorerDock_->setAllowedAreas(Qt::LeftDockWidgetArea |
                                              Qt::RightDockWidgetArea);
         objectTree_ = new QTreeWidget(objectExplorerDock_);
-        objectTree_->setHeaderLabels(
-            {QStringLiteral("Object"), QStringLiteral("Type")});
+        objectTree_->setHeaderLabels({QStringLiteral("Object")});
         objectTree_->setSelectionMode(QAbstractItemView::SingleSelection);
         objectTree_->setAlternatingRowColors(true);
         objectTree_->setContextMenuPolicy(Qt::CustomContextMenu);
@@ -1077,6 +1047,8 @@ namespace StableCore::Storage::Editor
         });
 
         auto* toolbar = addToolBar(QStringLiteral("Main Toolbar"));
+        toolbar->setAllowedAreas(Qt::TopToolBarArea);
+        toolbar->setMovable(true);
         toolbar->addAction(QStringLiteral("Open Database"), this,
                            &SCDatabaseEditorMainWindow::OpenDatabase);
         toolbar->addAction(QStringLiteral("New Database"), this,
@@ -1101,7 +1073,10 @@ namespace StableCore::Storage::Editor
 
         // 表Operation工具栏 - 与主工具栏并列
         // Table operations toolbar, alongside the main toolbar.
+        addToolBarBreak(Qt::TopToolBarArea);
         tableToolBar_ = addToolBar(QStringLiteral("Table Actions"));
+        tableToolBar_->setAllowedAreas(Qt::TopToolBarArea);
+        tableToolBar_->setMovable(true);
         tableToolBar_->addAction(QStringLiteral("Add Record"), this,
                                  &SCDatabaseEditorMainWindow::AddRecord);
         tableToolBar_->addAction(
@@ -3057,13 +3032,12 @@ namespace StableCore::Storage::Editor
                                 ExplorerNodeType::TablesRoot));
 
         const QStringList tableNames = session_->TableNames();
+        QTreeWidgetItem* selectedTableItem = nullptr;
         for (const QString& name : tableNames)
         {
             auto* tableItem =
                 new QTreeWidgetItem(tablesRoot);
             tableItem->setText(0, name);
-            tableItem->setText(
-                1, ExplorerNodeTypeToText(ExplorerNodeType::Table));
             tableItem->setData(
                 0, kExplorerNodeTypeRole,
                 static_cast<int>(ExplorerNodeType::Table));
@@ -3072,7 +3046,6 @@ namespace StableCore::Storage::Editor
 
             auto* columnsItem = new QTreeWidgetItem(tableItem);
             columnsItem->setText(0, QStringLiteral("Columns"));
-            columnsItem->setText(1, QStringLiteral("Design"));
             columnsItem->setData(
                 0, kExplorerNodeTypeRole,
                 static_cast<int>(ExplorerNodeType::TableColumns));
@@ -3080,7 +3053,6 @@ namespace StableCore::Storage::Editor
 
             auto* constraintsItem = new QTreeWidgetItem(tableItem);
             constraintsItem->setText(0, QStringLiteral("Constraints"));
-            constraintsItem->setText(1, QStringLiteral("Design"));
             constraintsItem->setData(
                 0, kExplorerNodeTypeRole,
                 static_cast<int>(ExplorerNodeType::TableConstraints));
@@ -3088,7 +3060,6 @@ namespace StableCore::Storage::Editor
 
             auto* indexesItem = new QTreeWidgetItem(tableItem);
             indexesItem->setText(0, QStringLiteral("Indexes"));
-            indexesItem->setText(1, QStringLiteral("Design"));
             indexesItem->setData(
                 0, kExplorerNodeTypeRole,
                 static_cast<int>(ExplorerNodeType::TableIndexes));
@@ -3096,7 +3067,6 @@ namespace StableCore::Storage::Editor
 
             auto* recordsItem = new QTreeWidgetItem(tableItem);
             recordsItem->setText(0, QStringLiteral("Records"));
-            recordsItem->setText(1, QStringLiteral("Data"));
             recordsItem->setData(
                 0, kExplorerNodeTypeRole,
                 static_cast<int>(ExplorerNodeType::TableRecords));
@@ -3106,7 +3076,7 @@ namespace StableCore::Storage::Editor
                 name.compare(session_->CurrentTableName(),
                              Qt::CaseInsensitive) == 0)
             {
-                objectTree_->setCurrentItem(tableItem);
+                selectedTableItem = tableItem;
             }
         }
 
@@ -3127,10 +3097,6 @@ namespace StableCore::Storage::Editor
             auto* colItem =
                 new QTreeWidgetItem(computedRoot);
             colItem->setText(0, ToQString(col.displayName));
-            colItem->setText(
-                1,
-                ExplorerNodeTypeToText(
-                    ExplorerNodeType::ComputedColumn));
             colItem->setData(
                 0, kExplorerNodeTypeRole,
                 static_cast<int>(
@@ -3150,9 +3116,6 @@ namespace StableCore::Storage::Editor
         auto* editLogItem =
             new QTreeWidgetItem(systemRoot);
         editLogItem->setText(0, QStringLiteral("Edit Log"));
-        editLogItem->setText(
-            1,
-            ExplorerNodeTypeToText(ExplorerNodeType::EditLog));
         editLogItem->setData(0, kExplorerNodeTypeRole,
                              static_cast<int>(
                                  ExplorerNodeType::EditLog));
@@ -3160,9 +3123,6 @@ namespace StableCore::Storage::Editor
         auto* journalItem =
             new QTreeWidgetItem(systemRoot);
         journalItem->setText(0, QStringLiteral("Journal"));
-        journalItem->setText(
-            1,
-            ExplorerNodeTypeToText(ExplorerNodeType::Journal));
         journalItem->setData(0, kExplorerNodeTypeRole,
                              static_cast<int>(
                                  ExplorerNodeType::Journal));
@@ -3170,10 +3130,6 @@ namespace StableCore::Storage::Editor
         auto* snapshotsItem =
             new QTreeWidgetItem(systemRoot);
         snapshotsItem->setText(0, QStringLiteral("Snapshots"));
-        snapshotsItem->setText(
-            1,
-            ExplorerNodeTypeToText(
-                ExplorerNodeType::Snapshots));
         snapshotsItem->setData(0, kExplorerNodeTypeRole,
                                static_cast<int>(
                                    ExplorerNodeType::Snapshots));
@@ -3181,15 +3137,15 @@ namespace StableCore::Storage::Editor
         auto* diagnosticsItem =
             new QTreeWidgetItem(systemRoot);
         diagnosticsItem->setText(0, QStringLiteral("Diagnostics"));
-        diagnosticsItem->setText(
-            1,
-            ExplorerNodeTypeToText(
-                ExplorerNodeType::Diagnostics));
         diagnosticsItem->setData(0, kExplorerNodeTypeRole,
                                  static_cast<int>(
                                      ExplorerNodeType::Diagnostics));
 
         objectTree_->expandAll();
+        if (selectedTableItem != nullptr)
+        {
+            objectTree_->setCurrentItem(selectedTableItem);
+        }
     }
 
     void SCDatabaseEditorMainWindow::OnTableSelectionChanged()
