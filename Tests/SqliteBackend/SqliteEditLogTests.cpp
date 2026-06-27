@@ -1,4 +1,5 @@
 #include <filesystem>
+#include <utility>
 
 #include <gtest/gtest.h>
 #include <sqlite3.h>
@@ -12,6 +13,16 @@ namespace fs = std::filesystem;
 
 namespace
 {
+    struct RecordingObserver final : sc::ISCDatabaseObserver
+    {
+        void OnDatabaseChanged(const sc::SCChangeSet& changeSet) override
+        {
+            seen.push_back(changeSet);
+        }
+
+        std::vector<sc::SCChangeSet> seen;
+    };
+
     sc::ErrorCode CreateFileDb(const wchar_t* path, sc::SCDbPtr& db)
     {
         return sc::CreateFileDatabase(path, sc::SCOpenDatabaseOptions{}, db);
@@ -33,6 +44,30 @@ namespace
         EXPECT_EQ(schema->AddColumn(width), sc::SC_OK);
 
         return table;
+    }
+
+    std::vector<std::pair<std::wstring, std::wstring>> CollectRenamePairs(
+        const sc::SCChangeSet& changeSet)
+    {
+        std::vector<std::pair<std::wstring, std::wstring>> pairs;
+        for (const sc::SCDataChange& change : changeSet.changes)
+        {
+            if (!change.structuralChange ||
+                change.kind != sc::ChangeKind::TableRenamed)
+            {
+                continue;
+            }
+
+            std::wstring fromName;
+            std::wstring toName;
+            if (change.oldValue.AsStringCopy(&fromName) != sc::SC_OK ||
+                change.newValue.AsStringCopy(&toName) != sc::SC_OK)
+            {
+                continue;
+            }
+            pairs.emplace_back(std::move(fromName), std::move(toName));
+        }
+        return pairs;
     }
 
     class SqliteReadTransactionLock
@@ -112,6 +147,8 @@ TEST(SqliteEditLog, OpenModeAndEditLogStateAreQueryable)
     EXPECT_TRUE(logState.redoItems.empty());
 
     sc::SCTablePtr beamTable = CreateBeamTable(db);
+    (void)beamTable;
+    (void)beamTable;
     sc::SCEditPtr edit;
     EXPECT_EQ(db->BeginEdit(L"seed", edit), sc::SC_OK);
 
@@ -270,4 +307,246 @@ TEST(SqliteEditLog, NoHistoryOpenModeHidesEditLog)
     EXPECT_EQ(db->GetEditLogState(&logState), sc::SC_OK);
     EXPECT_TRUE(logState.undoItems.empty());
     EXPECT_TRUE(logState.redoItems.empty());
+}
+
+TEST(SqliteEditLog, RenameTableChangeSetsPreserveEveryRenameInUndoRedo)
+{
+    const fs::path dbPath =
+        MakeTempDbPath(L"StableCoreStorage_Sqlite_EditLog_RenamePairs.sqlite");
+
+    sc::SCDbPtr db;
+    EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
+
+    sc::SCTablePtr beamTable = CreateBeamTable(db);
+    sc::SCTablePtr floorTable;
+    EXPECT_EQ(db->CreateTable(L"Floor", floorTable), sc::SC_OK);
+    sc::SCSchemaPtr floorSchema;
+    EXPECT_EQ(floorTable->GetSchema(floorSchema), sc::SC_OK);
+    sc::SCColumnDef floorWidth;
+    floorWidth.name = L"Width";
+    floorWidth.displayName = L"Width";
+    floorWidth.valueKind = sc::ValueKind::Int64;
+    floorWidth.defaultValue = sc::SCValue::FromInt64(0);
+    EXPECT_EQ(floorSchema->AddColumn(floorWidth), sc::SC_OK);
+    (void)floorTable;
+
+    RecordingObserver observer;
+    EXPECT_EQ(db->AddObserver(&observer), sc::SC_OK);
+
+    sc::SCEditPtr edit;
+    EXPECT_EQ(db->BeginEdit(L"rename pair", edit), sc::SC_OK);
+    EXPECT_EQ(db->RenameTable(L"Beam", L"BeamRenamed"), sc::SC_OK);
+    EXPECT_EQ(db->RenameTable(L"Floor", L"FloorRenamed"), sc::SC_OK);
+    EXPECT_EQ(db->Commit(edit.Get()), sc::SC_OK);
+
+    ASSERT_FALSE(observer.seen.empty());
+    const sc::SCChangeSet& commitChangeSet = observer.seen.back();
+    EXPECT_EQ(commitChangeSet.source, sc::ChangeSource::UserEdit);
+    const auto commitPairs = CollectRenamePairs(commitChangeSet);
+    ASSERT_EQ(commitPairs.size(), 2u);
+    EXPECT_EQ(commitPairs[0], std::make_pair(std::wstring(L"Beam"), std::wstring(L"BeamRenamed")));
+    EXPECT_EQ(commitPairs[1], std::make_pair(std::wstring(L"Floor"), std::wstring(L"FloorRenamed")));
+
+    EXPECT_EQ(db->Undo(), sc::SC_OK);
+    ASSERT_FALSE(observer.seen.empty());
+    const sc::SCChangeSet& undoChangeSet = observer.seen.back();
+    EXPECT_EQ(undoChangeSet.source, sc::ChangeSource::Undo);
+    const auto undoPairs = CollectRenamePairs(undoChangeSet);
+    ASSERT_EQ(undoPairs.size(), 2u);
+    EXPECT_EQ(undoPairs[0], std::make_pair(std::wstring(L"BeamRenamed"), std::wstring(L"Beam")));
+    EXPECT_EQ(undoPairs[1], std::make_pair(std::wstring(L"FloorRenamed"), std::wstring(L"Floor")));
+
+    EXPECT_EQ(db->Redo(), sc::SC_OK);
+    ASSERT_FALSE(observer.seen.empty());
+    const sc::SCChangeSet& redoChangeSet = observer.seen.back();
+    EXPECT_EQ(redoChangeSet.source, sc::ChangeSource::Redo);
+    const auto redoPairs = CollectRenamePairs(redoChangeSet);
+    ASSERT_EQ(redoPairs.size(), 2u);
+    EXPECT_EQ(redoPairs[0], std::make_pair(std::wstring(L"Beam"), std::wstring(L"BeamRenamed")));
+    EXPECT_EQ(redoPairs[1], std::make_pair(std::wstring(L"Floor"), std::wstring(L"FloorRenamed")));
+
+    EXPECT_EQ(db->RemoveObserver(&observer), sc::SC_OK);
+}
+
+TEST(SqliteEditLog, SchemaEditsDoNotEmitRenameTableChanges)
+{
+    const fs::path dbPath =
+        MakeTempDbPath(L"StableCoreStorage_Sqlite_EditLog_NoFalseRename.sqlite");
+
+    sc::SCDbPtr db;
+    EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
+
+    sc::SCTablePtr beamTable = CreateBeamTable(db);
+    (void)beamTable;
+
+    RecordingObserver observer;
+    EXPECT_EQ(db->AddObserver(&observer), sc::SC_OK);
+
+    sc::SCEditPtr edit;
+    EXPECT_EQ(db->BeginEdit(L"add schema column", edit), sc::SC_OK);
+
+    sc::SCTablePtr table;
+    EXPECT_EQ(db->GetTable(L"Beam", table), sc::SC_OK);
+    ASSERT_TRUE(table != nullptr);
+
+    sc::SCSchemaPtr schema;
+    EXPECT_EQ(table->GetSchema(schema), sc::SC_OK);
+
+    sc::SCColumnDef height;
+    height.name = L"Height";
+    height.displayName = L"Height";
+    height.valueKind = sc::ValueKind::Int64;
+    height.defaultValue = sc::SCValue::FromInt64(0);
+    EXPECT_EQ(schema->AddColumn(height), sc::SC_OK);
+    EXPECT_EQ(db->Commit(edit.Get()), sc::SC_OK);
+
+    ASSERT_FALSE(observer.seen.empty());
+    const sc::SCChangeSet& changeSet = observer.seen.back();
+    EXPECT_TRUE(CollectRenamePairs(changeSet).empty());
+
+    bool sawFieldUpdate = false;
+    for (const sc::SCDataChange& change : changeSet.changes)
+    {
+        if (change.tableName == L"Beam" && change.kind == sc::ChangeKind::FieldUpdated)
+        {
+            sawFieldUpdate = true;
+        }
+        EXPECT_NE(change.kind, sc::ChangeKind::TableRenamed);
+    }
+    EXPECT_TRUE(sawFieldUpdate);
+
+    EXPECT_EQ(db->RemoveObserver(&observer), sc::SC_OK);
+}
+
+TEST(SqliteEditLog, RenameTablePreservesEarlierJournaledWritesInSameEdit)
+{
+    const fs::path dbPath =
+        MakeTempDbPath(L"StableCoreStorage_Sqlite_EditLog_RenameMixedWrites.sqlite");
+
+    sc::SCDbPtr db;
+    EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
+
+    sc::SCTablePtr beamTable = CreateBeamTable(db);
+
+    sc::SCEditPtr edit;
+    EXPECT_EQ(db->BeginEdit(L"rename after writes", edit), sc::SC_OK);
+
+    sc::SCRecordPtr beam;
+    EXPECT_EQ(beamTable->CreateRecord(beam), sc::SC_OK);
+    ASSERT_TRUE(beam != nullptr);
+    const sc::RecordId recordId = beam->GetId();
+    EXPECT_EQ(beam->SetInt64(L"Width", 11), sc::SC_OK);
+
+    EXPECT_EQ(db->RenameTable(L"Beam", L"BeamRenamed"), sc::SC_OK);
+    EXPECT_EQ(beam->SetInt64(L"Width", 17), sc::SC_OK);
+    EXPECT_EQ(db->Commit(edit.Get()), sc::SC_OK);
+
+    sc::SCTablePtr renamedTable;
+    EXPECT_EQ(db->GetTable(L"BeamRenamed", renamedTable), sc::SC_OK);
+    ASSERT_TRUE(renamedTable != nullptr);
+
+    sc::SCRecordPtr reloaded;
+    EXPECT_EQ(renamedTable->GetRecord(recordId, reloaded), sc::SC_OK);
+    ASSERT_TRUE(reloaded != nullptr);
+    std::int64_t width = 0;
+    EXPECT_EQ(reloaded->GetInt64(L"Width", &width), sc::SC_OK);
+    EXPECT_EQ(width, 17);
+
+    EXPECT_EQ(db->Undo(), sc::SC_OK);
+    sc::SCTablePtr originalTable;
+    EXPECT_EQ(db->GetTable(L"Beam", originalTable), sc::SC_OK);
+    ASSERT_TRUE(originalTable != nullptr);
+    sc::SCRecordCursorPtr originalCursor;
+    EXPECT_EQ(originalTable->EnumerateRecords(originalCursor), sc::SC_OK);
+    std::size_t originalCount = 0;
+    sc::SCRecordPtr originalRecord;
+    while (originalCursor->Next(originalRecord) == sc::SC_OK && originalRecord)
+    {
+        ++originalCount;
+    }
+    EXPECT_EQ(originalCount, 0u);
+    sc::SCRecordPtr missing;
+    EXPECT_EQ(originalTable->GetRecord(recordId, missing), sc::SC_OK);
+    ASSERT_TRUE(missing != nullptr);
+    EXPECT_TRUE(missing->IsDeleted());
+
+    EXPECT_EQ(db->Redo(), sc::SC_OK);
+    EXPECT_EQ(db->GetTable(L"BeamRenamed", renamedTable), sc::SC_OK);
+    ASSERT_TRUE(renamedTable != nullptr);
+    EXPECT_EQ(renamedTable->GetRecord(recordId, reloaded), sc::SC_OK);
+    ASSERT_TRUE(reloaded != nullptr);
+    width = 0;
+    EXPECT_EQ(reloaded->GetInt64(L"Width", &width), sc::SC_OK);
+    EXPECT_EQ(width, 17);
+}
+
+TEST(SqliteEditLog, RenameTableRollbackRestoresOriginalTableWithinActiveEdit)
+{
+    const fs::path dbPath =
+        MakeTempDbPath(L"StableCoreStorage_Sqlite_EditLog_RenameRollback.sqlite");
+
+    sc::SCDbPtr db;
+    EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
+
+    sc::SCTablePtr beamTable = CreateBeamTable(db);
+
+    sc::SCEditPtr edit;
+    EXPECT_EQ(db->BeginEdit(L"rename rollback", edit), sc::SC_OK);
+
+    sc::SCRecordPtr beam;
+    EXPECT_EQ(beamTable->CreateRecord(beam), sc::SC_OK);
+    ASSERT_TRUE(beam != nullptr);
+    EXPECT_EQ(beam->SetInt64(L"Width", 24), sc::SC_OK);
+
+    EXPECT_EQ(db->RenameTable(L"Beam", L"BeamRenamed"), sc::SC_OK);
+    EXPECT_EQ(db->Rollback(edit.Get()), sc::SC_OK);
+
+    sc::SCTablePtr originalTable;
+    EXPECT_EQ(db->GetTable(L"Beam", originalTable), sc::SC_OK);
+    ASSERT_TRUE(originalTable != nullptr);
+
+    sc::SCTablePtr renamedTable;
+    EXPECT_NE(db->GetTable(L"BeamRenamed", renamedTable), sc::SC_OK);
+
+    sc::SCRecordCursorPtr cursor;
+    EXPECT_EQ(originalTable->EnumerateRecords(cursor), sc::SC_OK);
+    std::size_t count = 0;
+    sc::SCRecordPtr record;
+    while (cursor->Next(record) == sc::SC_OK && record)
+    {
+        ++count;
+    }
+    EXPECT_EQ(count, 0u);
+}
+
+TEST(SqliteEditLog, RenameTableIsNotPersistedBeforeActiveEditCommit)
+{
+    const fs::path dbPath =
+        MakeTempDbPath(L"StableCoreStorage_Sqlite_EditLog_RenameDeferred.sqlite");
+
+    sc::SCDbPtr db;
+    EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
+
+    sc::SCTablePtr beamTable = CreateBeamTable(db);
+    (void)beamTable;
+
+    sc::SCEditPtr edit;
+    EXPECT_EQ(db->BeginEdit(L"rename deferred", edit), sc::SC_OK);
+    EXPECT_EQ(db->RenameTable(L"Beam", L"BeamRenamed"), sc::SC_OK);
+
+    sc::SCTablePtr renamedInEdit;
+    EXPECT_EQ(db->GetTable(L"BeamRenamed", renamedInEdit), sc::SC_OK);
+    ASSERT_TRUE(renamedInEdit != nullptr);
+
+    sc::SCDbPtr reopened;
+    EXPECT_EQ(CreateFileDb(dbPath.c_str(), reopened), sc::SC_OK);
+
+    sc::SCTablePtr persistedBeam;
+    EXPECT_EQ(reopened->GetTable(L"Beam", persistedBeam), sc::SC_OK);
+    ASSERT_TRUE(persistedBeam != nullptr);
+
+    sc::SCTablePtr persistedRenamed;
+    EXPECT_NE(reopened->GetTable(L"BeamRenamed", persistedRenamed), sc::SC_OK);
+
+    EXPECT_EQ(db->Rollback(edit.Get()), sc::SC_OK);
 }

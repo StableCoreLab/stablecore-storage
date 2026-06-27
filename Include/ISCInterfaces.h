@@ -330,6 +330,14 @@ namespace StableCore::Storage
 
         virtual VersionId GetCurrentVersion() const noexcept = 0;
         virtual std::int32_t GetSchemaVersion() const noexcept = 0;
+
+        virtual ErrorCode RenameTable(const wchar_t* originalName,
+                                      const wchar_t* newName)
+        {
+            (void)originalName;
+            (void)newName;
+            return SC_E_NOTIMPL;
+        }
     };
 
 }  // namespace StableCore::Storage

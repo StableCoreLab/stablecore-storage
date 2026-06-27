@@ -18,7 +18,7 @@ TEST(SqliteUpgrade, UnsupportedVersionIsRejectedByOpenPolicy)
 {
     sc::SCVersionGraph graph;
     EXPECT_EQ(sc::BuildDefaultVersionGraph(&graph), sc::SC_OK);
-    EXPECT_EQ(graph.latestSupportedVersion, 7);
+    EXPECT_EQ(graph.latestSupportedVersion, 8);
     EXPECT_FALSE(graph.nodes.empty());
     EXPECT_TRUE(graph.edges.empty());
 
@@ -124,16 +124,20 @@ TEST(SqliteUpgrade, ExplicitUpgradeEntryAppliesRegisteredRelationUpgrade)
     EXPECT_EQ(sc::UpgradeFileDatabase(dbPath.c_str(), upgradedDb, &upgradeResult), sc::SC_OK);
     EXPECT_EQ(upgradeResult.status, sc::SCUpgradeStatus::Success);
     EXPECT_EQ(upgradeResult.sourceVersion, 5);
-    EXPECT_EQ(upgradeResult.targetVersion, 7);
+    EXPECT_EQ(upgradeResult.targetVersion, 8);
     ASSERT_TRUE(upgradedDb);
-    EXPECT_EQ(upgradedDb->GetSchemaVersion(), 7);
+    EXPECT_EQ(upgradedDb->GetSchemaVersion(), 8);
+    EXPECT_TRUE(QuerySqliteExists(
+        dbPath,
+        "SELECT 1 FROM sqlite_master WHERE type='index' "
+        "AND name='idx_schema_constraints_table_name';"));
 
     upgradedDb.Reset();
 
     sc::SCDbPtr reopenedDb;
     EXPECT_EQ(sc::CreateFileDatabase(dbPath.c_str(), sc::SCOpenDatabaseOptions{}, reopenedDb), sc::SC_OK);
     ASSERT_TRUE(reopenedDb);
-    EXPECT_EQ(reopenedDb->GetSchemaVersion(), 7);
+    EXPECT_EQ(reopenedDb->GetSchemaVersion(), 8);
 }
 
 TEST(SqliteUpgrade, CreateFileDatabaseAutoUpgradesRegisteredRelationVersion)
@@ -149,12 +153,16 @@ TEST(SqliteUpgrade, CreateFileDatabaseAutoUpgradesRegisteredRelationVersion)
     sc::SCDbPtr reopenedDb;
     EXPECT_EQ(sc::CreateFileDatabase(dbPath.c_str(), sc::SCOpenDatabaseOptions{}, reopenedDb), sc::SC_OK);
     ASSERT_TRUE(reopenedDb);
-    EXPECT_EQ(reopenedDb->GetSchemaVersion(), 7);
+    EXPECT_EQ(reopenedDb->GetSchemaVersion(), 8);
+    EXPECT_TRUE(QuerySqliteExists(
+        dbPath,
+        "SELECT 1 FROM sqlite_master WHERE type='index' "
+        "AND name='idx_schema_constraints_table_name';"));
 
     std::int64_t schemaVersionAfterOpen = 0;
     EXPECT_TRUE(
     QuerySqliteInt64(dbPath, "SELECT value FROM metadata WHERE key='schema_version'", &schemaVersionAfterOpen));
-    EXPECT_EQ(schemaVersionAfterOpen, 7);
+    EXPECT_EQ(schemaVersionAfterOpen, 8);
 }
 
 TEST(SqliteUpgrade, MissingJournalTablesAreReportedExplicitly)
@@ -223,7 +231,11 @@ TEST(SqliteUpgrade, SchemaVersionFiveWithLegacyJournalSchemaOpensAndUpgrades)
     const sc::ErrorCode openRc = sc::CreateFileDatabase(dbPath.c_str(), sc::SCOpenDatabaseOptions{}, reopenedDb);
     EXPECT_EQ(openRc, sc::SC_OK);
     ASSERT_TRUE(reopenedDb);
-    EXPECT_EQ(reopenedDb->GetSchemaVersion(), 7);
+    EXPECT_EQ(reopenedDb->GetSchemaVersion(), 8);
     EXPECT_TRUE(SqliteTableHasColumn(dbPath, "journal_schema_entries", "old_reference_storage_column"));
     EXPECT_TRUE(SqliteTableHasColumn(dbPath, "journal_schema_entries", "new_reference_storage_column"));
+    EXPECT_TRUE(QuerySqliteExists(
+        dbPath,
+        "SELECT 1 FROM sqlite_master WHERE type='index' "
+        "AND name='idx_schema_constraints_table_name';"));
 }

@@ -80,9 +80,11 @@ namespace
         return index;
     }
 
-    sc::SCComputedColumnDef MakeExpressionComputedColumn(const wchar_t* name,
-                                                         const wchar_t* expression,
-                                                         const wchar_t* dependencyField)
+    sc::SCComputedColumnDef MakeExpressionComputedColumnForTable(
+        const wchar_t* name,
+        const wchar_t* expression,
+        const wchar_t* dependencyTable,
+        const wchar_t* dependencyField)
     {
         sc::SCComputedColumnDef column;
         column.name = name;
@@ -90,8 +92,18 @@ namespace
         column.valueKind = sc::ValueKind::Int64;
         column.kind = sc::ComputedFieldKind::Expression;
         column.expression = expression;
-        column.dependencies.factFields = {{L"Beam", dependencyField}};
+        column.dependencies.factFields = {{dependencyTable, dependencyField}};
         return column;
+    }
+
+    sc::SCComputedColumnDef MakeExpressionComputedColumn(const wchar_t* name,
+                                                         const wchar_t* expression,
+                                                         const wchar_t* dependencyField)
+    {
+        return MakeExpressionComputedColumnForTable(name,
+                                                    expression,
+                                                    L"Beam",
+                                                    dependencyField);
     }
 
     sc::SCColumnDef MakeBusinessKeyRelationColumn(const wchar_t* name,
@@ -142,6 +154,46 @@ namespace
             names.push_back(column.name);
         }
         return names;
+    }
+
+    std::wstring FirstFactDependencyTableName(const sc::SCComputedColumnDef& column)
+    {
+        return column.dependencies.factFields.empty()
+                   ? std::wstring()
+                   : column.dependencies.factFields.front().tableName;
+    }
+
+    bool LoadSessionComputedColumnOnTable(editor::SCDatabaseSession& session,
+                                          const QString& tableName,
+                                          const QString& columnName,
+                                          sc::SCComputedColumnDef* outColumn,
+                                          QString* outError)
+    {
+        if (!session.SelectTable(tableName, outError))
+        {
+            return false;
+        }
+        return session.GetSessionComputedColumn(columnName, outColumn, outError);
+    }
+
+    bool ReadCurrentComputedInt64(editor::SCDatabaseSession& session,
+                                  sc::RecordId recordId,
+                                  const wchar_t* columnName,
+                                  std::int64_t* outValue)
+    {
+        if (outValue == nullptr || session.CurrentTableView() == nullptr)
+        {
+            return false;
+        }
+
+        sc::SCValue value;
+        if (session.CurrentTableView()->GetCellValue(recordId, columnName, &value) !=
+            sc::SC_OK)
+        {
+            return false;
+        }
+
+        return value.AsInt64(outValue) == sc::SC_OK;
     }
 
 }  // namespace
@@ -929,6 +981,540 @@ TEST(DatabaseEditorSession, EditColumnUpdatesSchemaSnapshotInPlace)
     EXPECT_EQ(columnCount, 1);
 }
 
+TEST(DatabaseEditorSession, UpdateColumnAllowsRenamingFieldAndPreservesValues)
+{
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_DbEditor_RenameColumn.sqlite");
+
+    editor::SCDatabaseSession session;
+    QString error;
+
+    ASSERT_TRUE(session.CreateDatabase(QString::fromStdWString(dbPath.wstring()), &error))
+        << error.toStdString();
+    ASSERT_TRUE(session.CreateTable(QStringLiteral("Beam"), &error)) << error.toStdString();
+    sc::SCColumnDef width = MakeIntColumn(L"Width");
+    width.nullable = true;
+    ASSERT_TRUE(session.AddColumn(width, &error)) << error.toStdString();
+
+    sc::SCEditPtr edit;
+    ASSERT_EQ(session.Database()->BeginEdit(L"seed", edit), sc::SC_OK);
+    ASSERT_TRUE(session.CurrentTable() != nullptr);
+    sc::SCRecordPtr record;
+    ASSERT_EQ(session.CurrentTable()->CreateRecord(record), sc::SC_OK);
+    const sc::RecordId recordId = record->GetId();
+    ASSERT_EQ(record->SetInt64(L"Width", 128), sc::SC_OK);
+    ASSERT_EQ(session.Database()->Commit(edit.Get()), sc::SC_OK);
+
+    sc::SCColumnDef updated = MakeIntColumn(L"Length");
+    updated.displayName = L"Length";
+    updated.nullable = true;
+    updated.defaultValue = sc::SCValue::Null();
+    ASSERT_TRUE(session.UpdateColumn(QStringLiteral("Width"), updated, &error))
+        << error.toStdString();
+
+    QVector<sc::SCColumnDef> columns;
+    ASSERT_TRUE(session.BuildSchemaSnapshot(&columns, &error)) << error.toStdString();
+    ASSERT_EQ(columns.size(), 1);
+    EXPECT_EQ(columns[0].name, L"Length");
+
+    sc::SCRecordPtr reloaded;
+    ASSERT_EQ(session.CurrentTable()->GetRecord(recordId, reloaded), sc::SC_OK);
+    std::int64_t length = 0;
+    ASSERT_EQ(reloaded->GetInt64(L"Length", &length), sc::SC_OK);
+    EXPECT_EQ(length, 128);
+}
+
+TEST(DatabaseEditorSession, UpdateColumnRenamesReferencesInConstraintsIndexesAndRelations)
+{
+    const fs::path dbPath =
+        MakeTempDbPath(L"StableCoreStorage_DbEditor_RenameColumnReferences.sqlite");
+
+    editor::SCDatabaseSession session;
+    QString error;
+
+    ASSERT_TRUE(session.CreateDatabase(QString::fromStdWString(dbPath.wstring()), &error))
+        << error.toStdString();
+    ASSERT_TRUE(session.CreateTable(QStringLiteral("Beam"), &error)) << error.toStdString();
+
+    sc::SCColumnDef code = MakeStringColumn(L"Code");
+    code.nullable = false;
+    ASSERT_TRUE(session.AddColumn(code, &error)) << error.toStdString();
+    ASSERT_TRUE(session.AddIndex(MakeIndex(L"idx_Beam_Code", L"Code"), &error))
+        << error.toStdString();
+    ASSERT_TRUE(session.CurrentTable() != nullptr);
+    {
+        sc::SCSchemaPtr beamSchema;
+        ASSERT_EQ(session.CurrentTable()->GetSchema(beamSchema), sc::SC_OK);
+        AddUniqueConstraint(beamSchema, L"uq_Beam_Code", L"Code");
+    }
+
+    ASSERT_TRUE(session.CreateTable(QStringLiteral("Floor"), &error)) << error.toStdString();
+    ASSERT_TRUE(session.AddColumn(
+                    MakeBusinessKeyRelationColumn(L"BeamRef", L"Beam", L"Code",
+                                                  L"Code"),
+                    &error))
+        << error.toStdString();
+
+    ASSERT_TRUE(session.SelectTable(QStringLiteral("Beam"), &error)) << error.toStdString();
+    sc::SCColumnDef renamed = MakeStringColumn(L"BeamCode");
+    renamed.nullable = false;
+    ASSERT_TRUE(session.UpdateColumn(QStringLiteral("Code"), renamed, &error))
+        << error.toStdString();
+
+    QVector<sc::SCColumnDef> columns;
+    ASSERT_TRUE(session.BuildSchemaSnapshot(&columns, &error)) << error.toStdString();
+    ASSERT_EQ(columns.size(), 1);
+    EXPECT_EQ(columns[0].name, L"BeamCode");
+
+    sc::SCSchemaPtr beamSchema;
+    ASSERT_TRUE(session.CurrentTable() != nullptr);
+    ASSERT_EQ(session.CurrentTable()->GetSchema(beamSchema), sc::SC_OK);
+    sc::SCTableSchemaSnapshot beamSnapshot;
+    ASSERT_EQ(beamSchema->GetSchemaSnapshot(&beamSnapshot), sc::SC_OK);
+
+    ASSERT_EQ(beamSnapshot.constraints.size(), 1u);
+    EXPECT_EQ(beamSnapshot.constraints[0].name, L"uq_Beam_Code");
+    ASSERT_EQ(beamSnapshot.constraints[0].columns.size(), 1u);
+    EXPECT_EQ(beamSnapshot.constraints[0].columns[0], L"BeamCode");
+
+    ASSERT_EQ(beamSnapshot.indexes.size(), 1u);
+    EXPECT_EQ(beamSnapshot.indexes[0].name, L"idx_Beam_Code");
+    ASSERT_EQ(beamSnapshot.indexes[0].columns.size(), 1u);
+    EXPECT_EQ(beamSnapshot.indexes[0].columns[0].columnName, L"BeamCode");
+
+    ASSERT_TRUE(session.SelectTable(QStringLiteral("Floor"), &error)) << error.toStdString();
+    sc::SCSchemaPtr floorSchema;
+    ASSERT_TRUE(session.CurrentTable() != nullptr);
+    ASSERT_EQ(session.CurrentTable()->GetSchema(floorSchema), sc::SC_OK);
+    sc::SCTableSchemaSnapshot floorSnapshot;
+    ASSERT_EQ(floorSchema->GetSchemaSnapshot(&floorSnapshot), sc::SC_OK);
+
+    ASSERT_EQ(floorSnapshot.columns.size(), 1u);
+    EXPECT_EQ(floorSnapshot.columns[0].referenceTable, L"Beam");
+    EXPECT_EQ(floorSnapshot.columns[0].referenceStorageColumn, L"BeamCode");
+    EXPECT_EQ(floorSnapshot.columns[0].referenceDisplayColumn, L"BeamCode");
+}
+
+TEST(DatabaseEditorSession, UpdateColumnRejectsNonNullableWhenNullValuesExist)
+{
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_DbEditor_NullableGuard.sqlite");
+
+    editor::SCDatabaseSession session;
+    QString error;
+
+    ASSERT_TRUE(session.CreateDatabase(QString::fromStdWString(dbPath.wstring()), &error))
+        << error.toStdString();
+    ASSERT_TRUE(session.CreateTable(QStringLiteral("Beam"), &error)) << error.toStdString();
+
+    sc::SCColumnDef width;
+    width.name = L"Width";
+    width.displayName = L"Width";
+    width.valueKind = sc::ValueKind::Int64;
+    width.nullable = true;
+    width.defaultValue = sc::SCValue::Null();
+    ASSERT_TRUE(session.AddColumn(width, &error)) << error.toStdString();
+
+    sc::SCEditPtr edit;
+    ASSERT_EQ(session.Database()->BeginEdit(L"seed", edit), sc::SC_OK);
+    ASSERT_TRUE(session.CurrentTable() != nullptr);
+    sc::SCRecordPtr record;
+    ASSERT_EQ(session.CurrentTable()->CreateRecord(record), sc::SC_OK);
+    ASSERT_EQ(session.Database()->Commit(edit.Get()), sc::SC_OK);
+
+    sc::SCColumnDef requiredWidth = width;
+    requiredWidth.nullable = false;
+    ASSERT_FALSE(session.UpdateColumn(QStringLiteral("Width"), requiredWidth, &error));
+    EXPECT_NE(error.indexOf(QStringLiteral("空值"), 0, Qt::CaseInsensitive), -1);
+}
+
+TEST(DatabaseEditorSession, RenameTableUpdatesSelectionAndPreservesData)
+{
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_DbEditor_RenameTable.sqlite");
+
+    editor::SCDatabaseSession session;
+    QString error;
+
+    ASSERT_TRUE(session.CreateDatabase(QString::fromStdWString(dbPath.wstring()), &error))
+        << error.toStdString();
+    ASSERT_TRUE(session.CreateTable(QStringLiteral("Beam"), &error)) << error.toStdString();
+    ASSERT_TRUE(session.AddColumn(MakeIntColumn(L"Width"), &error)) << error.toStdString();
+
+    sc::SCEditPtr edit;
+    ASSERT_EQ(session.Database()->BeginEdit(L"seed", edit), sc::SC_OK);
+    ASSERT_TRUE(session.CurrentTable() != nullptr);
+    sc::SCRecordPtr record;
+    ASSERT_EQ(session.CurrentTable()->CreateRecord(record), sc::SC_OK);
+    const sc::RecordId recordId = record->GetId();
+    ASSERT_EQ(record->SetInt64(L"Width", 256), sc::SC_OK);
+    ASSERT_EQ(session.Database()->Commit(edit.Get()), sc::SC_OK);
+
+    ASSERT_TRUE(session.RenameTable(QStringLiteral("Beam"), QStringLiteral("BeamRenamed"), &error))
+        << error.toStdString();
+    EXPECT_EQ(session.CurrentTableName(), QStringLiteral("BeamRenamed"));
+    EXPECT_EQ(session.TableNames(), (QStringList{QStringLiteral("BeamRenamed")}));
+
+    QVector<sc::SCColumnDef> columns;
+    ASSERT_TRUE(session.BuildSchemaSnapshot(&columns, &error)) << error.toStdString();
+    ASSERT_EQ(columns.size(), 1);
+    EXPECT_EQ(columns[0].name, L"Width");
+
+    sc::SCRecordPtr reloaded;
+    ASSERT_EQ(session.CurrentTable()->GetRecord(recordId, reloaded), sc::SC_OK);
+    std::int64_t width = 0;
+    ASSERT_EQ(reloaded->GetInt64(L"Width", &width), sc::SC_OK);
+    EXPECT_EQ(width, 256);
+}
+
+TEST(DatabaseEditorSession, RenameTableRollsBackWhenViewRebuildFails)
+{
+    const fs::path dbPath =
+        MakeTempDbPath(L"StableCoreStorage_DbEditor_RenameTableRollback.sqlite");
+
+    editor::SCDatabaseSession session;
+    QString error;
+
+    ASSERT_TRUE(session.CreateDatabase(QString::fromStdWString(dbPath.wstring()), &error))
+        << error.toStdString();
+    ASSERT_TRUE(session.CreateTable(QStringLiteral("Beam"), &error)) << error.toStdString();
+    ASSERT_TRUE(session.AddColumn(MakeIntColumn(L"Width"), &error)) << error.toStdString();
+
+    session.SetForceRebuildCurrentTableViewFailureForTest(true);
+    EXPECT_FALSE(session.RenameTable(QStringLiteral("Beam"),
+                                     QStringLiteral("BeamRenamed"),
+                                     &error));
+    EXPECT_EQ(error, QStringLiteral("Forced rebuild failure for test."));
+    session.SetForceRebuildCurrentTableViewFailureForTest(false);
+
+    EXPECT_EQ(session.CurrentTableName(), QStringLiteral("Beam"));
+    EXPECT_EQ(session.TableNames(), (QStringList{QStringLiteral("Beam")}));
+
+    QVector<sc::SCColumnDef> columns;
+    ASSERT_TRUE(session.BuildSchemaSnapshot(&columns, &error)) << error.toStdString();
+    ASSERT_EQ(columns.size(), 1);
+    EXPECT_EQ(columns[0].name, L"Width");
+
+    ASSERT_TRUE(session.SelectTable(QStringLiteral("Beam"), &error)) << error.toStdString();
+    EXPECT_FALSE(session.SelectTable(QStringLiteral("BeamRenamed"), &error));
+}
+
+TEST(DatabaseEditorSession, RenameTableParticipatesInUndoRedo)
+{
+    const fs::path dbPath =
+        MakeTempDbPath(L"StableCoreStorage_DbEditor_RenameTableUndoRedo.sqlite");
+
+    editor::SCDatabaseSession session;
+    QString error;
+
+    ASSERT_TRUE(session.CreateDatabase(QString::fromStdWString(dbPath.wstring()), &error))
+        << error.toStdString();
+    ASSERT_TRUE(session.CreateTable(QStringLiteral("Beam"), &error)) << error.toStdString();
+    ASSERT_TRUE(session.AddColumn(MakeIntColumn(L"Width"), &error)) << error.toStdString();
+
+    ASSERT_TRUE(session.RenameTable(QStringLiteral("Beam"),
+                                    QStringLiteral("BeamRenamed"),
+                                    &error)) << error.toStdString();
+    EXPECT_EQ(session.CurrentTableName(), QStringLiteral("BeamRenamed"));
+    EXPECT_EQ(session.TableNames(), (QStringList{QStringLiteral("BeamRenamed")}));
+
+    ASSERT_TRUE(session.Undo(&error)) << error.toStdString();
+    EXPECT_EQ(session.CurrentTableName(), QStringLiteral("Beam"));
+    EXPECT_EQ(session.TableNames(), (QStringList{QStringLiteral("Beam")}));
+
+    QVector<sc::SCColumnDef> columns;
+    ASSERT_TRUE(session.BuildSchemaSnapshot(&columns, &error)) << error.toStdString();
+    ASSERT_EQ(columns.size(), 1);
+    EXPECT_EQ(columns[0].name, L"Width");
+
+    ASSERT_TRUE(session.Redo(&error)) << error.toStdString();
+    EXPECT_EQ(session.CurrentTableName(), QStringLiteral("BeamRenamed"));
+    EXPECT_EQ(session.TableNames(), (QStringList{QStringLiteral("BeamRenamed")}));
+
+    ASSERT_TRUE(session.BuildSchemaSnapshot(&columns, &error)) << error.toStdString();
+    ASSERT_EQ(columns.size(), 1);
+    EXPECT_EQ(columns[0].name, L"Width");
+}
+
+TEST(DatabaseEditorSession, RenameTableUndoRedoKeepsCurrentSelectionAcrossMultipleTables)
+{
+    const fs::path dbPath =
+        MakeTempDbPath(L"StableCoreStorage_DbEditor_RenameTableSelection.sqlite");
+
+    editor::SCDatabaseSession session;
+    QString error;
+
+    ASSERT_TRUE(session.CreateDatabase(QString::fromStdWString(dbPath.wstring()), &error))
+        << error.toStdString();
+    ASSERT_TRUE(session.CreateTable(QStringLiteral("Beam"), &error)) << error.toStdString();
+    ASSERT_TRUE(session.AddColumn(MakeIntColumn(L"Width"), &error)) << error.toStdString();
+    ASSERT_TRUE(session.CreateTable(QStringLiteral("Floor"), &error)) << error.toStdString();
+    ASSERT_TRUE(session.AddColumn(MakeIntColumn(L"Height"), &error)) << error.toStdString();
+    ASSERT_TRUE(session.SelectTable(QStringLiteral("Floor"), &error)) << error.toStdString();
+
+    ASSERT_TRUE(session.RenameTable(QStringLiteral("Floor"),
+                                    QStringLiteral("FloorRenamed"),
+                                    &error)) << error.toStdString();
+    EXPECT_EQ(session.CurrentTableName(), QStringLiteral("FloorRenamed"));
+    EXPECT_EQ(session.TableNames(),
+              (QStringList{QStringLiteral("Beam"), QStringLiteral("FloorRenamed")}));
+
+    ASSERT_TRUE(session.Undo(&error)) << error.toStdString();
+    EXPECT_EQ(session.CurrentTableName(), QStringLiteral("Floor"));
+    EXPECT_EQ(session.TableNames(),
+              (QStringList{QStringLiteral("Beam"), QStringLiteral("Floor")}));
+
+    ASSERT_TRUE(session.Redo(&error)) << error.toStdString();
+    EXPECT_EQ(session.CurrentTableName(), QStringLiteral("FloorRenamed"));
+    EXPECT_EQ(session.TableNames(),
+              (QStringList{QStringLiteral("Beam"), QStringLiteral("FloorRenamed")}));
+}
+
+TEST(DatabaseEditorSession, RenameTableUndoRedoRewritesComputedColumnsAcrossTables)
+{
+    const fs::path dbPath =
+        MakeTempDbPath(L"StableCoreStorage_DbEditor_RenameTableComputedColumns.sqlite");
+
+    editor::SCDatabaseSession session;
+    QString error;
+
+    ASSERT_TRUE(session.CreateDatabase(QString::fromStdWString(dbPath.wstring()), &error))
+        << error.toStdString();
+    ASSERT_TRUE(session.CreateTable(QStringLiteral("Beam"), &error)) << error.toStdString();
+    ASSERT_TRUE(session.AddColumn(MakeIntColumn(L"Width"), &error)) << error.toStdString();
+    ASSERT_TRUE(session.AddRecord(&error)) << error.toStdString();
+    ASSERT_TRUE(session.CurrentTable() != nullptr);
+    sc::SCRecordCursorPtr beamCursor;
+    ASSERT_EQ(session.CurrentTable()->EnumerateRecords(beamCursor), sc::SC_OK);
+    sc::SCRecordPtr beamRecord;
+    ASSERT_EQ(beamCursor->Next(beamRecord), sc::SC_OK);
+    ASSERT_TRUE(static_cast<bool>(beamRecord));
+    const sc::RecordId beamRecordId = beamRecord->GetId();
+    ASSERT_TRUE(session.SetCellValue(beamRecordId,
+                                     QStringLiteral("Width"),
+                                     QVariant::fromValue<qlonglong>(7),
+                                     &error))
+        << error.toStdString();
+
+    ASSERT_TRUE(session.CreateTable(QStringLiteral("Floor"), &error)) << error.toStdString();
+    ASSERT_TRUE(session.AddColumn(MakeIntColumn(L"Height"), &error)) << error.toStdString();
+    ASSERT_TRUE(session.AddRecord(&error)) << error.toStdString();
+    ASSERT_TRUE(session.CurrentTable() != nullptr);
+    sc::SCRecordCursorPtr floorCursor;
+    ASSERT_EQ(session.CurrentTable()->EnumerateRecords(floorCursor), sc::SC_OK);
+    sc::SCRecordPtr floorRecord;
+    ASSERT_EQ(floorCursor->Next(floorRecord), sc::SC_OK);
+    ASSERT_TRUE(static_cast<bool>(floorRecord));
+    const sc::RecordId floorRecordId = floorRecord->GetId();
+    ASSERT_TRUE(session.SetCellValue(floorRecordId,
+                                     QStringLiteral("Height"),
+                                     QVariant::fromValue<qlonglong>(5),
+                                     &error))
+        << error.toStdString();
+
+    ASSERT_TRUE(session.SelectTable(QStringLiteral("Beam"), &error)) << error.toStdString();
+    sc::SCComputedColumnDef beamComputed =
+        MakeExpressionComputedColumn(L"BeamScaled", L"Width * 2", L"Width");
+    ASSERT_TRUE(session.AddSessionComputedColumn(beamComputed, &error)) << error.toStdString();
+
+    ASSERT_TRUE(session.SelectTable(QStringLiteral("Floor"), &error)) << error.toStdString();
+    sc::SCComputedColumnDef floorComputed =
+        MakeExpressionComputedColumnForTable(L"FloorScaled",
+                                             L"Height * 3",
+                                             L"Floor",
+                                             L"Height");
+    ASSERT_TRUE(session.AddSessionComputedColumn(floorComputed, &error)) << error.toStdString();
+
+    sc::SCComputedColumnDef loaded;
+    std::int64_t computedValue = 0;
+    ASSERT_TRUE(LoadSessionComputedColumnOnTable(session,
+                                                 QStringLiteral("Beam"),
+                                                 QStringLiteral("BeamScaled"),
+                                                 &loaded,
+                                                 &error))
+        << error.toStdString();
+    EXPECT_EQ(FirstFactDependencyTableName(loaded), L"Beam");
+    ASSERT_TRUE(ReadCurrentComputedInt64(session,
+                                         beamRecordId,
+                                         L"BeamScaled",
+                                         &computedValue));
+    EXPECT_EQ(computedValue, 14);
+    ASSERT_TRUE(LoadSessionComputedColumnOnTable(session,
+                                                 QStringLiteral("Floor"),
+                                                 QStringLiteral("FloorScaled"),
+                                                 &loaded,
+                                                 &error))
+        << error.toStdString();
+    EXPECT_EQ(FirstFactDependencyTableName(loaded), L"Floor");
+    ASSERT_TRUE(ReadCurrentComputedInt64(session,
+                                         floorRecordId,
+                                         L"FloorScaled",
+                                         &computedValue));
+    EXPECT_EQ(computedValue, 15);
+
+    ASSERT_TRUE(session.RenameTable(QStringLiteral("Beam"),
+                                    QStringLiteral("BeamRenamed"),
+                                    &error)) << error.toStdString();
+
+    ASSERT_TRUE(LoadSessionComputedColumnOnTable(session,
+                                                 QStringLiteral("BeamRenamed"),
+                                                 QStringLiteral("BeamScaled"),
+                                                 &loaded,
+                                                 &error))
+        << error.toStdString();
+    EXPECT_EQ(FirstFactDependencyTableName(loaded), L"BeamRenamed");
+    ASSERT_TRUE(ReadCurrentComputedInt64(session,
+                                         beamRecordId,
+                                         L"BeamScaled",
+                                         &computedValue));
+    EXPECT_EQ(computedValue, 14);
+    ASSERT_TRUE(LoadSessionComputedColumnOnTable(session,
+                                                 QStringLiteral("Floor"),
+                                                 QStringLiteral("FloorScaled"),
+                                                 &loaded,
+                                                 &error))
+        << error.toStdString();
+    EXPECT_EQ(FirstFactDependencyTableName(loaded), L"Floor");
+    ASSERT_TRUE(ReadCurrentComputedInt64(session,
+                                         floorRecordId,
+                                         L"FloorScaled",
+                                         &computedValue));
+    EXPECT_EQ(computedValue, 15);
+
+    ASSERT_TRUE(session.RenameTable(QStringLiteral("Floor"),
+                                    QStringLiteral("FloorRenamed"),
+                                    &error)) << error.toStdString();
+
+    ASSERT_TRUE(LoadSessionComputedColumnOnTable(session,
+                                                 QStringLiteral("BeamRenamed"),
+                                                 QStringLiteral("BeamScaled"),
+                                                 &loaded,
+                                                 &error))
+        << error.toStdString();
+    EXPECT_EQ(FirstFactDependencyTableName(loaded), L"BeamRenamed");
+    ASSERT_TRUE(ReadCurrentComputedInt64(session,
+                                         beamRecordId,
+                                         L"BeamScaled",
+                                         &computedValue));
+    EXPECT_EQ(computedValue, 14);
+    ASSERT_TRUE(LoadSessionComputedColumnOnTable(session,
+                                                 QStringLiteral("FloorRenamed"),
+                                                 QStringLiteral("FloorScaled"),
+                                                 &loaded,
+                                                 &error))
+        << error.toStdString();
+    EXPECT_EQ(FirstFactDependencyTableName(loaded), L"FloorRenamed");
+    ASSERT_TRUE(ReadCurrentComputedInt64(session,
+                                         floorRecordId,
+                                         L"FloorScaled",
+                                         &computedValue));
+    EXPECT_EQ(computedValue, 15);
+
+    ASSERT_TRUE(session.Undo(&error)) << error.toStdString();
+    ASSERT_TRUE(LoadSessionComputedColumnOnTable(session,
+                                                 QStringLiteral("BeamRenamed"),
+                                                 QStringLiteral("BeamScaled"),
+                                                 &loaded,
+                                                 &error))
+        << error.toStdString();
+    EXPECT_EQ(FirstFactDependencyTableName(loaded), L"BeamRenamed");
+    ASSERT_TRUE(ReadCurrentComputedInt64(session,
+                                         beamRecordId,
+                                         L"BeamScaled",
+                                         &computedValue));
+    EXPECT_EQ(computedValue, 14);
+    ASSERT_TRUE(LoadSessionComputedColumnOnTable(session,
+                                                 QStringLiteral("Floor"),
+                                                 QStringLiteral("FloorScaled"),
+                                                 &loaded,
+                                                 &error))
+        << error.toStdString();
+    EXPECT_EQ(FirstFactDependencyTableName(loaded), L"Floor");
+    ASSERT_TRUE(ReadCurrentComputedInt64(session,
+                                         floorRecordId,
+                                         L"FloorScaled",
+                                         &computedValue));
+    EXPECT_EQ(computedValue, 15);
+
+    ASSERT_TRUE(session.Undo(&error)) << error.toStdString();
+    ASSERT_TRUE(LoadSessionComputedColumnOnTable(session,
+                                                 QStringLiteral("Beam"),
+                                                 QStringLiteral("BeamScaled"),
+                                                 &loaded,
+                                                 &error))
+        << error.toStdString();
+    EXPECT_EQ(FirstFactDependencyTableName(loaded), L"Beam");
+    ASSERT_TRUE(ReadCurrentComputedInt64(session,
+                                         beamRecordId,
+                                         L"BeamScaled",
+                                         &computedValue));
+    EXPECT_EQ(computedValue, 14);
+    ASSERT_TRUE(LoadSessionComputedColumnOnTable(session,
+                                                 QStringLiteral("Floor"),
+                                                 QStringLiteral("FloorScaled"),
+                                                 &loaded,
+                                                 &error))
+        << error.toStdString();
+    EXPECT_EQ(FirstFactDependencyTableName(loaded), L"Floor");
+    ASSERT_TRUE(ReadCurrentComputedInt64(session,
+                                         floorRecordId,
+                                         L"FloorScaled",
+                                         &computedValue));
+    EXPECT_EQ(computedValue, 15);
+
+    ASSERT_TRUE(session.Redo(&error)) << error.toStdString();
+    ASSERT_TRUE(LoadSessionComputedColumnOnTable(session,
+                                                 QStringLiteral("BeamRenamed"),
+                                                 QStringLiteral("BeamScaled"),
+                                                 &loaded,
+                                                 &error))
+        << error.toStdString();
+    EXPECT_EQ(FirstFactDependencyTableName(loaded), L"BeamRenamed");
+    ASSERT_TRUE(ReadCurrentComputedInt64(session,
+                                         beamRecordId,
+                                         L"BeamScaled",
+                                         &computedValue));
+    EXPECT_EQ(computedValue, 14);
+    ASSERT_TRUE(LoadSessionComputedColumnOnTable(session,
+                                                 QStringLiteral("Floor"),
+                                                 QStringLiteral("FloorScaled"),
+                                                 &loaded,
+                                                 &error))
+        << error.toStdString();
+    EXPECT_EQ(FirstFactDependencyTableName(loaded), L"Floor");
+    ASSERT_TRUE(ReadCurrentComputedInt64(session,
+                                         floorRecordId,
+                                         L"FloorScaled",
+                                         &computedValue));
+    EXPECT_EQ(computedValue, 15);
+
+    ASSERT_TRUE(session.Redo(&error)) << error.toStdString();
+    ASSERT_TRUE(LoadSessionComputedColumnOnTable(session,
+                                                 QStringLiteral("BeamRenamed"),
+                                                 QStringLiteral("BeamScaled"),
+                                                 &loaded,
+                                                 &error))
+        << error.toStdString();
+    EXPECT_EQ(FirstFactDependencyTableName(loaded), L"BeamRenamed");
+    ASSERT_TRUE(ReadCurrentComputedInt64(session,
+                                         beamRecordId,
+                                         L"BeamScaled",
+                                         &computedValue));
+    EXPECT_EQ(computedValue, 14);
+    ASSERT_TRUE(LoadSessionComputedColumnOnTable(session,
+                                                 QStringLiteral("FloorRenamed"),
+                                                 QStringLiteral("FloorScaled"),
+                                                 &loaded,
+                                                 &error))
+        << error.toStdString();
+    EXPECT_EQ(FirstFactDependencyTableName(loaded), L"FloorRenamed");
+    ASSERT_TRUE(ReadCurrentComputedInt64(session,
+                                         floorRecordId,
+                                         L"FloorScaled",
+                                         &computedValue));
+    EXPECT_EQ(computedValue, 15);
+
+    EXPECT_EQ(session.TableNames(),
+              (QStringList{QStringLiteral("BeamRenamed"), QStringLiteral("FloorRenamed")}));
+}
+
 TEST(DatabaseEditorSession, SchemaSnapshotKeepsFieldNameAndDisplayNameDistinct)
 {
     const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_DbEditor_SchemaDisplayName.sqlite");
@@ -1443,7 +2029,7 @@ TEST(DatabaseEditorSession, RejectsFactColumnsThatConflictWithComputedColumns)
     EXPECT_EQ(CollectColumnNames(beforeColumns), (std::vector<std::wstring>{L"Width"}));
 
     EXPECT_FALSE(session.AddColumn(MakeIntColumn(L"ScaledWidth"), &error));
-    EXPECT_EQ(error, QStringLiteral("A computed column with the same name already exists."));
+    EXPECT_EQ(error, QStringLiteral("同名计算字段已存在。"));
 
     QVector<sc::SCColumnDef> afterColumns;
     ASSERT_TRUE(session.BuildSchemaSnapshot(&afterColumns, &error)) << error.toStdString();
@@ -1565,3 +2151,4 @@ TEST(DatabaseEditorSession, CreateBackupCopyWritesAnOpenableDatabaseCopy)
     ASSERT_EQ(columns.size(), 1);
     EXPECT_EQ(columns[0].name, L"Width");
 }
+

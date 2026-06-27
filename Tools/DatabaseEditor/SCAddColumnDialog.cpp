@@ -66,11 +66,11 @@ namespace StableCore::Storage::Editor
         bool ParseDefaultValue(sc::ValueKind kind, const QString& text,
                                sc::SCValue* outValue, QString* outError)
         {
-            if (outValue == nullptr)
+        if (outValue == nullptr)
+        {
+            if (outError != nullptr)
             {
-                if (outError != nullptr)
-                {
-                    *outError = QStringLiteral("Output value is null.");
+                *outError = QStringLiteral("输出值为空。");
                 }
                 return false;
             }
@@ -125,9 +125,11 @@ namespace StableCore::Storage::Editor
         : QDialog(parent), session_(session)
     {
         setWindowTitle(QStringLiteral("新增字段"));
+        resize(980, 760);
 
         auto* layout = new QVBoxLayout(this);
         auto* form = new QFormLayout();
+        form->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
 
         nameEdit_ = new QLineEdit(this);
         displayNameEdit_ = new QLineEdit(this);
@@ -231,6 +233,8 @@ namespace StableCore::Storage::Editor
 
         connect(nullableCheck_, &QCheckBox::toggled, this,
                 &SCAddColumnDialog::UpdateValidationState);
+        connect(nameEdit_, &QLineEdit::textChanged, this,
+                &SCAddColumnDialog::UpdateValidationState);
         connect(relationCheck_, &QCheckBox::toggled, this,
                 &SCAddColumnDialog::UpdateValidationState);
         connect(relationBindingCombo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
@@ -256,13 +260,14 @@ namespace StableCore::Storage::Editor
         : SCAddColumnDialog(session, parent)
     {
         setWindowTitle(QStringLiteral("编辑字段"));
-        nameEdit_->setReadOnly(true);
+        editingExistingColumn_ = true;
         ApplyInitialValue(initialValue);
     }
 
     void SCAddColumnDialog::ApplyInitialValue(const sc::SCColumnDef& value)
     {
         nameEdit_->setText(QString::fromStdWString(value.name));
+        originalColumnName_ = nameEdit_->text();
         displayNameEdit_->setText(QString::fromStdWString(value.displayName));
         const int valueKindIndex =
             valueKindCombo_->findData(static_cast<int>(value.valueKind));
@@ -417,7 +422,7 @@ namespace StableCore::Storage::Editor
         {
             if (outError != nullptr)
             {
-                *outError = QStringLiteral("Output snapshot is null.");
+                *outError = QStringLiteral("输出快照为空。");
             }
             return false;
         }
@@ -496,24 +501,24 @@ namespace StableCore::Storage::Editor
 
         if (tableName.isEmpty())
         {
-            relationHintLabel_->setText(QStringLiteral("请输入引用表名称。"));
+            relationHintLabel_->setText(QStringLiteral("请先填写引用表。"));
             return;
         }
         if (!loadedSnapshot)
         {
-            relationHintLabel_->setText(QStringLiteral("引用表不存在或无法读取。"));
+            relationHintLabel_->setText(QStringLiteral("引用表不存在或当前无法读取。"));
             return;
         }
         if (bindingMode == RelationBindingMode::RecordId)
         {
             relationHintLabel_->setText(
-                QStringLiteral("当前模式：按记录ID关联。系统直接保存目标记录的记录ID，") +
+                QStringLiteral("当前模式为按记录ID关联，系统直接保存目标记录ID，") +
                 QStringLiteral("无需填写存储列或显示列。"));
             return;
         }
         if (storageColumn.isEmpty())
         {
-            relationHintLabel_->setText(QStringLiteral("关系字段必须指定存储列。"));
+            relationHintLabel_->setText(QStringLiteral("业务键关联需要先填写存储列。"));
             return;
         }
 
@@ -525,13 +530,13 @@ namespace StableCore::Storage::Editor
                         });
         if (!storageColumnExists)
         {
-            relationHintLabel_->setText(QStringLiteral("存储列必须存在于引用表中。"));
+            relationHintLabel_->setText(QStringLiteral("存储列必须存在于引用表内。"));
             return;
         }
 
         if (!IsRelationStorageColumnUsable(snapshot, storageColumn))
         {
-            relationHintLabel_->setText(QStringLiteral("存储列必须非空且唯一。"));
+            relationHintLabel_->setText(QStringLiteral("存储列必须同时满足非空和唯一。"));
             return;
         }
 
@@ -545,18 +550,19 @@ namespace StableCore::Storage::Editor
                             });
             if (!displayColumnExists)
             {
-                relationHintLabel_->setText(QStringLiteral("显示列必须存在于引用表中。"));
+                relationHintLabel_->setText(QStringLiteral("显示列必须存在于引用表内。"));
                 return;
             }
         }
 
-        relationHintLabel_->setText(QStringLiteral("存储列决定实际写入内容，显示列仅用于界面展示。"));
+        relationHintLabel_->setText(QStringLiteral("存储列用于保存关联值，显示列仅用于界面展示。"));
     }
 
     void SCAddColumnDialog::UpdateValidationState()
     {
         const bool hasDefaultValue =
             !defaultValueEdit_->text().trimmed().isEmpty();
+        const bool nameValid = !nameEdit_->text().trimmed().isEmpty();
         const sc::ValueKind selectedKind = static_cast<sc::ValueKind>(
             valueKindCombo_->currentData().toInt());
         bool defaultValid = true;
@@ -571,7 +577,22 @@ namespace StableCore::Storage::Editor
         const bool nonNullableWithoutDefault =
             !nullableCheck_->isChecked() && !hasDefaultValue;
         const bool requiresDefault =
-            nonNullableWithoutDefault && currentTableHasRecords_;
+            !editingExistingColumn_ && nonNullableWithoutDefault &&
+            currentTableHasRecords_;
+        bool hasNullValues = false;
+        bool nullValueValidationLoaded = true;
+        QString nullValueError;
+        if (editingExistingColumn_ && !nullableCheck_->isChecked() &&
+            currentTableHasRecords_)
+        {
+            nullValueValidationLoaded =
+                session_ == nullptr
+                    ? true
+                    : session_->CurrentColumnHasNullValues(
+                          originalColumnName_.isEmpty() ? nameEdit_->text()
+                                                       : originalColumnName_,
+                          &hasNullValues, &nullValueError);
+        }
 
         UpdateRelationHints();
 
@@ -592,25 +613,25 @@ namespace StableCore::Storage::Editor
             if (tableName.isEmpty())
             {
                 relationValid = false;
-                relationError = QStringLiteral("关系字段必须指定引用表。");
+                relationError = QStringLiteral("业务键关联需要先填写引用表。");
             }
             else if (!loadedSnapshot)
             {
                 relationValid = false;
-                relationError = QStringLiteral("引用表不存在或无法读取。");
+                relationError = QStringLiteral("引用表不存在或当前无法读取。");
             }
             else if (bindingMode == RelationBindingMode::RecordId)
             {
                 if (selectedKind != sc::ValueKind::RecordId)
                 {
                     relationValid = false;
-                    relationError = QStringLiteral("按记录ID关联时，值类型必须为 RecordId。");
+                    relationError = QStringLiteral("按记录ID关联时，字段值类型必须为 RecordId。");
                 }
             }
             else if (storageColumn.isEmpty())
             {
                 relationValid = false;
-                relationError = QStringLiteral("关系字段必须指定存储列。");
+                relationError = QStringLiteral("业务键关联需要先填写存储列。");
             }
             else if (std::none_of(
                            snapshot.columns.begin(), snapshot.columns.end(),
@@ -620,12 +641,12 @@ namespace StableCore::Storage::Editor
                            }))
             {
                 relationValid = false;
-                relationError = QStringLiteral("存储列必须存在于引用表中。");
+                relationError = QStringLiteral("存储列必须存在于引用表内。");
             }
             else if (!IsRelationStorageColumnUsable(snapshot, storageColumn))
             {
                 relationValid = false;
-                relationError = QStringLiteral("存储列必须非空且唯一。");
+                relationError = QStringLiteral("存储列必须同时满足非空和唯一。");
             }
             else if (!displayColumn.isEmpty() &&
                        std::none_of(snapshot.columns.begin(), snapshot.columns.end(),
@@ -635,13 +656,33 @@ namespace StableCore::Storage::Editor
                                     }))
             {
                 relationValid = false;
-                relationError = QStringLiteral("显示列必须存在于引用表中。");
+                relationError = QStringLiteral("显示列必须存在于引用表内。");
             }
         }
 
         if (validationLabel_ != nullptr)
         {
-            if (!relationValid)
+            if (!nameValid)
+            {
+                validationLabel_->setStyleSheet(QStringLiteral("color: #b00020;"));
+                validationLabel_->setText(QStringLiteral("字段名称不能为空。"));
+                validationLabel_->setVisible(true);
+            }
+            else if (!nullValueValidationLoaded)
+            {
+                validationLabel_->setStyleSheet(QStringLiteral("color: #b00020;"));
+                validationLabel_->setText(nullValueError);
+                validationLabel_->setVisible(true);
+            }
+            else if (editingExistingColumn_ && !nullableCheck_->isChecked() &&
+                     hasNullValues)
+            {
+                validationLabel_->setStyleSheet(QStringLiteral("color: #b00020;"));
+                validationLabel_->setText(
+                    QStringLiteral("该字段仍存在空值，不能改为非空。"));
+                validationLabel_->setVisible(true);
+            }
+            else if (!relationValid)
             {
                 validationLabel_->setStyleSheet(QStringLiteral("color: #b00020;"));
                 validationLabel_->setText(relationError);
@@ -651,18 +692,19 @@ namespace StableCore::Storage::Editor
                 validationLabel_->setStyleSheet(QStringLiteral("color: #b00020;"));
                 validationLabel_->setText(defaultError);
                 validationLabel_->setVisible(true);
-            } else if (nonNullableWithoutDefault)
+            } else if (requiresDefault)
             {
                 if (currentTableHasRecords_)
                 {
                     validationLabel_->setStyleSheet(QStringLiteral("color: #b00020;"));
                     validationLabel_->setText(
-                        QStringLiteral("The current table already has data, so a non-null column needs a default value."));
-                } else
+                        QStringLiteral("当前表已有数据，非空字段需要先填写默认值。"));
+                }
+                else
                 {
                     validationLabel_->setStyleSheet(QStringLiteral("color: #0b5fff;"));
                     validationLabel_->setText(
-                        QStringLiteral("The current table is empty, so you can create a non-null column first and fill values later."));
+                        QStringLiteral("当前表为空，可以先创建非空字段，后续再补充数据。"));
                 }
                 validationLabel_->setVisible(true);
             } else
@@ -709,7 +751,11 @@ namespace StableCore::Storage::Editor
 
         if (okButton_ != nullptr)
         {
-            okButton_->setEnabled(relationValid && defaultValid && !requiresDefault);
+            okButton_->setEnabled(nameValid && relationValid && defaultValid && !requiresDefault &&
+                                  nullValueValidationLoaded &&
+                                  !(editingExistingColumn_ &&
+                                    !nullableCheck_->isChecked() &&
+                                    hasNullValues));
         }
     }
 

@@ -81,6 +81,11 @@ namespace
         {
             return inner_->DeleteTable(name);
         }
+        sc::ErrorCode RenameTable(const wchar_t* originalName,
+                                  const wchar_t* newName) override
+        {
+            return inner_->RenameTable(originalName, newName);
+        }
         sc::ErrorCode ClearColumnValues(sc::ISCTable* table, const wchar_t* name) override
         {
             return inner_->ClearColumnValues(table, name);

@@ -1423,6 +1423,8 @@ namespace StableCore::Storage::Editor
                 QStringLiteral("Select Table"), this,
                 &SCDatabaseEditorMainWindow::OnTableSelectionChanged);
             selectAction->setEnabled(true);
+            menu.addAction(QStringLiteral("Rename Table..."), this,
+                           &SCDatabaseEditorMainWindow::RenameSelectedTable);
             menu.addAction(QStringLiteral("Add Column..."), this,
                            &SCDatabaseEditorMainWindow::AddColumn);
             menu.addAction(QStringLiteral("Delete Table..."), this,
@@ -1500,6 +1502,80 @@ namespace StableCore::Storage::Editor
         }
 
         SetStatusMessage(QStringLiteral("Table deleted: ") + tableName);
+    }
+
+    void SCDatabaseEditorMainWindow::RenameSelectedTable()
+    {
+        if (session_ == nullptr || !session_->IsOpen())
+        {
+            ShowError(QStringLiteral("Failed to rename table"),
+                      QStringLiteral("No database open."));
+            return;
+        }
+        if (session_->HasPendingEdit())
+        {
+            ShowError(QStringLiteral("Failed to rename table"),
+                      QStringLiteral(
+                          "Please save or discard pending changes before editing the schema."));
+            return;
+        }
+
+        QString tableName;
+        if (objectTree_ != nullptr && objectTree_->currentItem() != nullptr)
+        {
+            const ExplorerNodeType nodeType = static_cast<ExplorerNodeType>(
+                objectTree_->currentItem()->data(0, kExplorerNodeTypeRole).toInt());
+            if (nodeType == ExplorerNodeType::Table)
+            {
+                tableName = objectTree_->currentItem()
+                                ->data(0, kExplorerNodeNameRole)
+                                .toString();
+            }
+        }
+        if (tableName.isEmpty())
+        {
+            tableName = session_->CurrentTableName();
+        }
+        if (tableName.isEmpty())
+        {
+            ShowError(QStringLiteral("Failed to rename table"),
+                      QStringLiteral("Please select a table first."));
+            return;
+        }
+
+        bool accepted = false;
+        const QString newTableName = QInputDialog::getText(
+            this, QStringLiteral("Rename Table"),
+            QStringLiteral("New table name:"), QLineEdit::Normal, tableName,
+            &accepted);
+        if (!accepted)
+        {
+            return;
+        }
+
+        const QString trimmedNewTableName = newTableName.trimmed();
+        if (trimmedNewTableName.isEmpty())
+        {
+            ShowError(QStringLiteral("Failed to rename table"),
+                      QStringLiteral("Table name is required."));
+            return;
+        }
+
+        QString error;
+        if (!session_->RenameTable(tableName, trimmedNewTableName, &error))
+        {
+            ShowError(QStringLiteral("Failed to rename table"), error);
+            return;
+        }
+
+        RefreshObjectExplorer();
+        RefreshCurrentDetailsPanel();
+        UpdateComputedColumnsPanel();
+        RefreshGridData();
+        RefreshRelationPanel();
+        RefreshOverviewPanels();
+        SetStatusMessage(QStringLiteral("Table renamed: ") + tableName +
+                         QStringLiteral(" -> ") + trimmedNewTableName);
     }
 
     void SCDatabaseEditorMainWindow::DeleteSelectedColumn()

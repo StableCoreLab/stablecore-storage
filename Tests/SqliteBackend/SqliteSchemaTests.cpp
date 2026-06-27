@@ -149,6 +149,145 @@ TEST(SqliteSchema, RemoveColumnCleansSqliteFootprint)
     EXPECT_FALSE(QuerySqliteExists(dbPath, indexSql.c_str()));
 }
 
+TEST(SqliteSchema, RenameTablePreservesRecordsAndRelations)
+{
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_Sqlite_Schema_RenameTable.sqlite");
+
+    sc::SCDbPtr db;
+    EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
+
+    sc::SCTablePtr floorTable;
+    EXPECT_EQ(db->CreateTable(L"Floor", floorTable), sc::SC_OK);
+
+    sc::SCSchemaPtr floorSchema;
+    EXPECT_EQ(floorTable->GetSchema(floorSchema), sc::SC_OK);
+
+    sc::SCColumnDef floorCode;
+    floorCode.name = L"Code";
+    floorCode.displayName = L"Code";
+    floorCode.valueKind = sc::ValueKind::String;
+    floorCode.nullable = false;
+    floorCode.defaultValue = sc::SCValue::FromString(L"");
+    EXPECT_EQ(floorSchema->AddColumn(floorCode), sc::SC_OK);
+
+    sc::SCConstraintDef floorUnique;
+    floorUnique.kind = sc::SCConstraintKind::Unique;
+    floorUnique.name = L"uq_Floor_Code";
+    floorUnique.columns.push_back(L"Code");
+    EXPECT_EQ(floorSchema->AddConstraint(floorUnique), sc::SC_OK);
+
+    sc::SCTablePtr beamTable;
+    EXPECT_EQ(db->CreateTable(L"Beam", beamTable), sc::SC_OK);
+
+    sc::SCSchemaPtr beamSchema;
+    EXPECT_EQ(beamTable->GetSchema(beamSchema), sc::SC_OK);
+
+    sc::SCColumnDef floorRef;
+    floorRef.name = L"FloorCode";
+    floorRef.displayName = L"FloorCode";
+    floorRef.valueKind = sc::ValueKind::String;
+    floorRef.columnKind = sc::ColumnKind::Relation;
+    floorRef.referenceTable = L"Floor";
+    floorRef.referenceStorageColumn = L"Code";
+    floorRef.referenceDisplayColumn = L"Code";
+    floorRef.nullable = true;
+    floorRef.defaultValue = sc::SCValue::Null();
+    EXPECT_EQ(beamSchema->AddColumn(floorRef), sc::SC_OK);
+
+    sc::SCConstraintDef beamForeignKey;
+    beamForeignKey.kind = sc::SCConstraintKind::ForeignKey;
+    beamForeignKey.name = L"fk_Beam_FloorCode";
+    beamForeignKey.columns.push_back(L"FloorCode");
+    beamForeignKey.referencedTable = L"Floor";
+    beamForeignKey.referencedColumns.push_back(L"Code");
+    EXPECT_EQ(beamSchema->AddConstraint(beamForeignKey), sc::SC_OK);
+
+    sc::SCEditPtr edit;
+    EXPECT_EQ(db->BeginEdit(L"seed", edit), sc::SC_OK);
+    sc::SCRecordPtr floor;
+    EXPECT_EQ(floorTable->CreateRecord(floor), sc::SC_OK);
+    EXPECT_EQ(floor->SetString(L"Code", L"F-001"), sc::SC_OK);
+    sc::SCRecordPtr beam;
+    EXPECT_EQ(beamTable->CreateRecord(beam), sc::SC_OK);
+    const sc::RecordId beamId = beam->GetId();
+    EXPECT_EQ(beam->SetString(L"FloorCode", L"F-001"), sc::SC_OK);
+    EXPECT_EQ(db->Commit(edit.Get()), sc::SC_OK);
+
+    EXPECT_EQ(db->RenameTable(L"Floor", L"FloorRenamed"), sc::SC_OK);
+
+    sc::SCTablePtr renamedTable;
+    EXPECT_EQ(db->GetTable(L"FloorRenamed", renamedTable), sc::SC_OK);
+    EXPECT_TRUE(renamedTable != nullptr);
+
+    sc::SCSchemaPtr schema;
+    EXPECT_EQ(renamedTable->GetSchema(schema), sc::SC_OK);
+    sc::SCColumnDef loadedColumn;
+    EXPECT_EQ(schema->FindColumn(L"Code", &loadedColumn), sc::SC_OK);
+
+    sc::SCColumnDef loadedRelation;
+    EXPECT_EQ(beamSchema->FindColumn(L"FloorCode", &loadedRelation), sc::SC_OK);
+    EXPECT_EQ(loadedRelation.referenceTable, L"FloorRenamed");
+    EXPECT_EQ(loadedRelation.referenceStorageColumn, L"Code");
+    EXPECT_EQ(loadedRelation.referenceDisplayColumn, L"Code");
+
+    sc::SCConstraintDef loadedConstraint;
+    EXPECT_EQ(beamSchema->FindConstraint(L"fk_Beam_FloorCode", &loadedConstraint),
+              sc::SC_OK);
+    EXPECT_EQ(loadedConstraint.referencedTable, L"FloorRenamed");
+    ASSERT_EQ(loadedConstraint.referencedColumns.size(), 1u);
+    EXPECT_EQ(loadedConstraint.referencedColumns[0], L"Code");
+
+    sc::SCRecordPtr reloaded;
+    EXPECT_EQ(beamTable->GetRecord(beamId, reloaded), sc::SC_OK);
+    std::wstring floorCodeText;
+    EXPECT_EQ(reloaded->GetStringCopy(L"FloorCode", &floorCodeText), sc::SC_OK);
+    EXPECT_EQ(floorCodeText, L"F-001");
+}
+
+TEST(SqliteSchema, UpdateColumnAllowsNonNullableWhenExistingRecordsResolveDefaultValue)
+{
+    const fs::path dbPath =
+        MakeTempDbPath(L"StableCoreStorage_Sqlite_Schema_UpdateColumnDefaultBackedNonNullable.sqlite");
+
+    sc::SCDbPtr db;
+    EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
+
+    sc::SCTablePtr table;
+    EXPECT_EQ(db->CreateTable(L"Beam", table), sc::SC_OK);
+
+    sc::SCSchemaPtr schema;
+    EXPECT_EQ(table->GetSchema(schema), sc::SC_OK);
+
+    sc::SCColumnDef width;
+    width.name = L"Width";
+    width.displayName = L"Width";
+    width.valueKind = sc::ValueKind::Int64;
+    width.nullable = true;
+    width.defaultValue = sc::SCValue::FromInt64(0);
+    EXPECT_EQ(schema->AddColumn(width), sc::SC_OK);
+
+    sc::SCEditPtr edit;
+    EXPECT_EQ(db->BeginEdit(L"seed", edit), sc::SC_OK);
+    sc::SCRecordPtr record;
+    EXPECT_EQ(table->CreateRecord(record), sc::SC_OK);
+    const sc::RecordId recordId = record->GetId();
+    EXPECT_EQ(db->Commit(edit.Get()), sc::SC_OK);
+
+    sc::SCColumnDef requiredWidth = width;
+    requiredWidth.nullable = false;
+    EXPECT_EQ(schema->UpdateColumn(requiredWidth), sc::SC_OK);
+
+    sc::SCColumnDef loaded;
+    EXPECT_EQ(schema->FindColumn(L"Width", &loaded), sc::SC_OK);
+    EXPECT_FALSE(loaded.nullable);
+
+    sc::SCRecordPtr reloaded;
+    EXPECT_EQ(table->GetRecord(recordId, reloaded), sc::SC_OK);
+    std::int64_t resolvedWidth = -1;
+    EXPECT_EQ(reloaded->GetInt64(L"Width", &resolvedWidth), sc::SC_OK);
+    EXPECT_EQ(resolvedWidth, 0);
+}
+
 TEST(SqliteSchema, UpdateColumnFailureDuringValueRewriteRestoresSchemaAndRecordValues)
 {
     const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_Sqlite_Schema_UpdateColumnRewriteFail.sqlite");

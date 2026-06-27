@@ -4,6 +4,7 @@
 #include "SCSchemaEdit.h"
 
 #include <algorithm>
+#include <atomic>
 #include <iomanip>
 #include <cstring>
 #include <cwctype>
@@ -2069,6 +2070,50 @@ namespace StableCore::Storage
             bool completed_{false};
         };
 
+        class SqliteSavepoint
+        {
+        public:
+            explicit SqliteSavepoint(SqliteDb& db, const char* baseName)
+                : db_(db)
+            {
+                const std::uint64_t savepointId =
+                    nextId_.fetch_add(1, std::memory_order_relaxed);
+                name_ = std::string(baseName) + "_" + std::to_string(savepointId);
+                if (Failed(db_.Execute(("SAVEPOINT " + name_ + ";").c_str())))
+                {
+                    throw std::runtime_error("failed to create sqlite savepoint");
+                }
+            }
+
+            ~SqliteSavepoint()
+            {
+                if (!completed_)
+                {
+                    db_.Execute(("ROLLBACK TO SAVEPOINT " + name_ + ";").c_str());
+                    db_.Execute(("RELEASE SAVEPOINT " + name_ + ";").c_str());
+                }
+            }
+
+            ErrorCode Commit()
+            {
+                if (completed_)
+                {
+                    return SC_OK;
+                }
+                completed_ = true;
+                return db_.Execute(("RELEASE SAVEPOINT " + name_ + ";").c_str());
+            }
+
+        private:
+            inline static std::atomic<std::uint64_t> nextId_{1};
+
+            SqliteDb& db_;
+            std::string name_;
+            bool completed_{false};
+        };
+
+        class SqliteSchema;
+
         struct SqliteRecordData
         {
             explicit SqliteRecordData(RecordId newId) : id(newId)
@@ -2091,6 +2136,38 @@ namespace StableCore::Storage
         {
             int sequenceIndex{0};
             JournalEntry entry;
+        };
+
+        struct DeferredRenameColumnSnapshot
+        {
+            SqliteSchema* schema{nullptr};
+            SCColumnDef column;
+        };
+
+        struct DeferredRenameConstraintSnapshot
+        {
+            SqliteSchema* schema{nullptr};
+            SCConstraintDef constraint;
+        };
+
+        struct DeferredRenameState
+        {
+            SCTablePtr tableRef;
+            std::wstring oldName;
+            std::wstring newName;
+            std::vector<DeferredRenameColumnSnapshot> relationColumns;
+            std::vector<DeferredRenameConstraintSnapshot> foreignKeyConstraints;
+        };
+
+        struct DeferredSchemaOp
+        {
+            enum class Kind
+            {
+                RenameTable,
+            };
+
+            Kind kind{Kind::RenameTable};
+            DeferredRenameState rename;
         };
 
         struct CompositeIndexEncodedKey
@@ -3671,6 +3748,11 @@ namespace StableCore::Storage
             ErrorCode AddIndex(const SCIndexDef& def) override;
             ErrorCode RemoveIndex(const wchar_t* name) override;
 
+            void SetTableName(std::wstring tableName)
+            {
+                tableName_ = std::move(tableName);
+            }
+
             void LoadTableDescription(const std::wstring& description)
             {
                 description_ = description;
@@ -4120,6 +4202,10 @@ namespace StableCore::Storage
             {
                 return name_;
             }
+            void SetName(std::wstring name)
+            {
+                name_ = std::move(name);
+            }
             SqliteSchema* Schema() const noexcept
             {
                 return schema_.Get();
@@ -4178,6 +4264,8 @@ namespace StableCore::Storage
             ErrorCode GetTable(const wchar_t* name, SCTablePtr& outTable) override;
             ErrorCode CreateTable(const wchar_t* name, SCTablePtr& outTable) override;
             ErrorCode DeleteTable(const wchar_t* name) override;
+            ErrorCode RenameTable(const wchar_t* originalName,
+                                  const wchar_t* newName) override;
             ErrorCode AddObserver(ISCDatabaseObserver* observer) override;
             ErrorCode RemoveObserver(ISCDatabaseObserver* observer) override;
             ErrorCode GetLastConstraintViolationInfo(SCConstraintViolationInfo* outInfo) const override;
@@ -4311,6 +4399,7 @@ namespace StableCore::Storage
                                     const std::wstring& fieldName,
                                     const SCValue& value);
             ErrorCode ValidateColumnDefForSchema(SqliteSchema* schema, const SCColumnDef& def) const;
+            ErrorCode ValidateColumnDefForUpdate(SqliteSchema* schema, const SCColumnDef& def) const;
             ErrorCode ValidateConstraintDefForSchema(SqliteSchema* schema, const SCConstraintDef& def) const;
             ErrorCode ValidateIndexDefForSchema(SqliteSchema* schema, const SCIndexDef& def) const;
             ErrorCode ValidateConstraintUniqueness(SqliteTable* table,
@@ -4349,7 +4438,9 @@ namespace StableCore::Storage
                                                           const std::shared_ptr<SqliteRecordData>& candidateData,
                                                           const std::wstring* overrideFieldName = nullptr,
                                                           const SCValue* overrideValue = nullptr) const;
-            ErrorCode ValidateForeignKeyReferencesForTouchedTables(const JournalTransaction& tx) const;
+            ErrorCode ValidateForeignKeyReferencesForTouchedTables(
+                const JournalTransaction& tx,
+                bool reverseRenameResolution = false) const;
             bool HasForeignKeyReferencesToTable(const std::wstring& tableName) const;
             bool HasForeignKeyReferencesToColumn(const std::wstring& tableName, const std::wstring& columnName) const;
             void MarkForeignKeyReferenceCacheDirty() noexcept;
@@ -4391,13 +4482,36 @@ namespace StableCore::Storage
                                                          const QueryPlan& analyzedPlan,
                                                          CompositeIndexLookupBounds* outBounds) const;
             ErrorCode ValidateRequiredValuesForCommit() const;
-            ErrorCode ValidateUniqueAndPrimaryKeyConstraintsForTouchedTables(const JournalTransaction& tx) const;
+            ErrorCode ValidateUniqueAndPrimaryKeyConstraintsForTouchedTables(
+                const JournalTransaction& tx,
+                bool reverseRenameResolution = false) const;
             bool HasAliveRecords(SqliteSchema* schema) const;
             bool IsRecordReferenced(const std::wstring& tableName, RecordId recordId) const;
             SqliteTable* FindTableByRowId(std::int64_t tableRowId) const;
             void MarkReferenceIndexDirty() noexcept;
             void RefreshReferenceIndexState();
-            void CollectTouchedTableNames(const JournalTransaction& tx, std::vector<std::wstring>* outTableNames) const;
+            void CollectTouchedTableNames(const JournalTransaction& tx,
+                                          std::vector<std::wstring>* outTableNames,
+                                          bool reverseRenameResolution = false) const;
+            ErrorCode CaptureDeferredRenameState(const std::wstring& oldName,
+                                                 const std::wstring& newName,
+                                                 DeferredRenameState* outState) const;
+            void ApplyDeferredRenameWorkingState(const DeferredRenameState& state);
+            void RollbackDeferredRenameWorkingState(const DeferredRenameState& state);
+            DeferredRenameState* FindDeferredRenameState(const std::wstring& oldName,
+                                                         const std::wstring& newName);
+            const DeferredRenameState* FindDeferredRenameState(const std::wstring& oldName,
+                                                               const std::wstring& newName) const;
+            ErrorCode RecordDeferredRenameTable(const std::wstring& oldName,
+                                                const std::wstring& newName);
+            bool JournalTransactionContainsRenameTable(
+                const JournalTransaction& tx) const;
+            std::wstring ResolveJournalTableNameToReplayState(
+                const JournalTransaction& tx,
+                const std::wstring& tableName,
+                bool reverseRenameResolution) const;
+            bool JournalEntryMatchesCurrentTableName(const JournalEntry& entry,
+                                                     const std::wstring& tableName) const;
             JournalLookup LookupRecordJournalState(const std::wstring& tableName, RecordId recordId) const;
             void RemoveFieldJournalEntries(const std::wstring& tableName, RecordId recordId);
             void RemoveAllJournalEntriesForRecord(const std::wstring& tableName, RecordId recordId);
@@ -4424,6 +4538,14 @@ namespace StableCore::Storage
                                bool oldDeleted,
                                bool newDeleted,
                                JournalOp op);
+            void RecordTableRenameJournal(const std::wstring& originalName,
+                                          const std::wstring& newName);
+            ErrorCode PersistTableRename(const std::wstring& originalName,
+                                         const std::wstring& newName,
+                                         bool recordJournal,
+                                         bool manageTransaction);
+            ErrorCode PersistDeferredRenameToStorage(const DeferredRenameState& state);
+            ErrorCode PersistDeferredSchemaOps();
             ErrorCode PersistSchemaAddColumn(SqliteSchema* schema, const SCColumnDef& def, std::int64_t rowId = -1);
             ErrorCode PersistSchemaUpdateColumn(SqliteSchema* schema, const SCColumnDef& def);
             ErrorCode PersistSchemaRemoveColumn(SqliteSchema* schema, const wchar_t* columnName);
@@ -4457,13 +4579,27 @@ namespace StableCore::Storage
             ErrorCode PersistRemovedIndex(SqliteSchema* schema, const wchar_t* name);
             ErrorCode ApplyJournalReverse(const JournalTransaction& tx);
             ErrorCode ApplyJournalForward(const JournalTransaction& tx);
+            ErrorCode ApplyJournalReverse(const JournalTransaction& tx,
+                                          std::size_t beginIndex,
+                                          std::size_t endIndex,
+                                          std::size_t* outAppliedCount = nullptr);
+            ErrorCode ApplyJournalForward(const JournalTransaction& tx,
+                                          std::size_t beginIndex,
+                                          std::size_t endIndex,
+                                          std::size_t* outAppliedCount = nullptr);
             ErrorCode ApplyEntry(const JournalEntry& entry, bool reverse);
             ErrorCode ApplySchemaEntry(const JournalEntry& entry, bool reverse);
-            void UpdateTouchedVersions(const JournalTransaction& tx, VersionId version);
+            void UpdateTouchedVersions(const JournalTransaction& tx,
+                                       VersionId version,
+                                       bool reverseRenameResolution = false);
             SCChangeSet BuildChangeSet(const JournalTransaction& tx, ChangeSource source, VersionId version) const;
             void NotifyObservers(const SCChangeSet& SCChangeSet);
-            std::vector<std::pair<std::wstring, RecordId>> GetTouchedRecordKeys(const JournalTransaction& tx) const;
-            void PersistTouchedRecords(const JournalTransaction& tx, VersionId version);
+            std::vector<std::pair<std::wstring, RecordId>> GetTouchedRecordKeys(
+                const JournalTransaction& tx,
+                bool reverseRenameResolution = false) const;
+            void PersistTouchedRecords(const JournalTransaction& tx,
+                                       VersionId version,
+                                       bool reverseRenameResolution = false);
             std::int64_t InsertJournalTransaction(const JournalTransaction& tx, int stackKind, int stackOrder);
             void PersistJournalEntries(std::int64_t txId, const JournalTransaction& tx);
             void PersistSchemaJournalEntries(std::int64_t txId, const JournalTransaction& tx, int* sequence);
@@ -4502,6 +4638,7 @@ namespace StableCore::Storage
             std::vector<ISCDatabaseObserver*> observers_;
             SCRefPtr<SqliteEditSession> activeEdit_;
             JournalTransaction activeJournal_;
+            std::vector<DeferredSchemaOp> activeSchemaOps_;
             std::vector<SqlitePersistedJournalTransaction> undoStack_;
             std::vector<SqlitePersistedJournalTransaction> redoStack_;
             std::unordered_map<std::wstring, std::int64_t> queryIndexRowIdsByTableAndName_;
@@ -4693,7 +4830,7 @@ namespace StableCore::Storage
 
         ErrorCode SqliteSchema::UpdateColumn(const SCColumnDef& def)
         {
-            const ErrorCode validate = db_->ValidateColumnDefForSchema(this, def);
+            const ErrorCode validate = db_->ValidateColumnDefForUpdate(this, def);
             if (Failed(validate))
             {
                 return validate;
@@ -5416,6 +5553,9 @@ namespace StableCore::Storage
             db_.Execute(
                 "CREATE INDEX IF NOT EXISTS idx_schema_constraints_table ON "
                 "schema_constraints(table_id);");
+            db_.Execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_schema_constraints_table_name ON "
+                "schema_constraints(table_id, name);");
             db_.Execute(
                 "CREATE TABLE IF NOT EXISTS schema_constraint_columns ("
                 "constraint_id INTEGER NOT NULL, column_ordinal INTEGER NOT "
@@ -6902,6 +7042,7 @@ namespace StableCore::Storage
                 return SC_E_WRITE_CONFLICT;
             }
             activeJournal_ = JournalTransaction{};
+            activeSchemaOps_.clear();
             activeJournal_.actionName = (name != nullptr && *name != L'\0') ? name : L"Edit";
             activeEdit_ = SCMakeRef<SqliteEditSession>(activeJournal_.actionName, version_);
             outEdit = activeEdit_;
@@ -6927,6 +7068,7 @@ namespace StableCore::Storage
                 activeEdit_->SetState(EditState::Committed);
                 activeEdit_.Reset();
                 activeJournal_ = JournalTransaction{};
+                activeSchemaOps_.clear();
                 return SC_OK;
             }
 
@@ -6936,23 +7078,34 @@ namespace StableCore::Storage
                 return requiredValueRc;
             }
 
-            const ErrorCode uniqueConstraintRc = ValidateUniqueAndPrimaryKeyConstraintsForTouchedTables(activeJournal_);
-            if (Failed(uniqueConstraintRc))
-            {
-                return uniqueConstraintRc;
-            }
-            const ErrorCode foreignKeyReferenceRc = ValidateForeignKeyReferencesForTouchedTables(activeJournal_);
-            if (Failed(foreignKeyReferenceRc))
-            {
-                return foreignKeyReferenceRc;
-            }
-
             try
             {
                 const VersionId committedVersion = version_ + 1;
                 JournalTransaction committedJournal = activeJournal_;
                 SqliteTxn txn(db_);
-                PersistTouchedRecords(committedJournal, committedVersion);
+                const ErrorCode schemaRc = PersistDeferredSchemaOps();
+                if (Failed(schemaRc))
+                {
+                    return schemaRc;
+                }
+
+                const ErrorCode uniqueConstraintRc =
+                    ValidateUniqueAndPrimaryKeyConstraintsForTouchedTables(
+                        activeJournal_, false);
+                if (Failed(uniqueConstraintRc))
+                {
+                    return uniqueConstraintRc;
+                }
+                const ErrorCode foreignKeyReferenceRc =
+                    ValidateForeignKeyReferencesForTouchedTables(
+                        activeJournal_, false);
+                if (Failed(foreignKeyReferenceRc))
+                {
+                    return foreignKeyReferenceRc;
+                }
+                PersistTouchedRecords(committedJournal,
+                                      committedVersion,
+                                      false);
                 DeleteRedoJournalRows();
                 committedJournal.committedVersion = committedVersion;
                 const std::int64_t txId =
@@ -6967,11 +7120,12 @@ namespace StableCore::Storage
                 }
 
                 version_ = committedVersion;
-                UpdateTouchedVersions(committedJournal, version_);
+                UpdateTouchedVersions(committedJournal, version_, false);
                 undoStack_.push_back(SqlitePersistedJournalTransaction{txId, committedJournal});
                 redoStack_.clear();
                 activeEdit_->SetState(EditState::Committed);
                 activeJournal_ = committedJournal;
+                activeSchemaOps_.clear();
             } catch (...)
             {
                 return SC_E_FAIL;
@@ -6998,22 +7152,37 @@ namespace StableCore::Storage
                 return validate;
             }
 
+            std::size_t reversedCount = 0;
             try
             {
                 if (!activeJournal_.entries.empty())
                 {
                     SqliteTxn txn(db_);
-                    const ErrorCode applyRc = ApplyJournalReverse(activeJournal_);
+                    const ErrorCode applyRc = ApplyJournalReverse(
+                        activeJournal_,
+                        0,
+                        activeJournal_.entries.size(),
+                        &reversedCount);
                     if (Failed(applyRc))
                     {
-                        (void)ApplyJournalForward(activeJournal_);
+                        const std::size_t beginIndex =
+                            activeJournal_.entries.size() - reversedCount;
+                        (void)ApplyJournalForward(activeJournal_,
+                                                  beginIndex,
+                                                  activeJournal_.entries.size(),
+                                                  nullptr);
                         return applyRc;
                     }
                     RefreshReferenceIndexState();
                     const ErrorCode commitRc = txn.Commit();
                     if (Failed(commitRc))
                     {
-                        (void)ApplyJournalForward(activeJournal_);
+                        const std::size_t beginIndex =
+                            activeJournal_.entries.size() - reversedCount;
+                        (void)ApplyJournalForward(activeJournal_,
+                                                  beginIndex,
+                                                  activeJournal_.entries.size(),
+                                                  nullptr);
                         return commitRc;
                     }
                 } else
@@ -7022,12 +7191,22 @@ namespace StableCore::Storage
                 }
             } catch (...)
             {
+                if (reversedCount > 0)
+                {
+                    const std::size_t beginIndex =
+                        activeJournal_.entries.size() - reversedCount;
+                    (void)ApplyJournalForward(activeJournal_,
+                                              beginIndex,
+                                              activeJournal_.entries.size(),
+                                              nullptr);
+                }
                 return SC_E_FAIL;
             }
 
             activeEdit_->SetState(EditState::RolledBack);
             activeEdit_.Reset();
             activeJournal_ = JournalTransaction{};
+            activeSchemaOps_.clear();
             return SC_OK;
         }
 
@@ -7051,48 +7230,82 @@ namespace StableCore::Storage
             SqlitePersistedJournalTransaction tx = undoStack_.back();
             undoStack_.pop_back();
 
+            std::size_t reversedCount = 0;
             try
             {
                 SqliteTxn txn(db_);
-                const ErrorCode applyRc = ApplyJournalReverse(tx.tx);
+                const ErrorCode applyRc = ApplyJournalReverse(
+                    tx.tx, 0, tx.tx.entries.size(), &reversedCount);
                 if (Failed(applyRc))
                 {
-                    (void)ApplyJournalForward(tx.tx);
+                    const std::size_t beginIndex =
+                        tx.tx.entries.size() - reversedCount;
+                    (void)ApplyJournalForward(tx.tx,
+                                              beginIndex,
+                                              tx.tx.entries.size(),
+                                              nullptr);
                     undoStack_.push_back(tx);
                     return applyRc;
                 }
-                const ErrorCode constraintRc = ValidateUniqueAndPrimaryKeyConstraintsForTouchedTables(tx.tx);
+                const ErrorCode constraintRc =
+                    ValidateUniqueAndPrimaryKeyConstraintsForTouchedTables(
+                        tx.tx, true);
                 if (Failed(constraintRc))
                 {
-                    (void)ApplyJournalForward(tx.tx);
+                    const std::size_t beginIndex =
+                        tx.tx.entries.size() - reversedCount;
+                    (void)ApplyJournalForward(tx.tx,
+                                              beginIndex,
+                                              tx.tx.entries.size(),
+                                              nullptr);
                     undoStack_.push_back(tx);
                     return constraintRc;
                 }
-                const ErrorCode foreignKeyReferenceRc = ValidateForeignKeyReferencesForTouchedTables(tx.tx);
+                const ErrorCode foreignKeyReferenceRc =
+                    ValidateForeignKeyReferencesForTouchedTables(
+                        tx.tx, true);
                 if (Failed(foreignKeyReferenceRc))
                 {
-                    (void)ApplyJournalForward(tx.tx);
+                    const std::size_t beginIndex =
+                        tx.tx.entries.size() - reversedCount;
+                    (void)ApplyJournalForward(tx.tx,
+                                              beginIndex,
+                                              tx.tx.entries.size(),
+                                              nullptr);
                     undoStack_.push_back(tx);
                     return foreignKeyReferenceRc;
                 }
                 const VersionId nextVersion = version_ + 1;
-                PersistTouchedRecords(tx.tx, nextVersion);
+                PersistTouchedRecords(tx.tx, nextVersion, true);
                 UpdateJournalTransactionStack(tx.txId, kStackRedo, static_cast<int>(redoStack_.size()));
                 SaveMetadata(nextVersion);
                 const ErrorCode commitRc = txn.Commit();
                 if (Failed(commitRc))
                 {
-                    (void)ApplyJournalForward(tx.tx);
+                    const std::size_t beginIndex =
+                        tx.tx.entries.size() - reversedCount;
+                    (void)ApplyJournalForward(tx.tx,
+                                              beginIndex,
+                                              tx.tx.entries.size(),
+                                              nullptr);
                     undoStack_.push_back(tx);
                     return commitRc;
                 }
 
                 version_ = nextVersion;
-                UpdateTouchedVersions(tx.tx, version_);
+                UpdateTouchedVersions(tx.tx, version_, true);
                 redoStack_.push_back(tx);
             } catch (...)
             {
-                (void)ApplyJournalForward(tx.tx);
+                if (reversedCount > 0)
+                {
+                    const std::size_t beginIndex =
+                        tx.tx.entries.size() - reversedCount;
+                    (void)ApplyJournalForward(tx.tx,
+                                              beginIndex,
+                                              tx.tx.entries.size(),
+                                              nullptr);
+                }
                 undoStack_.push_back(tx);
                 return SC_E_FAIL;
             }
@@ -7122,48 +7335,57 @@ namespace StableCore::Storage
             SqlitePersistedJournalTransaction tx = redoStack_.back();
             redoStack_.pop_back();
 
+            std::size_t forwardedCount = 0;
             try
             {
                 SqliteTxn txn(db_);
-                const ErrorCode applyRc = ApplyJournalForward(tx.tx);
+                const ErrorCode applyRc = ApplyJournalForward(
+                    tx.tx, 0, tx.tx.entries.size(), &forwardedCount);
                 if (Failed(applyRc))
                 {
-                    (void)ApplyJournalReverse(tx.tx);
+                    (void)ApplyJournalReverse(tx.tx, 0, forwardedCount, nullptr);
                     redoStack_.push_back(tx);
                     return applyRc;
                 }
-                const ErrorCode constraintRc = ValidateUniqueAndPrimaryKeyConstraintsForTouchedTables(tx.tx);
+                const ErrorCode constraintRc =
+                    ValidateUniqueAndPrimaryKeyConstraintsForTouchedTables(
+                        tx.tx, false);
                 if (Failed(constraintRc))
                 {
-                    (void)ApplyJournalReverse(tx.tx);
+                    (void)ApplyJournalReverse(tx.tx, 0, forwardedCount, nullptr);
                     redoStack_.push_back(tx);
                     return constraintRc;
                 }
-                const ErrorCode foreignKeyReferenceRc = ValidateForeignKeyReferencesForTouchedTables(tx.tx);
+                const ErrorCode foreignKeyReferenceRc =
+                    ValidateForeignKeyReferencesForTouchedTables(
+                        tx.tx, false);
                 if (Failed(foreignKeyReferenceRc))
                 {
-                    (void)ApplyJournalReverse(tx.tx);
+                    (void)ApplyJournalReverse(tx.tx, 0, forwardedCount, nullptr);
                     redoStack_.push_back(tx);
                     return foreignKeyReferenceRc;
                 }
                 const VersionId nextVersion = version_ + 1;
-                PersistTouchedRecords(tx.tx, nextVersion);
+                PersistTouchedRecords(tx.tx, nextVersion, false);
                 UpdateJournalTransactionStack(tx.txId, kStackUndo, static_cast<int>(undoStack_.size()));
                 SaveMetadata(nextVersion);
                 const ErrorCode commitRc = txn.Commit();
                 if (Failed(commitRc))
                 {
-                    (void)ApplyJournalReverse(tx.tx);
+                    (void)ApplyJournalReverse(tx.tx, 0, forwardedCount, nullptr);
                     redoStack_.push_back(tx);
                     return commitRc;
                 }
 
                 version_ = nextVersion;
-                UpdateTouchedVersions(tx.tx, version_);
+                UpdateTouchedVersions(tx.tx, version_, false);
                 undoStack_.push_back(tx);
             } catch (...)
             {
-                (void)ApplyJournalReverse(tx.tx);
+                if (forwardedCount > 0)
+                {
+                    (void)ApplyJournalReverse(tx.tx, 0, forwardedCount, nullptr);
+                }
                 redoStack_.push_back(tx);
                 return SC_E_FAIL;
             }
@@ -7499,6 +7721,45 @@ namespace StableCore::Storage
             tables_.erase(tableIt);
             MarkReferenceIndexDirty();
             MarkForeignKeyReferenceCacheDirty();
+            return SC_OK;
+        }
+
+        ErrorCode SqliteDatabase::RenameTable(const wchar_t* originalName,
+                                              const wchar_t* newName)
+        {
+            const ErrorCode writableRc = EnsureWritable();
+            if (Failed(writableRc))
+            {
+                return writableRc;
+            }
+            if (originalName == nullptr || newName == nullptr ||
+                *originalName == L'\0' || *newName == L'\0')
+            {
+                return SC_E_INVALIDARG;
+            }
+            if (!HasActiveEdit())
+            {
+                return PersistTableRename(originalName,
+                                          newName,
+                                          false,
+                                          true);
+            }
+
+            const ErrorCode renameRc =
+                RecordDeferredRenameTable(originalName, newName);
+            if (Failed(renameRc))
+            {
+                return renameRc;
+            }
+
+            const DeferredRenameState* state =
+                FindDeferredRenameState(originalName, newName);
+            if (state == nullptr)
+            {
+                return SC_E_FAIL;
+            }
+
+            RecordTableRenameJournal(state->oldName, state->newName);
             return SC_OK;
         }
 
@@ -8225,6 +8486,69 @@ namespace StableCore::Storage
             return SC_OK;
         }
 
+        ErrorCode SqliteDatabase::ValidateColumnDefForUpdate(SqliteSchema* schema, const SCColumnDef& def) const
+        {
+            if (schema == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+
+            const ErrorCode shapeRc = ValidateColumnDefShape(def);
+            if (Failed(shapeRc))
+            {
+                return shapeRc;
+            }
+
+            const ErrorCode relationRc = ValidateRelationColumnDef(this, def);
+            if (Failed(relationRc))
+            {
+                return relationRc;
+            }
+
+            const SCColumnDef* previousDef = schema->FindColumnDef(def.name);
+            if (previousDef == nullptr)
+            {
+                return SC_E_COLUMN_NOT_FOUND;
+            }
+
+            if (!def.nullable)
+            {
+                auto* table = FindTableByRowId(schema->TableRowId());
+                if (table == nullptr)
+                {
+                    return SC_E_FAIL;
+                }
+
+                for (const auto& [_, data] : table->Records())
+                {
+                    if (data == nullptr || data->state == RecordState::Deleted)
+                    {
+                        continue;
+                    }
+
+                    SCRecordPtr record;
+                    const ErrorCode recordRc = table->GetRecord(data->id, record);
+                    if (Failed(recordRc) || !record)
+                    {
+                        return Failed(recordRc) ? recordRc : SC_E_FAIL;
+                    }
+
+                    SCValue value;
+                    const ErrorCode valueRc = record->GetValue(def.name.c_str(), &value);
+                    if (valueRc == SC_E_VALUE_IS_NULL)
+                    {
+                        return SC_E_SCHEMA_VIOLATION;
+                    }
+                    if (Failed(valueRc))
+                    {
+                        return valueRc;
+                    }
+                }
+            }
+
+            return SC_OK;
+        }
+
         ErrorCode SqliteDatabase::ValidateConstraintDefForSchema(SqliteSchema* schema, const SCConstraintDef& def) const
         {
             if (schema == nullptr)
@@ -8424,8 +8748,10 @@ namespace StableCore::Storage
             return nullptr;
         }
 
-        void SqliteDatabase::CollectTouchedTableNames(const JournalTransaction& tx,
-                                                      std::vector<std::wstring>* outTableNames) const
+        void SqliteDatabase::CollectTouchedTableNames(
+            const JournalTransaction& tx,
+            std::vector<std::wstring>* outTableNames,
+            bool reverseRenameResolution) const
         {
             if (outTableNames == nullptr)
             {
@@ -8433,17 +8759,402 @@ namespace StableCore::Storage
             }
 
             outTableNames->clear();
+            const bool hasRenameTable =
+                JournalTransactionContainsRenameTable(tx);
             for (const auto& entry : tx.entries)
             {
-                if (entry.tableName.empty())
+                const std::wstring resolvedName =
+                    hasRenameTable
+                        ? ResolveJournalTableNameToReplayState(
+                              tx,
+                              entry.tableName,
+                              reverseRenameResolution)
+                        : entry.tableName;
+                if (resolvedName.empty())
                 {
                     continue;
                 }
-                if (std::find(outTableNames->begin(), outTableNames->end(), entry.tableName) == outTableNames->end())
+                if (std::find(outTableNames->begin(),
+                              outTableNames->end(),
+                              resolvedName) == outTableNames->end())
                 {
-                    outTableNames->push_back(entry.tableName);
+                    outTableNames->push_back(resolvedName);
                 }
             }
+        }
+
+        ErrorCode SqliteDatabase::CaptureDeferredRenameState(
+            const std::wstring& oldName,
+            const std::wstring& newName,
+            DeferredRenameState* outState) const
+        {
+            if (outState == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+            if (EqualsIgnoreCase(oldName, newName))
+            {
+                return SC_E_INVALIDARG;
+            }
+
+            auto tableIt = tables_.find(oldName);
+            if (tableIt == tables_.end())
+            {
+                for (auto it = tables_.begin(); it != tables_.end(); ++it)
+                {
+                    if (EqualsIgnoreCase(it->first, oldName))
+                    {
+                        tableIt = it;
+                        break;
+                    }
+                }
+            }
+            if (tableIt == tables_.end())
+            {
+                return SC_E_TABLE_NOT_FOUND;
+            }
+
+            for (const auto& [existingName, existingTable] : tables_)
+            {
+                (void)existingTable;
+                if (EqualsIgnoreCase(existingName, newName) &&
+                    !EqualsIgnoreCase(existingName, tableIt->first))
+                {
+                    return SC_E_SCHEMA_VIOLATION;
+                }
+            }
+
+            DeferredRenameState capturedState;
+            capturedState.tableRef = tableIt->second;
+            capturedState.oldName = tableIt->first;
+            capturedState.newName = newName;
+
+            for (const auto& [otherName, otherTableRef] : tables_)
+            {
+                (void)otherName;
+                auto* otherTable = static_cast<SqliteTable*>(otherTableRef.Get());
+                if (otherTable == nullptr)
+                {
+                    continue;
+                }
+
+                SCSchemaPtr otherSchema;
+                const ErrorCode schemaRc = otherTable->GetSchema(otherSchema);
+                if (Failed(schemaRc) || !otherSchema)
+                {
+                    return Failed(schemaRc) ? schemaRc : SC_E_FAIL;
+                }
+
+                auto* sqliteOtherSchema =
+                    static_cast<SqliteSchema*>(otherSchema.Get());
+                if (sqliteOtherSchema == nullptr)
+                {
+                    return SC_E_FAIL;
+                }
+
+                std::int32_t columnCount = 0;
+                const ErrorCode columnCountRc =
+                    otherSchema->GetColumnCount(&columnCount);
+                if (Failed(columnCountRc))
+                {
+                    return columnCountRc;
+                }
+
+                for (std::int32_t columnIndex = 0; columnIndex < columnCount;
+                     ++columnIndex)
+                {
+                    SCColumnDef column;
+                    const ErrorCode columnRc =
+                        otherSchema->GetColumn(columnIndex, &column);
+                    if (Failed(columnRc))
+                    {
+                        return columnRc;
+                    }
+
+                    if (column.columnKind == ColumnKind::Relation &&
+                        EqualsIgnoreCase(column.referenceTable,
+                                         capturedState.oldName))
+                    {
+                        capturedState.relationColumns.push_back(
+                            DeferredRenameColumnSnapshot{sqliteOtherSchema, column});
+                    }
+                }
+
+                std::int32_t constraintCount = 0;
+                const ErrorCode constraintCountRc =
+                    otherSchema->GetConstraintCount(&constraintCount);
+                if (Failed(constraintCountRc))
+                {
+                    return constraintCountRc;
+                }
+
+                for (std::int32_t constraintIndex = 0;
+                     constraintIndex < constraintCount; ++constraintIndex)
+                {
+                    SCConstraintDef constraint;
+                    const ErrorCode constraintRc =
+                        otherSchema->GetConstraint(constraintIndex, &constraint);
+                    if (Failed(constraintRc))
+                    {
+                        return constraintRc;
+                    }
+
+                    if (constraint.kind == SCConstraintKind::ForeignKey &&
+                        EqualsIgnoreCase(constraint.referencedTable,
+                                         capturedState.oldName))
+                    {
+                        capturedState.foreignKeyConstraints.push_back(
+                            DeferredRenameConstraintSnapshot{
+                                sqliteOtherSchema, constraint});
+                    }
+                }
+            }
+
+            *outState = std::move(capturedState);
+            return SC_OK;
+        }
+
+        void SqliteDatabase::ApplyDeferredRenameWorkingState(
+            const DeferredRenameState& state)
+        {
+            auto eraseCurrentEntry = [&]() {
+                for (auto it = tables_.begin(); it != tables_.end(); ++it)
+                {
+                    if (it->second.Get() == state.tableRef.Get())
+                    {
+                        tables_.erase(it);
+                        return;
+                    }
+                }
+            };
+
+            eraseCurrentEntry();
+            tables_.emplace(state.newName, state.tableRef);
+
+            auto* table = static_cast<SqliteTable*>(state.tableRef.Get());
+            if (table != nullptr)
+            {
+                table->SetName(state.newName);
+                if (auto* schema = table->Schema())
+                {
+                    schema->SetTableName(state.newName);
+                }
+            }
+
+            for (const auto& snapshot : state.relationColumns)
+            {
+                if (snapshot.schema == nullptr)
+                {
+                    continue;
+                }
+                SCColumnDef updatedColumn = snapshot.column;
+                updatedColumn.referenceTable = state.newName;
+                snapshot.schema->ReplaceColumn(updatedColumn);
+            }
+
+            for (const auto& snapshot : state.foreignKeyConstraints)
+            {
+                if (snapshot.schema == nullptr)
+                {
+                    continue;
+                }
+                SCConstraintDef updatedConstraint = snapshot.constraint;
+                updatedConstraint.referencedTable = state.newName;
+                snapshot.schema->ReplaceConstraint(updatedConstraint);
+            }
+
+            MarkReferenceIndexDirty();
+            MarkForeignKeyReferenceCacheDirty();
+        }
+
+        void SqliteDatabase::RollbackDeferredRenameWorkingState(
+            const DeferredRenameState& state)
+        {
+            auto eraseCurrentEntry = [&]() {
+                for (auto it = tables_.begin(); it != tables_.end(); ++it)
+                {
+                    if (it->second.Get() == state.tableRef.Get())
+                    {
+                        tables_.erase(it);
+                        return;
+                    }
+                }
+            };
+
+            eraseCurrentEntry();
+            tables_.emplace(state.oldName, state.tableRef);
+
+            auto* table = static_cast<SqliteTable*>(state.tableRef.Get());
+            if (table != nullptr)
+            {
+                table->SetName(state.oldName);
+                if (auto* schema = table->Schema())
+                {
+                    schema->SetTableName(state.oldName);
+                }
+            }
+
+            for (const auto& snapshot : state.relationColumns)
+            {
+                if (snapshot.schema != nullptr)
+                {
+                    snapshot.schema->ReplaceColumn(snapshot.column);
+                }
+            }
+
+            for (const auto& snapshot : state.foreignKeyConstraints)
+            {
+                if (snapshot.schema != nullptr)
+                {
+                    snapshot.schema->ReplaceConstraint(snapshot.constraint);
+                }
+            }
+
+            MarkReferenceIndexDirty();
+            MarkForeignKeyReferenceCacheDirty();
+        }
+
+        DeferredRenameState* SqliteDatabase::FindDeferredRenameState(
+            const std::wstring& oldName,
+            const std::wstring& newName)
+        {
+            for (auto it = activeSchemaOps_.rbegin();
+                 it != activeSchemaOps_.rend(); ++it)
+            {
+                if (it->kind != DeferredSchemaOp::Kind::RenameTable)
+                {
+                    continue;
+                }
+                if (EqualsIgnoreCase(it->rename.oldName, oldName) &&
+                    EqualsIgnoreCase(it->rename.newName, newName))
+                {
+                    return &it->rename;
+                }
+            }
+            return nullptr;
+        }
+
+        const DeferredRenameState* SqliteDatabase::FindDeferredRenameState(
+            const std::wstring& oldName,
+            const std::wstring& newName) const
+        {
+            for (auto it = activeSchemaOps_.rbegin();
+                 it != activeSchemaOps_.rend(); ++it)
+            {
+                if (it->kind != DeferredSchemaOp::Kind::RenameTable)
+                {
+                    continue;
+                }
+                if (EqualsIgnoreCase(it->rename.oldName, oldName) &&
+                    EqualsIgnoreCase(it->rename.newName, newName))
+                {
+                    return &it->rename;
+                }
+            }
+            return nullptr;
+        }
+
+        ErrorCode SqliteDatabase::RecordDeferredRenameTable(
+            const std::wstring& oldName,
+            const std::wstring& newName)
+        {
+            DeferredRenameState capturedState;
+            const ErrorCode captureRc =
+                CaptureDeferredRenameState(oldName, newName, &capturedState);
+            if (Failed(captureRc))
+            {
+                return captureRc;
+            }
+
+            ApplyDeferredRenameWorkingState(capturedState);
+
+            DeferredSchemaOp op;
+            op.kind = DeferredSchemaOp::Kind::RenameTable;
+            op.rename = std::move(capturedState);
+            activeSchemaOps_.push_back(std::move(op));
+            return SC_OK;
+        }
+
+        bool SqliteDatabase::JournalTransactionContainsRenameTable(
+            const JournalTransaction& tx) const
+        {
+            return std::any_of(
+                tx.entries.begin(),
+                tx.entries.end(),
+                [](const JournalEntry& entry) {
+                    return entry.op == JournalOp::RenameTable;
+                });
+        }
+
+        std::wstring SqliteDatabase::ResolveJournalTableNameToReplayState(
+            const JournalTransaction& tx,
+            const std::wstring& tableName,
+            bool reverseRenameResolution) const
+        {
+            std::wstring resolvedName = tableName;
+            if (resolvedName.empty())
+            {
+                return resolvedName;
+            }
+
+            auto applyRename = [&resolvedName](const JournalEntry& entry,
+                                               bool reverseDirection) {
+                if (entry.op != JournalOp::RenameTable)
+                {
+                    return;
+                }
+
+                std::wstring oldName;
+                std::wstring newName;
+                if (entry.oldValue.AsStringCopy(&oldName) != SC_OK ||
+                    entry.newValue.AsStringCopy(&newName) != SC_OK)
+                {
+                    return;
+                }
+
+                const std::wstring& fromName = reverseDirection ? newName : oldName;
+                const std::wstring& toName = reverseDirection ? oldName : newName;
+                if (EqualsIgnoreCase(resolvedName, fromName))
+                {
+                    resolvedName = toName;
+                }
+            };
+
+            if (reverseRenameResolution)
+            {
+                for (auto it = tx.entries.rbegin(); it != tx.entries.rend(); ++it)
+                {
+                    applyRename(*it, true);
+                }
+            }
+            else
+            {
+                for (const auto& entry : tx.entries)
+                {
+                    applyRename(entry, false);
+                }
+            }
+
+            return resolvedName;
+        }
+
+        bool SqliteDatabase::JournalEntryMatchesCurrentTableName(
+            const JournalEntry& entry,
+            const std::wstring& tableName) const
+        {
+            if (EqualsIgnoreCase(entry.tableName, tableName))
+            {
+                return true;
+            }
+            if (!JournalTransactionContainsRenameTable(activeJournal_))
+            {
+                return false;
+            }
+            return EqualsIgnoreCase(
+                ResolveJournalTableNameToReplayState(activeJournal_,
+                                                     entry.tableName,
+                                                     false),
+                tableName);
         }
 
         ErrorCode SqliteDatabase::ReadConstraintValue(SqliteTable* table,
@@ -9615,10 +10326,15 @@ namespace StableCore::Storage
             return ValidateTableConstraints(table, candidateData, overrideFieldName, overrideValue, specificConstraint);
         }
 
-        ErrorCode SqliteDatabase::ValidateForeignKeyReferencesForTouchedTables(const JournalTransaction& tx) const
+        ErrorCode SqliteDatabase::ValidateForeignKeyReferencesForTouchedTables(
+            const JournalTransaction& tx,
+            bool reverseRenameResolution) const
         {
             std::vector<std::wstring> touchedTableNames;
-            CollectTouchedTableNames(tx, &touchedTableNames);
+            CollectTouchedTableNames(
+                tx,
+                &touchedTableNames,
+                reverseRenameResolution);
 
             for (const std::wstring& tableName : touchedTableNames)
             {
@@ -9671,10 +10387,15 @@ namespace StableCore::Storage
             return !entries->empty();
         }
 
-        ErrorCode SqliteDatabase::ValidateUniqueAndPrimaryKeyConstraintsForTouchedTables(const JournalTransaction& tx) const
+        ErrorCode SqliteDatabase::ValidateUniqueAndPrimaryKeyConstraintsForTouchedTables(
+            const JournalTransaction& tx,
+            bool reverseRenameResolution) const
         {
             std::vector<std::wstring> touchedTableNames;
-            CollectTouchedTableNames(tx, &touchedTableNames);
+            CollectTouchedTableNames(
+                tx,
+                &touchedTableNames,
+                reverseRenameResolution);
 
             for (const std::wstring& tableName : touchedTableNames)
             {
@@ -11131,7 +11852,8 @@ namespace StableCore::Storage
             JournalLookup lookup;
             for (const auto& entry : activeJournal_.entries)
             {
-                if (entry.tableName != tableName || entry.recordId != recordId)
+                if (!JournalEntryMatchesCurrentTableName(entry, tableName) ||
+                    entry.recordId != recordId)
                 {
                     continue;
                 }
@@ -11152,7 +11874,8 @@ namespace StableCore::Storage
                 std::remove_if(activeJournal_.entries.begin(),
                                activeJournal_.entries.end(),
                                [&](const JournalEntry& entry) {
-                                   return entry.tableName == tableName && entry.recordId == recordId &&
+                                   return JournalEntryMatchesCurrentTableName(entry, tableName) &&
+                                          entry.recordId == recordId &&
                                           (entry.op == JournalOp::SetValue || entry.op == JournalOp::SetRelation);
                                }),
                 activeJournal_.entries.end());
@@ -11163,7 +11886,7 @@ namespace StableCore::Storage
             activeJournal_.entries.erase(std::remove_if(activeJournal_.entries.begin(),
                                                         activeJournal_.entries.end(),
                                                         [&](const JournalEntry& entry) {
-                                                            return entry.tableName == tableName &&
+                                                            return JournalEntryMatchesCurrentTableName(entry, tableName) &&
                                                                    entry.recordId == recordId;
                                                         }),
                                          activeJournal_.entries.end());
@@ -12531,6 +13254,26 @@ namespace StableCore::Storage
             }
             const SCColumnDef previousColumn = *previousDef;
             const std::size_t journalCheckpoint = activeJournal_.entries.size();
+            const std::int64_t rowId = schema->FindColumnRowId(def.name.c_str());
+
+            const auto restoreUpdatedValues = [&updates, &def]() {
+                for (const auto& update : updates)
+                {
+                    if (update.oldValue.IsNull())
+                    {
+                        update.data->values.erase(def.name);
+                    } else
+                    {
+                        update.data->values[def.name] = update.oldValue;
+                    }
+                }
+            };
+            const auto cleanupFailedUpdate = [&]() {
+                restoreUpdatedValues();
+                activeJournal_.entries.resize(journalCheckpoint);
+                schema->ReplaceColumn(previousColumn);
+            };
+
             if (previousDef->valueKind != def.valueKind)
             {
                 updates.reserve(sqliteTable->Records().size());
@@ -12557,24 +13300,6 @@ namespace StableCore::Storage
                     updates.push_back(ColumnValueUpdate{data, std::move(converted), valueIt->second});
                 }
             }
-
-            const auto restoreUpdatedValues = [&updates, &def]() {
-                for (const auto& update : updates)
-                {
-                    if (update.oldValue.IsNull())
-                    {
-                        update.data->values.erase(def.name);
-                    } else
-                    {
-                        update.data->values[def.name] = update.oldValue;
-                    }
-                }
-            };
-            const auto cleanupFailedUpdate = [&]() {
-                restoreUpdatedValues();
-                activeJournal_.entries.resize(journalCheckpoint);
-                schema->ReplaceColumn(previousColumn);
-            };
 
             try
             {
@@ -12654,7 +13379,6 @@ namespace StableCore::Storage
                 return SC_E_FAIL;
             }
 
-            const std::int64_t rowId = schema->FindColumnRowId(def.name.c_str());
             RecordSchemaJournal(tableIt->first, previousColumn, def, JournalOp::UpdateColumn, rowId);
 
             MarkReferenceIndexDirty();
@@ -13144,7 +13868,9 @@ namespace StableCore::Storage
         {
             for (auto& entry : activeJournal_.entries)
             {
-                if (entry.op == op && entry.tableName == tableName && entry.recordId == recordId &&
+                if (entry.op == op &&
+                    JournalEntryMatchesCurrentTableName(entry, tableName) &&
+                    entry.recordId == recordId &&
                     entry.fieldName == fieldName)
                 {
                     entry.newValue = newValue;
@@ -13165,6 +13891,358 @@ namespace StableCore::Storage
             });
         }
 
+        void SqliteDatabase::RecordTableRenameJournal(const std::wstring& originalName,
+                                                      const std::wstring& newName)
+        {
+            if (!HasActiveEdit())
+            {
+                return;
+            }
+
+            JournalEntry entry;
+            entry.op = JournalOp::RenameTable;
+            entry.tableName = originalName;
+            entry.oldValue = SCValue::FromString(originalName);
+            entry.newValue = SCValue::FromString(newName);
+            activeJournal_.entries.push_back(std::move(entry));
+        }
+
+        ErrorCode SqliteDatabase::PersistTableRename(const std::wstring& originalName,
+                                                     const std::wstring& newName,
+                                                     bool recordJournal,
+                                                     bool manageTransaction)
+        {
+            if (EqualsIgnoreCase(originalName, newName))
+            {
+                return SC_E_INVALIDARG;
+            }
+
+            auto tableIt = tables_.find(originalName);
+            if (tableIt == tables_.end())
+            {
+                for (auto it = tables_.begin(); it != tables_.end(); ++it)
+                {
+                    if (EqualsIgnoreCase(it->first, originalName))
+                    {
+                        tableIt = it;
+                        break;
+                    }
+                }
+            }
+            if (tableIt == tables_.end())
+            {
+                return SC_E_TABLE_NOT_FOUND;
+            }
+
+            for (const auto& [existingName, _] : tables_)
+            {
+                if (EqualsIgnoreCase(existingName, newName))
+                {
+                    return SC_E_SCHEMA_VIOLATION;
+                }
+            }
+
+            auto* table = static_cast<SqliteTable*>(tableIt->second.Get());
+            if (table == nullptr)
+            {
+                return SC_E_FAIL;
+            }
+
+            struct ColumnSnapshot
+            {
+                SqliteSchema* schema{nullptr};
+                SCColumnDef column;
+            };
+
+            struct ConstraintSnapshot
+            {
+                SqliteSchema* schema{nullptr};
+                SCConstraintDef constraint;
+            };
+
+            std::vector<ColumnSnapshot> originalColumns;
+            std::vector<ConstraintSnapshot> originalConstraints;
+            const auto restoreSchemaState = [&]() {
+                for (auto it = originalColumns.rbegin(); it != originalColumns.rend();
+                     ++it)
+                {
+                    if (it->schema != nullptr)
+                    {
+                        it->schema->ReplaceColumn(it->column);
+                    }
+                }
+                for (auto it = originalConstraints.rbegin();
+                     it != originalConstraints.rend(); ++it)
+                {
+                    if (it->schema != nullptr)
+                    {
+                        it->schema->ReplaceConstraint(it->constraint);
+                    }
+                }
+            };
+
+            std::optional<SqliteTxn> txn;
+            std::optional<SqliteSavepoint> savepoint;
+            try
+            {
+                if (manageTransaction)
+                {
+                    txn.emplace(db_);
+                }
+                else
+                {
+                    savepoint.emplace(db_, "rename_table");
+                }
+
+                SqliteStmt updateTableStmt =
+                    db_.Prepare("UPDATE tables SET name = ? WHERE table_id = ?;");
+                updateTableStmt.BindText(1, newName);
+                updateTableStmt.BindInt64(2, table->TableRowId());
+                const ErrorCode updateRc = updateTableStmt.Step();
+                if (Failed(updateRc))
+                {
+                    return updateRc;
+                }
+
+                for (const auto& [otherName, otherTableRef] : tables_)
+                {
+                    (void)otherName;
+                    auto* otherTable = static_cast<SqliteTable*>(otherTableRef.Get());
+                    if (otherTable == nullptr)
+                    {
+                        continue;
+                    }
+
+                    SCSchemaPtr otherSchema;
+                    const ErrorCode schemaRc = otherTable->GetSchema(otherSchema);
+                    if (Failed(schemaRc) || !otherSchema)
+                    {
+                        restoreSchemaState();
+                        return schemaRc;
+                    }
+
+                    auto* sqliteOtherSchema =
+                        static_cast<SqliteSchema*>(otherSchema.Get());
+                    if (sqliteOtherSchema == nullptr)
+                    {
+                        restoreSchemaState();
+                        return SC_E_FAIL;
+                    }
+
+                    std::int32_t columnCount = 0;
+                    const ErrorCode columnCountRc =
+                        otherSchema->GetColumnCount(&columnCount);
+                    if (Failed(columnCountRc))
+                    {
+                        restoreSchemaState();
+                        return columnCountRc;
+                    }
+
+                    for (std::int32_t columnIndex = 0; columnIndex < columnCount;
+                         ++columnIndex)
+                    {
+                        SCColumnDef column;
+                        const ErrorCode columnRc =
+                            otherSchema->GetColumn(columnIndex, &column);
+                        if (Failed(columnRc))
+                        {
+                            restoreSchemaState();
+                            return columnRc;
+                        }
+
+                        if (column.columnKind != ColumnKind::Relation ||
+                            !EqualsIgnoreCase(column.referenceTable, originalName))
+                        {
+                            continue;
+                        }
+
+                        originalColumns.push_back(ColumnSnapshot{sqliteOtherSchema, column});
+                        column.referenceTable = newName;
+                        const ErrorCode updateColumnRc =
+                            PersistSchemaUpdateColumn(sqliteOtherSchema, column);
+                        if (Failed(updateColumnRc))
+                        {
+                            restoreSchemaState();
+                            return updateColumnRc;
+                        }
+                    }
+
+                    std::int32_t constraintCount = 0;
+                    const ErrorCode constraintCountRc =
+                        otherSchema->GetConstraintCount(&constraintCount);
+                    if (Failed(constraintCountRc))
+                    {
+                        restoreSchemaState();
+                        return constraintCountRc;
+                    }
+
+                    for (std::int32_t constraintIndex = 0;
+                         constraintIndex < constraintCount; ++constraintIndex)
+                    {
+                        SCConstraintDef constraint;
+                        const ErrorCode constraintRc =
+                            otherSchema->GetConstraint(constraintIndex, &constraint);
+                        if (Failed(constraintRc))
+                        {
+                            restoreSchemaState();
+                            return constraintRc;
+                        }
+                        if (constraint.kind != SCConstraintKind::ForeignKey ||
+                            !EqualsIgnoreCase(constraint.referencedTable, originalName))
+                        {
+                            continue;
+                        }
+
+                        originalConstraints.push_back(
+                            ConstraintSnapshot{sqliteOtherSchema, constraint});
+                        constraint.referencedTable = newName;
+
+                        SqliteStmt updateConstraintStmt = db_.Prepare(
+                            "UPDATE schema_constraints SET referenced_table = ? "
+                            "WHERE table_id = ? AND name = ?;");
+                        updateConstraintStmt.BindText(1, constraint.referencedTable);
+                        updateConstraintStmt.BindInt64(2, sqliteOtherSchema->TableRowId());
+                        updateConstraintStmt.BindText(3, constraint.name);
+                        const ErrorCode updateConstraintRc =
+                            updateConstraintStmt.Step();
+                        if (Failed(updateConstraintRc))
+                        {
+                            restoreSchemaState();
+                            return updateConstraintRc;
+                        }
+
+                        sqliteOtherSchema->ReplaceConstraint(constraint);
+                    }
+                }
+
+                SaveMetadata();
+                if (txn.has_value())
+                {
+                    const ErrorCode commitRc = txn->Commit();
+                    if (Failed(commitRc))
+                    {
+                        restoreSchemaState();
+                        return commitRc;
+                    }
+                }
+                if (savepoint.has_value())
+                {
+                    const ErrorCode commitRc = savepoint->Commit();
+                    if (Failed(commitRc))
+                    {
+                        restoreSchemaState();
+                        return commitRc;
+                    }
+                }
+            } catch (...)
+            {
+                restoreSchemaState();
+                return SC_E_FAIL;
+            }
+
+            const std::wstring canonicalOriginalName = tableIt->first;
+            SCTablePtr tableRef = tableIt->second;
+            tables_.erase(tableIt);
+            tables_.emplace(newName, tableRef);
+            table->SetName(newName);
+            if (auto* schema = table->Schema())
+            {
+                schema->SetTableName(newName);
+            }
+            if (recordJournal)
+            {
+                RecordTableRenameJournal(canonicalOriginalName, newName);
+            }
+            MarkReferenceIndexDirty();
+            MarkForeignKeyReferenceCacheDirty();
+            return SC_OK;
+        }
+
+        ErrorCode SqliteDatabase::PersistDeferredRenameToStorage(
+            const DeferredRenameState& state)
+        {
+            auto* table = static_cast<SqliteTable*>(state.tableRef.Get());
+            if (table == nullptr)
+            {
+                return SC_E_FAIL;
+            }
+
+            SqliteStmt updateTableStmt =
+                db_.Prepare("UPDATE tables SET name = ? WHERE table_id = ?;");
+            updateTableStmt.BindText(1, state.newName);
+            updateTableStmt.BindInt64(2, table->TableRowId());
+            const ErrorCode updateRc = updateTableStmt.Step();
+            if (Failed(updateRc))
+            {
+                return updateRc;
+            }
+
+            for (const auto& snapshot : state.relationColumns)
+            {
+                if (snapshot.schema == nullptr)
+                {
+                    continue;
+                }
+
+                SqliteStmt updateColumnStmt = db_.Prepare(
+                    "UPDATE schema_columns SET reference_table = ? "
+                    "WHERE table_id = ? AND column_name = ?;");
+                updateColumnStmt.BindText(1, state.newName);
+                updateColumnStmt.BindInt64(2, snapshot.schema->TableRowId());
+                updateColumnStmt.BindText(3, snapshot.column.name);
+                const ErrorCode updateColumnRc = updateColumnStmt.Step();
+                if (Failed(updateColumnRc))
+                {
+                    return updateColumnRc;
+                }
+            }
+
+            for (const auto& snapshot : state.foreignKeyConstraints)
+            {
+                if (snapshot.schema == nullptr)
+                {
+                    continue;
+                }
+
+                SqliteStmt updateConstraintStmt = db_.Prepare(
+                    "UPDATE schema_constraints SET referenced_table = ? "
+                    "WHERE table_id = ? AND name = ?;");
+                updateConstraintStmt.BindText(1, state.newName);
+                updateConstraintStmt.BindInt64(2, snapshot.schema->TableRowId());
+                updateConstraintStmt.BindText(3, snapshot.constraint.name);
+                const ErrorCode updateConstraintRc =
+                    updateConstraintStmt.Step();
+                if (Failed(updateConstraintRc))
+                {
+                    return updateConstraintRc;
+                }
+            }
+
+            MarkReferenceIndexDirty();
+            MarkForeignKeyReferenceCacheDirty();
+            return SC_OK;
+        }
+
+        ErrorCode SqliteDatabase::PersistDeferredSchemaOps()
+        {
+            for (const DeferredSchemaOp& op : activeSchemaOps_)
+            {
+                switch (op.kind)
+                {
+                    case DeferredSchemaOp::Kind::RenameTable: {
+                        const ErrorCode renameRc =
+                            PersistDeferredRenameToStorage(op.rename);
+                        if (Failed(renameRc))
+                        {
+                            return renameRc;
+                        }
+                        break;
+                    }
+                }
+            }
+            return SC_OK;
+        }
+
         void SqliteDatabase::RecordSchemaJournal(const std::wstring& tableName,
                                                  const SCColumnDef& oldColumn,
                                                  const SCColumnDef& newColumn,
@@ -13179,7 +14257,9 @@ namespace StableCore::Storage
             const std::wstring& columnName = !newColumn.name.empty() ? newColumn.name : oldColumn.name;
             for (auto& entry : activeJournal_.entries)
             {
-                if (entry.op == op && entry.tableName == tableName && entry.fieldName == columnName)
+                if (entry.op == op &&
+                    JournalEntryMatchesCurrentTableName(entry, tableName) &&
+                    entry.fieldName == columnName)
                 {
                     entry.oldColumn = oldColumn;
                     entry.newColumn = newColumn;
@@ -13217,7 +14297,9 @@ namespace StableCore::Storage
             const std::wstring& constraintName = !newConstraint.name.empty() ? newConstraint.name : oldConstraint.name;
             for (auto& entry : activeJournal_.entries)
             {
-                if (entry.op == op && entry.tableName == tableName && entry.fieldName == constraintName)
+                if (entry.op == op &&
+                    JournalEntryMatchesCurrentTableName(entry, tableName) &&
+                    entry.fieldName == constraintName)
                 {
                     entry.oldConstraint = oldConstraint;
                     entry.newConstraint = newConstraint;
@@ -13250,7 +14332,9 @@ namespace StableCore::Storage
             const std::wstring& indexName = !newIndex.name.empty() ? newIndex.name : oldIndex.name;
             for (auto& entry : activeJournal_.entries)
             {
-                if (entry.op == op && entry.tableName == tableName && entry.fieldName == indexName)
+                if (entry.op == op &&
+                    JournalEntryMatchesCurrentTableName(entry, tableName) &&
+                    entry.fieldName == indexName)
                 {
                     entry.oldIndex = oldIndex;
                     entry.newIndex = newIndex;
@@ -13271,25 +14355,67 @@ namespace StableCore::Storage
 
         ErrorCode SqliteDatabase::ApplyJournalReverse(const JournalTransaction& tx)
         {
-            for (auto it = tx.entries.rbegin(); it != tx.entries.rend(); ++it)
+            return ApplyJournalReverse(tx, 0, tx.entries.size(), nullptr);
+        }
+
+        ErrorCode SqliteDatabase::ApplyJournalForward(const JournalTransaction& tx)
+        {
+            return ApplyJournalForward(tx, 0, tx.entries.size(), nullptr);
+        }
+
+        ErrorCode SqliteDatabase::ApplyJournalReverse(const JournalTransaction& tx,
+                                                      std::size_t beginIndex,
+                                                      std::size_t endIndex,
+                                                      std::size_t* outAppliedCount)
+        {
+            if (outAppliedCount != nullptr)
             {
-                const ErrorCode rc = ApplyEntry(*it, true);
+                *outAppliedCount = 0;
+            }
+            if (beginIndex > endIndex || endIndex > tx.entries.size())
+            {
+                return SC_E_INVALIDARG;
+            }
+
+            for (std::size_t index = endIndex; index > beginIndex; --index)
+            {
+                const ErrorCode rc = ApplyEntry(tx.entries[index - 1], true);
                 if (Failed(rc))
                 {
                     return rc;
+                }
+                if (outAppliedCount != nullptr)
+                {
+                    ++(*outAppliedCount);
                 }
             }
             return SC_OK;
         }
 
-        ErrorCode SqliteDatabase::ApplyJournalForward(const JournalTransaction& tx)
+        ErrorCode SqliteDatabase::ApplyJournalForward(const JournalTransaction& tx,
+                                                      std::size_t beginIndex,
+                                                      std::size_t endIndex,
+                                                      std::size_t* outAppliedCount)
         {
-            for (const auto& entry : tx.entries)
+            if (outAppliedCount != nullptr)
             {
-                const ErrorCode rc = ApplyEntry(entry, false);
+                *outAppliedCount = 0;
+            }
+            if (beginIndex > endIndex || endIndex > tx.entries.size())
+            {
+                return SC_E_INVALIDARG;
+            }
+
+            for (std::size_t index = beginIndex; index < endIndex; ++index)
+            {
+                const ErrorCode rc = ApplyEntry(tx.entries[index], false);
                 if (Failed(rc))
                 {
                     return rc;
+                }
+                if (outAppliedCount != nullptr)
+                {
+                    ++(*outAppliedCount);
                 }
             }
             return SC_OK;
@@ -13297,6 +14423,42 @@ namespace StableCore::Storage
 
         ErrorCode SqliteDatabase::ApplyEntry(const JournalEntry& entry, bool reverse)
         {
+            if (entry.op == JournalOp::RenameTable)
+            {
+                std::wstring oldName;
+                std::wstring newName;
+                if (entry.oldValue.AsStringCopy(&oldName) != SC_OK ||
+                    entry.newValue.AsStringCopy(&newName) != SC_OK ||
+                    oldName.empty() || newName.empty())
+                {
+                    return SC_E_FAIL;
+                }
+
+                if (HasActiveEdit())
+                {
+                    DeferredRenameState* state =
+                        FindDeferredRenameState(oldName, newName);
+                    if (state == nullptr)
+                    {
+                        return SC_E_FAIL;
+                    }
+
+                    if (reverse)
+                    {
+                        RollbackDeferredRenameWorkingState(*state);
+                    }
+                    else
+                    {
+                        ApplyDeferredRenameWorkingState(*state);
+                    }
+                    return SC_OK;
+                }
+
+                const std::wstring& fromName = reverse ? newName : oldName;
+                const std::wstring& toName = reverse ? oldName : newName;
+                return PersistTableRename(fromName, toName, false, false);
+            }
+
             const auto tableIt = tables_.find(entry.tableName);
             if (tableIt == tables_.end())
             {
@@ -13446,9 +14608,13 @@ namespace StableCore::Storage
             return SC_OK;
         }
 
-        void SqliteDatabase::UpdateTouchedVersions(const JournalTransaction& tx, VersionId version)
+        void SqliteDatabase::UpdateTouchedVersions(
+            const JournalTransaction& tx,
+            VersionId version,
+            bool reverseRenameResolution)
         {
-            for (const auto& [tableName, recordId] : GetTouchedRecordKeys(tx))
+            for (const auto& [tableName, recordId] :
+                 GetTouchedRecordKeys(tx, reverseRenameResolution))
             {
                 const auto tableIt = tables_.find(tableName);
                 if (tableIt == tables_.end())
@@ -13485,7 +14651,7 @@ namespace StableCore::Storage
                      entry.op == JournalOp::AddColumn || entry.op == JournalOp::UpdateColumn ||
                      entry.op == JournalOp::RemoveColumn || entry.op == JournalOp::AddConstraint ||
                      entry.op == JournalOp::RemoveConstraint || entry.op == JournalOp::AddIndex ||
-                     entry.op == JournalOp::RemoveIndex);
+                     entry.op == JournalOp::RemoveIndex || entry.op == JournalOp::RenameTable);
                 change.relationChange = (entry.op == JournalOp::SetRelation);
 
                 switch (entry.op)
@@ -13509,6 +14675,11 @@ namespace StableCore::Storage
                     case JournalOp::AddIndex:
                     case JournalOp::RemoveIndex:
                     case JournalOp::SetValue:
+                        change.kind = ChangeKind::FieldUpdated;
+                        break;
+                    case JournalOp::RenameTable:
+                        change.kind = ChangeKind::TableRenamed;
+                        break;
                     default:
                         change.kind = ChangeKind::FieldUpdated;
                         break;
@@ -13531,18 +14702,32 @@ namespace StableCore::Storage
             }
         }
 
-        std::vector<std::pair<std::wstring, RecordId>> SqliteDatabase::GetTouchedRecordKeys(
-            const JournalTransaction& tx) const
+        std::vector<std::pair<std::wstring, RecordId>>
+        SqliteDatabase::GetTouchedRecordKeys(
+            const JournalTransaction& tx,
+            bool reverseRenameResolution) const
         {
             std::set<std::pair<std::wstring, RecordId>> unique;
+            const bool hasRenameTable =
+                JournalTransactionContainsRenameTable(tx);
             for (const auto& entry : tx.entries)
             {
-                unique.emplace(entry.tableName, entry.recordId);
+                unique.emplace(
+                    hasRenameTable
+                        ? ResolveJournalTableNameToReplayState(
+                              tx,
+                              entry.tableName,
+                              reverseRenameResolution)
+                        : entry.tableName,
+                    entry.recordId);
             }
             return std::vector<std::pair<std::wstring, RecordId>>(unique.begin(), unique.end());
         }
 
-        void SqliteDatabase::PersistTouchedRecords(const JournalTransaction& tx, VersionId version)
+        void SqliteDatabase::PersistTouchedRecords(
+            const JournalTransaction& tx,
+            VersionId version,
+            bool reverseRenameResolution)
         {
             SqliteStmt upsertRecord = db_.Prepare(
                 "INSERT INTO records(table_id, record_id, state, "
@@ -13558,7 +14743,8 @@ namespace StableCore::Storage
                 "value_kind, int64_value, double_value, bool_value, text_value, blob_value)"
                 " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?);");
 
-            for (const auto& [tableName, recordId] : GetTouchedRecordKeys(tx))
+            for (const auto& [tableName, recordId] :
+                 GetTouchedRecordKeys(tx, reverseRenameResolution))
             {
                 const auto tableIt = tables_.find(tableName);
                 if (tableIt == tables_.end())

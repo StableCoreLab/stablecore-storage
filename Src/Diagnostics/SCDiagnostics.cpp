@@ -76,6 +76,9 @@ namespace StableCore::Storage
                 case ChangeKind::RelationUpdated:
                     stream << L" RelationUpdated";
                     break;
+                case ChangeKind::TableRenamed:
+                    stream << L" TableRenamed";
+                    break;
             }
         }
 

@@ -8,7 +8,7 @@ namespace StableCore::Storage
     {
 
         constexpr std::int32_t kMinimumSupportedSchemaVersion = 1;
-        constexpr std::int32_t kLatestSupportedSchemaVersion = 7;
+        constexpr std::int32_t kLatestSupportedSchemaVersion = 8;
 
         std::int32_t ResolveLatestSupportedVersion(const std::vector<SCMigrationStep>& steps)
         {

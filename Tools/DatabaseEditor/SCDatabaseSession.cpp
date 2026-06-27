@@ -1,7 +1,8 @@
-#include "SCDatabaseSession.h"
+﻿#include "SCDatabaseSession.h"
 
 #include <algorithm>
 #include <cstdint>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -24,6 +25,304 @@ namespace StableCore::Storage::Editor
         QString ToQString(const std::wstring& text)
         {
             return QString::fromStdWString(text);
+        }
+
+        bool EqualsIgnoreCase(const std::wstring& lhs, const QString& rhs)
+        {
+            return QString::fromStdWString(lhs).compare(rhs, Qt::CaseInsensitive) == 0;
+        }
+
+        bool EqualsIgnoreCase(const std::wstring& lhs, const std::wstring& rhs)
+        {
+            return QString::fromStdWString(lhs)
+                       .compare(QString::fromStdWString(rhs), Qt::CaseInsensitive) == 0;
+        }
+
+        void ReplaceDependencyFieldName(std::vector<sc::SCFieldDependency>* dependencies,
+                                        const std::wstring& tableName,
+                                        const std::wstring& oldFieldName,
+                                        const std::wstring& newFieldName)
+        {
+            if (dependencies == nullptr)
+            {
+                return;
+            }
+
+            for (sc::SCFieldDependency& dependency : *dependencies)
+            {
+                if (EqualsIgnoreCase(dependency.tableName,
+                                     QString::fromStdWString(tableName)) &&
+                    EqualsIgnoreCase(dependency.fieldName,
+                                     QString::fromStdWString(oldFieldName)))
+                {
+                    dependency.fieldName = newFieldName;
+                }
+            }
+        }
+
+        void ReplaceDependencyTableName(std::vector<sc::SCFieldDependency>* dependencies,
+                                        const std::wstring& oldTableName,
+                                        const std::wstring& newTableName)
+        {
+            if (dependencies == nullptr)
+            {
+                return;
+            }
+
+            for (sc::SCFieldDependency& dependency : *dependencies)
+            {
+                if (EqualsIgnoreCase(dependency.tableName,
+                                     QString::fromStdWString(oldTableName)))
+                {
+                    dependency.tableName = newTableName;
+                }
+            }
+        }
+
+        bool TryGetRenameTableChange(const sc::SCDataChange& change,
+                                    QString* outFromName,
+                                    QString* outToName)
+        {
+            if (!change.structuralChange ||
+                change.kind != sc::ChangeKind::TableRenamed ||
+                change.oldValue.IsNull() ||
+                change.newValue.IsNull())
+            {
+                return false;
+            }
+
+            std::wstring fromName;
+            std::wstring toName;
+            if (sc::Failed(change.oldValue.AsStringCopy(&fromName)) ||
+                sc::Failed(change.newValue.AsStringCopy(&toName)))
+            {
+                return false;
+            }
+
+            const QString from = ToQString(fromName);
+            const QString to = ToQString(toName);
+            if (from.isEmpty() || to.isEmpty() ||
+                from.compare(to, Qt::CaseInsensitive) == 0)
+            {
+                return false;
+            }
+
+            if (outFromName != nullptr)
+            {
+                *outFromName = from;
+            }
+            if (outToName != nullptr)
+            {
+                *outToName = to;
+            }
+            return true;
+        }
+
+        void RewriteComputedColumnsForTableRename(
+            QHash<QString, QVector<sc::SCComputedColumnDef>>* computedColumnsByTable,
+            const QString& fromName,
+            const QString& toName)
+        {
+            if (computedColumnsByTable == nullptr ||
+                fromName.compare(toName, Qt::CaseInsensitive) == 0)
+            {
+                return;
+            }
+
+            QHash<QString, QVector<sc::SCComputedColumnDef>> rewritten;
+            const std::wstring fromNameW = fromName.toStdWString();
+            const std::wstring toNameW = toName.toStdWString();
+
+            for (auto it = computedColumnsByTable->constBegin();
+                 it != computedColumnsByTable->constEnd(); ++it)
+            {
+                QString key = it.key();
+                if (key.compare(fromName, Qt::CaseInsensitive) == 0)
+                {
+                    key = toName;
+                }
+
+                QVector<sc::SCComputedColumnDef> columns = it.value();
+                for (sc::SCComputedColumnDef& column : columns)
+                {
+                    ReplaceDependencyTableName(
+                        &column.dependencies.factFields, fromNameW, toNameW);
+                    ReplaceDependencyTableName(
+                        &column.dependencies.relationFields, fromNameW, toNameW);
+                }
+                rewritten.insert(key, std::move(columns));
+            }
+
+            *computedColumnsByTable = std::move(rewritten);
+        }
+
+        bool ApplyObservedRenameChangesToComputedColumns(
+            QHash<QString, QVector<sc::SCComputedColumnDef>>* computedColumnsByTable,
+            const sc::SCChangeSet& changeSet)
+        {
+            if (computedColumnsByTable == nullptr)
+            {
+                return false;
+            }
+
+            bool rewritten = false;
+            for (const sc::SCDataChange& change : changeSet.changes)
+            {
+                QString fromName;
+                QString toName;
+                if (!TryGetRenameTableChange(change, &fromName, &toName))
+                {
+                    continue;
+                }
+
+                RewriteComputedColumnsForTableRename(computedColumnsByTable,
+                                                     fromName, toName);
+                rewritten = true;
+            }
+            return rewritten;
+        }
+
+        QString RewriteTableNameForObservedRenames(
+            const QString& tableName,
+            const sc::SCChangeSet& changeSet)
+        {
+            QString rewrittenName = tableName;
+            if (rewrittenName.isEmpty())
+            {
+                return rewrittenName;
+            }
+
+            for (const sc::SCDataChange& change : changeSet.changes)
+            {
+                QString fromName;
+                QString toName;
+                if (!TryGetRenameTableChange(change, &fromName, &toName))
+                {
+                    continue;
+                }
+                if (rewrittenName.compare(fromName, Qt::CaseInsensitive) == 0)
+                {
+                    rewrittenName = toName;
+                }
+            }
+            return rewrittenName;
+        }
+
+        class SessionDatabaseObserver;
+
+        QHash<const SCDatabaseSession*, sc::SCChangeSet>& ObservedChangeSets();
+        std::unordered_map<const SCDatabaseSession*, SessionDatabaseObserver*>&
+        SessionObservers();
+
+        class SessionDatabaseObserver final : public QObject,
+                                             public sc::ISCDatabaseObserver
+        {
+        public:
+            SessionDatabaseObserver(SCDatabaseSession* session, sc::SCDbPtr db)
+                : QObject(session), session_(session), db_(std::move(db))
+            {
+            }
+
+            ~SessionDatabaseObserver() override
+            {
+                DetachFromDatabase();
+                ObservedChangeSets().remove(session_);
+                SessionObservers().erase(session_);
+            }
+
+            void DetachFromDatabase()
+            {
+                if (db_)
+                {
+                    db_->RemoveObserver(this);
+                    db_.Reset();
+                }
+            }
+
+            void OnDatabaseChanged(const sc::SCChangeSet& changeSet) override;
+
+        private:
+            SCDatabaseSession* session_{nullptr};
+            sc::SCDbPtr db_;
+        };
+
+        QHash<const SCDatabaseSession*, sc::SCChangeSet>& ObservedChangeSets()
+        {
+            static QHash<const SCDatabaseSession*, sc::SCChangeSet> changeSets;
+            return changeSets;
+        }
+
+        std::unordered_map<const SCDatabaseSession*, SessionDatabaseObserver*>&
+        SessionObservers()
+        {
+            static std::unordered_map<const SCDatabaseSession*,
+                                      SessionDatabaseObserver*>
+                observers;
+            return observers;
+        }
+
+        void SessionDatabaseObserver::OnDatabaseChanged(
+            const sc::SCChangeSet& changeSet)
+        {
+            if (session_ != nullptr)
+            {
+                ObservedChangeSets().insert(session_, changeSet);
+            }
+        }
+
+        bool RegisterSessionDatabaseObserver(SCDatabaseSession* session,
+                                             const sc::SCDbPtr& db,
+                                             QString* outError)
+        {
+            if (session == nullptr || !db)
+            {
+                return false;
+            }
+
+            auto* observer = new SessionDatabaseObserver(session, db);
+            const sc::ErrorCode rc = db->AddObserver(observer);
+            if (sc::Failed(rc))
+            {
+                delete observer;
+                if (outError != nullptr)
+                {
+                    *outError = QStringLiteral("Failed to register database observer: ") +
+                                QString::number(static_cast<int>(rc), 16);
+                }
+                return false;
+            }
+
+            SessionObservers().emplace(session, observer);
+            return true;
+        }
+
+        void UnregisterSessionDatabaseObserver(SCDatabaseSession* session,
+                                               const sc::SCDbPtr& db)
+        {
+            auto& observers = SessionObservers();
+            const auto observerIt = observers.find(session);
+            if (db && observerIt != observers.end())
+            {
+                observerIt->second->DetachFromDatabase();
+            }
+            if (observerIt != observers.end())
+            {
+                delete observerIt->second;
+            }
+            ObservedChangeSets().remove(session);
+        }
+
+        QString CanonicalizeTableName(const QStringList& tableNames,
+                                      const QString& requestedName)
+        {
+            for (const QString& existingName : tableNames)
+            {
+                if (existingName.compare(requestedName, Qt::CaseInsensitive) == 0)
+                {
+                    return existingName;
+                }
+            }
+            return requestedName;
         }
 
         class PreviewSchema final : public sc::ISCSchema,
@@ -227,6 +526,11 @@ namespace StableCore::Storage::Editor
             {
                 return inner_->DeleteTable(name);
             }
+            sc::ErrorCode RenameTable(const wchar_t* originalName,
+                                      const wchar_t* newName) override
+            {
+                return inner_->RenameTable(originalName, newName);
+            }
             sc::ErrorCode ClearColumnValues(sc::ISCTable* table,
                                             const wchar_t* name) override
             {
@@ -348,6 +652,68 @@ namespace StableCore::Storage::Editor
 
             *outView = view;
             return true;
+        }
+
+        bool BuildComputedTableViewForState(
+            const sc::SCDbPtr& db,
+            const sc::SCTablePtr& currentTable,
+            const QString& tableName,
+            const QHash<QString, QVector<sc::SCComputedColumnDef>>&
+                computedColumnsByTable,
+            bool forceFailureForTest,
+            const std::function<QString(sc::ErrorCode)>& errorToString,
+            sc::SCComputedTableViewPtr* outView,
+            QString* outError)
+        {
+            if (outView == nullptr)
+            {
+                if (outError != nullptr)
+                {
+                    *outError = QStringLiteral("Output view is null.");
+                }
+                return false;
+            }
+            outView->Reset();
+
+            if (forceFailureForTest)
+            {
+                if (outError != nullptr)
+                {
+                    *outError = QStringLiteral("Forced rebuild failure for test.");
+                }
+                return false;
+            }
+
+            if (!db || !currentTable || tableName.isEmpty())
+            {
+                if (outError != nullptr)
+                {
+                    *outError = QStringLiteral("No table is selected.");
+                }
+                return false;
+            }
+
+            sc::SCSchemaPtr schema;
+            const sc::ErrorCode schemaRc = currentTable->GetSchema(schema);
+            if (sc::Failed(schemaRc))
+            {
+                if (outError != nullptr)
+                {
+                    *outError = errorToString(schemaRc);
+                }
+                return false;
+            }
+
+            sc::SCTablePtr previewTable =
+                sc::SCMakeRef<PreviewTable>(currentTable, schema);
+            sc::SCDbPtr previewDb = sc::SCMakeRef<PreviewDatabase>(
+                db, tableName.toStdWString(), previewTable);
+
+            const QVector<sc::SCComputedColumnDef> computedColumns =
+                computedColumnsByTable.value(tableName);
+            return BuildComputedTableView(
+                previewDb.Get(), tableName.toStdWString(), computedColumns,
+                errorToString, outView, outError);
         }
 
         bool HasComputedColumnNameConflict(
@@ -579,6 +945,11 @@ namespace StableCore::Storage::Editor
             sc::SCRecordPtr record;
             while (cursor->Next(record) == sc::SC_OK && record)
             {
+                if (record->IsDeleted())
+                {
+                    continue;
+                }
+
                 ColumnValueSnapshot snapshot;
                 snapshot.recordId = record->GetId();
                 const sc::ErrorCode valueRc = record->GetValue(
@@ -844,9 +1215,19 @@ namespace StableCore::Storage::Editor
             return false;
         }
 
+        if (!RegisterSessionDatabaseObserver(this, db_, outError))
+        {
+            CloseDatabase(nullptr);
+            return false;
+        }
+
         databasePath_ = filePath;
         currentTableName_.clear();
-        LoadTableNames(outError);
+        if (!LoadTableNames(outError))
+        {
+            CloseDatabase(nullptr);
+            return false;
+        }
         emit DatabaseOpened();
         emit TablesChanged();
         return true;
@@ -872,6 +1253,11 @@ namespace StableCore::Storage::Editor
                 return false;
             }
             pendingEdit_.Reset();
+        }
+
+        if (db_)
+        {
+            UnregisterSessionDatabaseObserver(this, db_);
         }
 
         if (!db_ && currentTable_.Get() == nullptr &&
@@ -1423,6 +1809,152 @@ namespace StableCore::Storage::Editor
         return true;
     }
 
+    bool SCDatabaseSession::RenameTable(const QString& originalName,
+                                        const QString& newName,
+                                        QString* outError)
+    {
+        if (!IsOpen())
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("未打开数据库。");
+            }
+            return false;
+        }
+
+        if (HasPendingEdit())
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("修改结构前请先保存或放弃当前编辑。");
+            }
+            return false;
+        }
+
+        const QString requestedOriginal = originalName.trimmed();
+        const QString requestedNew = newName.trimmed();
+        if (requestedOriginal.isEmpty() || requestedNew.isEmpty())
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("表名不能为空。");
+            }
+            return false;
+        }
+
+        const QString canonicalOriginal =
+            CanonicalizeTableName(tableNames_, requestedOriginal);
+        if (canonicalOriginal.compare(requestedNew, Qt::CaseInsensitive) == 0)
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("表名已被占用。");
+            }
+            return false;
+        }
+
+        for (const QString& existingName : tableNames_)
+        {
+            if (existingName.compare(requestedNew, Qt::CaseInsensitive) == 0 &&
+                existingName.compare(canonicalOriginal, Qt::CaseInsensitive) != 0)
+            {
+                if (outError != nullptr)
+                {
+                    *outError = QStringLiteral("表名已被占用。");
+                }
+                return false;
+            }
+        }
+
+        sc::SCEditPtr edit;
+        sc::ErrorCode rc = db_->BeginEdit(L"Rename Table", edit);
+        if (sc::Failed(rc))
+        {
+            if (outError != nullptr)
+            {
+                *outError = ErrorToString(rc);
+            }
+            return false;
+        }
+
+        rc = db_->RenameTable(canonicalOriginal.toStdWString().c_str(),
+                              requestedNew.toStdWString().c_str());
+        if (sc::Failed(rc))
+        {
+            RollbackEditAndReport(
+                db_, edit.Get(), ErrorToString(rc),
+                QStringLiteral("Rename table"),
+                [this](sc::ErrorCode error) { return ErrorToString(error); },
+                outError);
+            return false;
+        }
+
+        QHash<QString, QVector<sc::SCComputedColumnDef>> rewrittenComputedColumns =
+            sessionComputedColumnsByTable_;
+        RewriteComputedColumnsForTableRename(&rewrittenComputedColumns,
+                                             canonicalOriginal, requestedNew);
+
+        QStringList rewrittenTableNames = tableNames_;
+        for (QString& tableName : rewrittenTableNames)
+        {
+            if (tableName.compare(canonicalOriginal, Qt::CaseInsensitive) == 0)
+            {
+                tableName = requestedNew;
+            }
+        }
+
+        const QString rebuiltCurrentTableName =
+            currentTable_ &&
+                    currentTableName_.compare(canonicalOriginal, Qt::CaseInsensitive) == 0
+                ? requestedNew
+                : currentTableName_;
+
+        sc::SCComputedTableViewPtr previewView = currentTableView_;
+        if (currentTable_)
+        {
+            if (!BuildComputedTableViewForState(
+                    db_, currentTable_, rebuiltCurrentTableName,
+                    rewrittenComputedColumns,
+                    forceRebuildCurrentTableViewFailureForTest_,
+                    [this](sc::ErrorCode error) { return ErrorToString(error); },
+                    &previewView, outError))
+            {
+                RollbackEditAndReport(
+                    db_, edit.Get(),
+                    outError != nullptr ? *outError
+                                        : QStringLiteral("Failed to rebuild current table view."),
+                    QStringLiteral("Rename table preview"),
+                    [this](sc::ErrorCode error) { return ErrorToString(error); },
+                    outError);
+                return false;
+            }
+        }
+
+        rc = db_->Commit(edit.Get());
+        if (sc::Failed(rc))
+        {
+            RollbackEditAndReport(
+                db_, edit.Get(), ErrorToString(rc),
+                QStringLiteral("Rename table commit"),
+                [this](sc::ErrorCode error) { return ErrorToString(error); },
+                outError);
+            return false;
+        }
+
+        sessionComputedColumnsByTable_ = std::move(rewrittenComputedColumns);
+        tableNames_ = std::move(rewrittenTableNames);
+        currentTableName_ = rebuiltCurrentTableName;
+        if (currentTable_)
+        {
+            currentTableView_ = previewView;
+            emit CurrentTableChanged();
+            emit RecordsChanged();
+        }
+
+        emit TablesChanged();
+        return true;
+    }
+
     bool SCDatabaseSession::AddColumn(const sc::SCColumnDef& column,
                                       QString* outError)
     {
@@ -1451,7 +1983,7 @@ namespace StableCore::Storage::Editor
             if (outError != nullptr)
             {
                 *outError = QStringLiteral(
-                    "A computed column with the same name already exists.");
+                    "同名计算字段已存在。");
             }
             return false;
         }
@@ -1473,6 +2005,101 @@ namespace StableCore::Storage::Editor
                 return sc::SC_OK;
             },
             []() {}, outError);
+    }
+
+    bool SCDatabaseSession::CurrentColumnHasNullValues(
+        const QString& columnName, bool* outHasNullValues, QString* outError) const
+    {
+        if (outHasNullValues == nullptr)
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("输出标志为空。");
+            }
+            return false;
+        }
+        *outHasNullValues = false;
+
+        if (!currentTable_)
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("当前未选择数据表。");
+            }
+            return false;
+        }
+
+        const QString requestedName = columnName.trimmed();
+        if (requestedName.isEmpty())
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("字段名称不能为空。");
+            }
+            return false;
+        }
+
+        sc::SCSchemaPtr schema;
+        const sc::ErrorCode schemaRc = currentTable_->GetSchema(schema);
+        if (sc::Failed(schemaRc))
+        {
+            if (outError != nullptr)
+            {
+                *outError = ErrorToString(schemaRc);
+            }
+            return false;
+        }
+
+        sc::SCColumnDef column;
+        const sc::ErrorCode columnRc =
+            schema->FindColumn(requestedName.toStdWString().c_str(), &column);
+        if (sc::Failed(columnRc))
+        {
+            if (outError != nullptr)
+            {
+                *outError = ErrorToString(columnRc);
+            }
+            return false;
+        }
+
+        sc::SCRecordCursorPtr cursor;
+        const sc::ErrorCode cursorRc = currentTable_->EnumerateRecords(cursor);
+        if (sc::Failed(cursorRc))
+        {
+            if (outError != nullptr)
+            {
+                *outError = ErrorToString(cursorRc);
+            }
+            return false;
+        }
+
+        sc::SCRecordPtr record;
+        while (cursor->Next(record) == sc::SC_OK && record)
+        {
+            if (record->IsDeleted())
+            {
+                continue;
+            }
+
+            sc::SCValue value;
+            const sc::ErrorCode valueRc = record->GetValue(
+                requestedName.toStdWString().c_str(), &value);
+            if (valueRc == sc::SC_E_VALUE_IS_NULL)
+            {
+                *outHasNullValues = true;
+                return true;
+            }
+            if (sc::Failed(valueRc))
+            {
+                if (outError != nullptr)
+                {
+                    *outError = ErrorToString(valueRc);
+                }
+                return false;
+            }
+        }
+
+        return true;
     }
 
     bool SCDatabaseSession::RemoveColumn(const QString& columnName,
@@ -1564,15 +2191,8 @@ namespace StableCore::Storage::Editor
             return false;
         }
 
-        if (originalKey.compare(requestedName, Qt::CaseInsensitive) != 0)
-        {
-            if (outError != nullptr)
-            {
-                *outError =
-                    QStringLiteral("Renaming columns is not supported yet.");
-            }
-            return false;
-        }
+        const bool renaming =
+            originalKey.compare(requestedName, Qt::CaseInsensitive) != 0;
 
         sc::SCSchemaPtr schema;
         sc::ErrorCode rc = currentTable_->GetSchema(schema);
@@ -1596,23 +2216,421 @@ namespace StableCore::Storage::Editor
             }
             return false;
         }
+
+        const std::wstring originalKeyW = originalKey.toStdWString();
+        const std::wstring requestedNameW = requestedName.toStdWString();
+        const std::wstring sourceTableNameW = currentTableName_.toStdWString();
+        QVector<sc::SCConstraintDef> constraintsToRewrite;
+        QVector<sc::SCIndexDef> indexesToRewrite;
+
+        if (renaming)
+        {
+            sc::SCColumnDef requestedColumn;
+            const sc::ErrorCode requestedRc =
+                schema->FindColumn(requestedName.toStdWString().c_str(),
+                                   &requestedColumn);
+            if (requestedRc != sc::SC_E_COLUMN_NOT_FOUND)
+            {
+                if (sc::Succeeded(requestedRc))
+                {
+                    if (outError != nullptr)
+                    {
+                        *outError = QStringLiteral("字段名已被占用。");
+                    }
+                } else if (outError != nullptr)
+                {
+                    *outError = ErrorToString(requestedRc);
+                }
+                return false;
+            }
+
+            if (HasComputedColumnNameConflict(sessionComputedColumnsByTable_,
+                                              currentTableName_, requestedName))
+            {
+                if (outError != nullptr)
+                {
+                    *outError = QStringLiteral(
+                        "同名计算字段已存在。");
+                }
+                return false;
+            }
+
+            sc::SCTableSchemaSnapshot snapshot;
+            const sc::ErrorCode snapshotRc = schema->GetSchemaSnapshot(&snapshot);
+            if (sc::Failed(snapshotRc))
+            {
+                if (outError != nullptr)
+                {
+                    *outError = ErrorToString(snapshotRc);
+                }
+                return false;
+            }
+
+            const auto isOriginalField = [&originalKey](const std::wstring& value) {
+                return EqualsIgnoreCase(value, originalKey);
+            };
+
+            for (const sc::SCConstraintDef& constraint : snapshot.constraints)
+            {
+                bool touchesRenamedField = false;
+                sc::SCConstraintDef rewritten = constraint;
+                for (std::wstring& columnName : rewritten.columns)
+                {
+                    if (isOriginalField(columnName))
+                    {
+                        columnName = requestedNameW;
+                        touchesRenamedField = true;
+                    }
+                }
+                for (std::wstring& referencedName : rewritten.referencedColumns)
+                {
+                    if (isOriginalField(referencedName))
+                    {
+                        referencedName = requestedNameW;
+                        touchesRenamedField = true;
+                    }
+                }
+                if (touchesRenamedField)
+                {
+                    constraintsToRewrite.push_back(std::move(rewritten));
+                }
+            }
+
+            for (const sc::SCIndexDef& index : snapshot.indexes)
+            {
+                bool touchesRenamedField = false;
+                sc::SCIndexDef rewritten = index;
+                for (sc::SCIndexColumnDef& indexColumn : rewritten.columns)
+                {
+                    if (isOriginalField(indexColumn.columnName))
+                    {
+                        indexColumn.columnName = requestedNameW;
+                        touchesRenamedField = true;
+                    }
+                }
+                if (touchesRenamedField)
+                {
+                    indexesToRewrite.push_back(std::move(rewritten));
+                }
+            }
+
+        }
+
+        if (!column.nullable)
+        {
+            bool hasNullValues = false;
+            QString nullError;
+            if (!CurrentColumnHasNullValues(
+                    originalKey, &hasNullValues, &nullError))
+            {
+                if (outError != nullptr)
+                {
+                    *outError = nullError;
+                }
+                return false;
+            }
+            if (hasNullValues)
+            {
+                if (outError != nullptr)
+                {
+                    *outError = QStringLiteral("该字段仍存在空值，不能设置为非空。");
+                }
+                return false;
+            }
+        }
+
+        if (!renaming)
+        {
+            return ApplyColumnMutation(
+                L"编辑字段",
+                [this, column](sc::SCSchemaPtr& schema,
+                               sc::SCComputedTableViewPtr* outPreviewView,
+                               QString* outError) -> sc::ErrorCode {
+                    const sc::ErrorCode updateRc = schema->UpdateColumn(column);
+                    if (sc::Failed(updateRc))
+                    {
+                        return updateRc;
+                    }
+                    if (!BuildCurrentTableViewPreview(outPreviewView, outError))
+                    {
+                        return sc::SC_E_FAIL;
+                    }
+                    return sc::SC_OK;
+                },
+                []() {}, outError);
+        }
+
+        QVector<ColumnValueSnapshot> valueSnapshots;
+        if (!SnapshotColumnValues(currentTable_.Get(), originalKey, &valueSnapshots,
+                                  outError))
+        {
+            return false;
+        }
+
+        const QHash<QString, QVector<sc::SCComputedColumnDef>> previousComputedColumns =
+            sessionComputedColumnsByTable_;
+        bool computedColumnsRewritten = false;
+        QVector<QString> constraintsToRemove;
+        QVector<sc::SCConstraintDef> constraintsToAdd;
+        QVector<QString> indexesToRemove;
+        QVector<sc::SCIndexDef> indexesToAdd;
+        if (renaming)
+        {
+            for (const sc::SCConstraintDef& constraint : constraintsToRewrite)
+            {
+                constraintsToRemove.push_back(QString::fromStdWString(constraint.name));
+                constraintsToAdd.push_back(constraint);
+            }
+            for (const sc::SCIndexDef& index : indexesToRewrite)
+            {
+                indexesToRemove.push_back(QString::fromStdWString(index.name));
+                indexesToAdd.push_back(index);
+            }
+        }
+        sc::SCColumnDef temporaryColumn = column;
+        temporaryColumn.nullable = true;
         return ApplyColumnMutation(
             L"编辑字段",
-            [this, column](sc::SCSchemaPtr& schema,
-                           sc::SCComputedTableViewPtr* outPreviewView,
-                           QString* outError) -> sc::ErrorCode {
-                const sc::ErrorCode updateRc = schema->UpdateColumn(column);
+            [this, originalKeyW, requestedNameW, sourceTableNameW, column,
+             temporaryColumn, valueSnapshots, constraintsToRemove,
+             constraintsToAdd, indexesToRemove, indexesToAdd,
+             &computedColumnsRewritten](
+                sc::SCSchemaPtr& schema, sc::SCComputedTableViewPtr* outPreviewView,
+                QString* outError) -> sc::ErrorCode {
+                for (const QString& constraintName : constraintsToRemove)
+                {
+                    const sc::ErrorCode removeConstraintRc =
+                        schema->RemoveConstraint(constraintName.toStdWString().c_str());
+                    if (sc::Failed(removeConstraintRc))
+                    {
+                        return removeConstraintRc;
+                    }
+                }
+                for (const QString& indexName : indexesToRemove)
+                {
+                    const sc::ErrorCode removeIndexRc =
+                        schema->RemoveIndex(indexName.toStdWString().c_str());
+                    if (sc::Failed(removeIndexRc))
+                    {
+                        return removeIndexRc;
+                    }
+                }
+
+                const sc::ErrorCode removeRc =
+                    schema->RemoveColumn(originalKeyW.c_str());
+                if (sc::Failed(removeRc))
+                {
+                    return removeRc;
+                }
+
+                const sc::ErrorCode addRc = schema->AddColumn(temporaryColumn);
+                if (sc::Failed(addRc))
+                {
+                    return addRc;
+                }
+
+                for (const ColumnValueSnapshot& snapshot : valueSnapshots)
+                {
+                    sc::SCRecordPtr record;
+                    const sc::ErrorCode getRc =
+                        currentTable_->GetRecord(snapshot.recordId, record);
+                    if (sc::Failed(getRc) || !record)
+                    {
+                        return sc::Failed(getRc) ? getRc : sc::SC_E_FAIL;
+                    }
+
+                    const sc::ErrorCode setRc = record->SetValue(
+                        requestedNameW.c_str(), snapshot.value);
+                    if (sc::Failed(setRc))
+                    {
+                        return setRc;
+                    }
+                }
+
+                sc::SCSchemaPtr refreshedSchema;
+                const sc::ErrorCode refreshRc = currentTable_->GetSchema(refreshedSchema);
+                if (sc::Failed(refreshRc))
+                {
+                    return refreshRc;
+                }
+
+                const sc::ErrorCode updateRc = refreshedSchema->UpdateColumn(column);
                 if (sc::Failed(updateRc))
                 {
                     return updateRc;
                 }
+
+                // Restore source-table constraints/indexes before rewriting incoming
+                // relation fields so their validation sees the final source schema.
+                for (const sc::SCConstraintDef& constraint : constraintsToAdd)
+                {
+                    const sc::ErrorCode addConstraintRc = schema->AddConstraint(constraint);
+                    if (sc::Failed(addConstraintRc))
+                    {
+                        return addConstraintRc;
+                    }
+                }
+                for (const sc::SCIndexDef& index : indexesToAdd)
+                {
+                    const sc::ErrorCode addIndexRc = schema->AddIndex(index);
+                    if (sc::Failed(addIndexRc))
+                    {
+                        return addIndexRc;
+                    }
+                }
+
+                const QString sourceTableName = QString::fromStdWString(sourceTableNameW);
+                const QString originalColumnName = QString::fromStdWString(originalKeyW);
+                for (const QString& tableName : tableNames_)
+                {
+                    sc::SCTablePtr relatedTable;
+                    const sc::ErrorCode tableRc =
+                        db_->GetTable(tableName.toStdWString().c_str(), relatedTable);
+                    if (sc::Failed(tableRc))
+                    {
+                        return tableRc;
+                    }
+                    if (!relatedTable)
+                    {
+                        continue;
+                    }
+
+                    sc::SCSchemaPtr relatedSchema;
+                    const sc::ErrorCode schemaRc = relatedTable->GetSchema(relatedSchema);
+                    if (sc::Failed(schemaRc) || !relatedSchema)
+                    {
+                        return sc::Failed(schemaRc) ? schemaRc : sc::SC_E_FAIL;
+                    }
+
+                    std::int32_t relatedColumnCount = 0;
+                    const sc::ErrorCode columnCountRc =
+                        relatedSchema->GetColumnCount(&relatedColumnCount);
+                    if (sc::Failed(columnCountRc))
+                    {
+                        return columnCountRc;
+                    }
+
+                    for (std::int32_t columnIndex = 0; columnIndex < relatedColumnCount;
+                         ++columnIndex)
+                    {
+                        sc::SCColumnDef relatedColumn;
+                        const sc::ErrorCode relatedColumnRc =
+                            relatedSchema->GetColumn(columnIndex, &relatedColumn);
+                        if (sc::Failed(relatedColumnRc))
+                        {
+                            return relatedColumnRc;
+                        }
+
+                        if (relatedColumn.columnKind == sc::ColumnKind::Relation &&
+                            EqualsIgnoreCase(relatedColumn.referenceTable,
+                                             sourceTableName))
+                        {
+                            bool relationChanged = false;
+                            if (EqualsIgnoreCase(relatedColumn.referenceStorageColumn,
+                                                 originalColumnName))
+                            {
+                                relatedColumn.referenceStorageColumn =
+                                    requestedNameW;
+                                relationChanged = true;
+                            }
+                            if (EqualsIgnoreCase(relatedColumn.referenceDisplayColumn,
+                                                 originalColumnName))
+                            {
+                                relatedColumn.referenceDisplayColumn =
+                                    requestedNameW;
+                                relationChanged = true;
+                            }
+                            if (relationChanged)
+                            {
+                                const sc::ErrorCode relationUpdateRc =
+                                    relatedSchema->UpdateColumn(relatedColumn);
+                                if (sc::Failed(relationUpdateRc))
+                                {
+                                    return relationUpdateRc;
+                                }
+                            }
+                        }
+                    }
+
+                    sc::SCTableSchemaSnapshot relatedSnapshot;
+                    const sc::ErrorCode relatedSnapshotRc =
+                        relatedSchema->GetSchemaSnapshot(&relatedSnapshot);
+                    if (sc::Failed(relatedSnapshotRc))
+                    {
+                        return relatedSnapshotRc;
+                    }
+
+                    for (const sc::SCConstraintDef& relatedConstraint :
+                         relatedSnapshot.constraints)
+                    {
+                        if (!EqualsIgnoreCase(relatedConstraint.referencedTable,
+                                              sourceTableNameW))
+                        {
+                            continue;
+                        }
+
+                        bool constraintChanged = false;
+                        sc::SCConstraintDef rewrittenConstraint = relatedConstraint;
+                        for (std::wstring& referencedName :
+                             rewrittenConstraint.referencedColumns)
+                        {
+                            if (EqualsIgnoreCase(referencedName, originalKeyW))
+                            {
+                                referencedName = requestedNameW;
+                                constraintChanged = true;
+                            }
+                        }
+
+                        if (constraintChanged)
+                        {
+                            const sc::ErrorCode removeConstraintRc =
+                                relatedSchema->RemoveConstraint(
+                                    relatedConstraint.name.c_str());
+                            if (sc::Failed(removeConstraintRc))
+                            {
+                                return removeConstraintRc;
+                            }
+                            const sc::ErrorCode addConstraintRc =
+                                relatedSchema->AddConstraint(rewrittenConstraint);
+                            if (sc::Failed(addConstraintRc))
+                            {
+                                return addConstraintRc;
+                            }
+                        }
+                    }
+                }
+
+                if (!computedColumnsRewritten)
+                {
+                    for (auto it = sessionComputedColumnsByTable_.begin();
+                         it != sessionComputedColumnsByTable_.end(); ++it)
+                    {
+                        for (sc::SCComputedColumnDef& computedColumn : it.value())
+                        {
+                            ReplaceDependencyFieldName(
+                                &computedColumn.dependencies.factFields,
+                                sourceTableNameW, originalKeyW, requestedNameW);
+                            ReplaceDependencyFieldName(
+                                &computedColumn.dependencies.relationFields,
+                                sourceTableNameW, originalKeyW, requestedNameW);
+                        }
+                    }
+                    computedColumnsRewritten = true;
+                }
+
                 if (!BuildCurrentTableViewPreview(outPreviewView, outError))
                 {
                     return sc::SC_E_FAIL;
                 }
                 return sc::SC_OK;
             },
-            []() {}, outError);
+            [this, previousComputedColumns, &computedColumnsRewritten]() {
+                if (computedColumnsRewritten)
+                {
+                    sessionComputedColumnsByTable_ = previousComputedColumns;
+                }
+            },
+            outError);
     }
 
     bool SCDatabaseSession::ConvertColumnToComputed(
@@ -1666,7 +2684,7 @@ namespace StableCore::Storage::Editor
                 if (outError != nullptr)
                 {
                     *outError = QStringLiteral(
-                        "A computed column with the same name already exists.");
+                        "同名计算字段已存在。");
                 }
                 return false;
             }
@@ -2180,6 +3198,59 @@ namespace StableCore::Storage::Editor
             return false;
         }
 
+        sc::SCChangeSet observedChangeSet;
+        bool hasObservedChangeSet = false;
+        if (const auto observedIt = ObservedChangeSets().find(this);
+            observedIt != ObservedChangeSets().end())
+        {
+            observedChangeSet = observedIt.value();
+            ObservedChangeSets().erase(observedIt);
+            hasObservedChangeSet = true;
+        }
+
+        if (!LoadTableNames(outError))
+        {
+            return false;
+        }
+
+        if (hasObservedChangeSet)
+        {
+            ApplyObservedRenameChangesToComputedColumns(
+                &sessionComputedColumnsByTable_, observedChangeSet);
+            currentTableName_ = RewriteTableNameForObservedRenames(
+                currentTableName_, observedChangeSet);
+        }
+
+        if (currentTable_)
+        {
+            const QString liveTableName =
+                CanonicalizeTableName(tableNames_, currentTableName_);
+            if (!liveTableName.isEmpty() && tableNames_.contains(liveTableName))
+            {
+                currentTableName_ = liveTableName;
+                if (!RebuildCurrentTableView(outError))
+                {
+                    return false;
+                }
+            }
+            else if (!tableNames_.isEmpty())
+            {
+                const bool selected = SelectTable(tableNames_.front(), outError);
+                if (selected)
+                {
+                    emit TablesChanged();
+                }
+                return selected;
+            }
+            else
+            {
+                currentTable_.Reset();
+                currentTableView_.Reset();
+                currentTableName_.clear();
+            }
+        }
+
+        emit TablesChanged();
         emit CurrentTableChanged();
         emit RecordsChanged();
         return true;
@@ -2216,6 +3287,59 @@ namespace StableCore::Storage::Editor
             return false;
         }
 
+        sc::SCChangeSet observedChangeSet;
+        bool hasObservedChangeSet = false;
+        if (const auto observedIt = ObservedChangeSets().find(this);
+            observedIt != ObservedChangeSets().end())
+        {
+            observedChangeSet = observedIt.value();
+            ObservedChangeSets().erase(observedIt);
+            hasObservedChangeSet = true;
+        }
+
+        if (!LoadTableNames(outError))
+        {
+            return false;
+        }
+
+        if (hasObservedChangeSet)
+        {
+            ApplyObservedRenameChangesToComputedColumns(
+                &sessionComputedColumnsByTable_, observedChangeSet);
+            currentTableName_ = RewriteTableNameForObservedRenames(
+                currentTableName_, observedChangeSet);
+        }
+
+        if (currentTable_)
+        {
+            const QString liveTableName =
+                CanonicalizeTableName(tableNames_, currentTableName_);
+            if (!liveTableName.isEmpty() && tableNames_.contains(liveTableName))
+            {
+                currentTableName_ = liveTableName;
+                if (!RebuildCurrentTableView(outError))
+                {
+                    return false;
+                }
+            }
+            else if (!tableNames_.isEmpty())
+            {
+                const bool selected = SelectTable(tableNames_.front(), outError);
+                if (selected)
+                {
+                    emit TablesChanged();
+                }
+                return selected;
+            }
+            else
+            {
+                currentTable_.Reset();
+                currentTableView_.Reset();
+                currentTableName_.clear();
+            }
+        }
+
+        emit TablesChanged();
         emit CurrentTableChanged();
         emit RecordsChanged();
         return true;
@@ -2566,7 +3690,7 @@ namespace StableCore::Storage::Editor
                 if (outError != nullptr)
                 {
                     *outError = QStringLiteral(
-                        "A computed column with the same name already exists.");
+                        "同名计算字段已存在。");
                 }
                 return false;
             }
@@ -2644,7 +3768,7 @@ namespace StableCore::Storage::Editor
                 if (outError != nullptr)
                 {
                     *outError = QStringLiteral(
-                        "A computed column with the same name already exists.");
+                        "同名计算字段已存在。");
                 }
                 return false;
             }
@@ -3894,56 +5018,10 @@ namespace StableCore::Storage::Editor
     bool SCDatabaseSession::BuildCurrentTableViewPreview(
         sc::SCComputedTableViewPtr* outView, QString* outError) const
     {
-        if (outView == nullptr)
-        {
-            if (outError != nullptr)
-            {
-                *outError = QStringLiteral("Output view is null.");
-            }
-            return false;
-        }
-        outView->Reset();
-
-        if (forceRebuildCurrentTableViewFailureForTest_)
-        {
-            if (outError != nullptr)
-            {
-                *outError = QStringLiteral("Forced rebuild failure for test.");
-            }
-            return false;
-        }
-
-        if (!db_ || !currentTable_ || currentTableName_.isEmpty())
-        {
-            if (outError != nullptr)
-            {
-                *outError = QStringLiteral("No table is selected.");
-            }
-            return false;
-        }
-
-        sc::SCSchemaPtr schema;
-        const sc::ErrorCode schemaRc = currentTable_->GetSchema(schema);
-        if (sc::Failed(schemaRc))
-        {
-            if (outError != nullptr)
-            {
-                *outError = ErrorToString(schemaRc);
-            }
-            return false;
-        }
-
-        // Build the preview against a table wrapper so structural mutations
-        // are reflected without depending on a fresh lookup from the live DB.
-        sc::SCTablePtr previewTable =
-            sc::SCMakeRef<PreviewTable>(currentTable_, schema);
-        sc::SCDbPtr previewDb = sc::SCMakeRef<PreviewDatabase>(
-            db_, currentTableName_.toStdWString(), previewTable);
-
-        const QVector<sc::SCComputedColumnDef> computedColumns =
-            sessionComputedColumnsByTable_.value(currentTableName_);
-        return BuildComputedTableView(
-            previewDb.Get(), currentTableName_.toStdWString(), computedColumns,
+        return BuildComputedTableViewForState(
+            db_, currentTable_, currentTableName_,
+            sessionComputedColumnsByTable_,
+            forceRebuildCurrentTableViewFailureForTest_,
             [this](sc::ErrorCode error) { return ErrorToString(error); },
             outView, outError);
     }

@@ -77,6 +77,7 @@ namespace StableCore::Storage
         RecordCreated,
         RecordDeleted,
         RelationUpdated,
+        TableRenamed,
     };
 
     enum class JournalOp
@@ -92,6 +93,7 @@ namespace StableCore::Storage
         RemoveConstraint,
         AddIndex,
         RemoveIndex,
+        RenameTable,
     };
 
     enum class RecordState

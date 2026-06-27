@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <string>
 
 #include <gtest/gtest.h>
 
@@ -15,7 +16,13 @@ class FileDbTest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        dbPath_ = MakeTempDbPath(L"StableCoreStorage_TestFixture.sqlite");
+        const auto* testInfo = ::testing::UnitTest::GetInstance()->current_test_info();
+        const std::string suiteName(testInfo->test_suite_name());
+        const std::string testName(testInfo->name());
+        const std::wstring fileName =
+            L"StableCoreStorage_TestFixture_" + std::wstring(suiteName.begin(), suiteName.end()) + L"_" +
+            std::wstring(testName.begin(), testName.end()) + L".sqlite";
+        dbPath_ = MakeTempDbPath(fileName.c_str());
         ASSERT_EQ(sc::CreateFileDatabase(dbPath_.c_str(), sc::SCOpenDatabaseOptions{}, db_), sc::SC_OK);
     }
 
@@ -153,7 +160,13 @@ class ReadOnlyFileDbTest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        dbPath_ = MakeTempDbPath(L"StableCoreStorage_TestFixture_ReadOnly.sqlite");
+        const auto* testInfo = ::testing::UnitTest::GetInstance()->current_test_info();
+        const std::string suiteName(testInfo->test_suite_name());
+        const std::string testName(testInfo->name());
+        const std::wstring fileName =
+            L"StableCoreStorage_TestFixture_ReadOnly_" + std::wstring(suiteName.begin(), suiteName.end()) + L"_" +
+            std::wstring(testName.begin(), testName.end()) + L".sqlite";
+        dbPath_ = MakeTempDbPath(fileName.c_str());
         
         sc::SCDbPtr writableDb;
         ASSERT_EQ(sc::CreateFileDatabase(dbPath_.c_str(), sc::SCOpenDatabaseOptions{}, writableDb), sc::SC_OK);

@@ -54,6 +54,8 @@ namespace StableCore::Storage::Editor
         bool CreateTableFromSchema(const SCSchemaTableImportResult& schema,
                                    QString* outError);
         bool DeleteTable(const QString& tableName, QString* outError);
+        bool RenameTable(const QString& originalName, const QString& newName,
+                         QString* outError);
         bool SelectTable(const QString& tableName, QString* outError);
         bool AddColumn(const StableCore::Storage::SCColumnDef& column,
                        QString* outError);
@@ -108,6 +110,9 @@ namespace StableCore::Storage::Editor
             const QString& tableName,
             StableCore::Storage::SCTableSchemaSnapshot* outSnapshot,
             QString* outError) const;
+        bool CurrentColumnHasNullValues(const QString& columnName,
+                                        bool* outHasNullValues,
+                                        QString* outError) const;
         bool BuildRelationCandidates(const QString& targetTableName,
                                      const StableCore::Storage::SCColumnDef& relationColumn,
                                      QVector<RelationCandidate>* outCandidates,

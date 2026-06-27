@@ -68,6 +68,8 @@ namespace StableCore::Storage::Editor
         QDialogButtonBox* buttonBox_{nullptr};
         QPushButton* okButton_{nullptr};
         bool currentTableHasRecords_{false};
+        bool editingExistingColumn_{false};
+        QString originalColumnName_;
         SCDatabaseSession* session_{nullptr};
     };
 
