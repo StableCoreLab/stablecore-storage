@@ -4587,6 +4587,9 @@ namespace StableCore::Storage
                                           std::size_t beginIndex,
                                           std::size_t endIndex,
                                           std::size_t* outAppliedCount = nullptr);
+            ErrorCode FinalizeReplayFailure(ErrorCode primaryRc,
+                                            ErrorCode compensationRc);
+            void ClearReplayCompensationFailure() noexcept;
             ErrorCode ApplyEntry(const JournalEntry& entry, bool reverse);
             ErrorCode ApplySchemaEntry(const JournalEntry& entry, bool reverse);
             void UpdateTouchedVersions(const JournalTransaction& tx,
@@ -4629,6 +4632,7 @@ namespace StableCore::Storage
             bool cleanShutdown_{true};
             bool persistCleanShutdownOnDestroy_{true};
             bool dirtyStartupDetected_{false};
+            bool replayCompensationFailureDetected_{false};
             bool corruptionDetected_{false};
             bool importSessionStoreReady_{false};
             mutable std::optional<SCConstraintViolationInfo> lastConstraintViolation_;
@@ -7069,6 +7073,7 @@ namespace StableCore::Storage
                 activeEdit_.Reset();
                 activeJournal_ = JournalTransaction{};
                 activeSchemaOps_.clear();
+                ClearReplayCompensationFailure();
                 return SC_OK;
             }
 
@@ -7126,6 +7131,7 @@ namespace StableCore::Storage
                 activeEdit_->SetState(EditState::Committed);
                 activeJournal_ = committedJournal;
                 activeSchemaOps_.clear();
+                ClearReplayCompensationFailure();
             } catch (...)
             {
                 return SC_E_FAIL;
@@ -7167,11 +7173,12 @@ namespace StableCore::Storage
                     {
                         const std::size_t beginIndex =
                             activeJournal_.entries.size() - reversedCount;
-                        (void)ApplyJournalForward(activeJournal_,
-                                                  beginIndex,
-                                                  activeJournal_.entries.size(),
-                                                  nullptr);
-                        return applyRc;
+                        const ErrorCode compensationRc =
+                            ApplyJournalForward(activeJournal_,
+                                                beginIndex,
+                                                activeJournal_.entries.size(),
+                                                nullptr);
+                        return FinalizeReplayFailure(applyRc, compensationRc);
                     }
                     RefreshReferenceIndexState();
                     const ErrorCode commitRc = txn.Commit();
@@ -7179,11 +7186,12 @@ namespace StableCore::Storage
                     {
                         const std::size_t beginIndex =
                             activeJournal_.entries.size() - reversedCount;
-                        (void)ApplyJournalForward(activeJournal_,
-                                                  beginIndex,
-                                                  activeJournal_.entries.size(),
-                                                  nullptr);
-                        return commitRc;
+                        const ErrorCode compensationRc =
+                            ApplyJournalForward(activeJournal_,
+                                                beginIndex,
+                                                activeJournal_.entries.size(),
+                                                nullptr);
+                        return FinalizeReplayFailure(commitRc, compensationRc);
                     }
                 } else
                 {
@@ -7195,10 +7203,12 @@ namespace StableCore::Storage
                 {
                     const std::size_t beginIndex =
                         activeJournal_.entries.size() - reversedCount;
-                    (void)ApplyJournalForward(activeJournal_,
-                                              beginIndex,
-                                              activeJournal_.entries.size(),
-                                              nullptr);
+                    const ErrorCode compensationRc =
+                        ApplyJournalForward(activeJournal_,
+                                            beginIndex,
+                                            activeJournal_.entries.size(),
+                                            nullptr);
+                    return FinalizeReplayFailure(SC_E_FAIL, compensationRc);
                 }
                 return SC_E_FAIL;
             }
@@ -7207,6 +7217,7 @@ namespace StableCore::Storage
             activeEdit_.Reset();
             activeJournal_ = JournalTransaction{};
             activeSchemaOps_.clear();
+            ClearReplayCompensationFailure();
             return SC_OK;
         }
 
@@ -7229,6 +7240,9 @@ namespace StableCore::Storage
 
             SqlitePersistedJournalTransaction tx = undoStack_.back();
             undoStack_.pop_back();
+            const auto restoreUndoStack = [&]() {
+                undoStack_.push_back(tx);
+            };
 
             std::size_t reversedCount = 0;
             try
@@ -7240,12 +7254,13 @@ namespace StableCore::Storage
                 {
                     const std::size_t beginIndex =
                         tx.tx.entries.size() - reversedCount;
-                    (void)ApplyJournalForward(tx.tx,
-                                              beginIndex,
-                                              tx.tx.entries.size(),
-                                              nullptr);
-                    undoStack_.push_back(tx);
-                    return applyRc;
+                    const ErrorCode compensationRc =
+                        ApplyJournalForward(tx.tx,
+                                            beginIndex,
+                                            tx.tx.entries.size(),
+                                            nullptr);
+                    restoreUndoStack();
+                    return FinalizeReplayFailure(applyRc, compensationRc);
                 }
                 const ErrorCode constraintRc =
                     ValidateUniqueAndPrimaryKeyConstraintsForTouchedTables(
@@ -7254,12 +7269,13 @@ namespace StableCore::Storage
                 {
                     const std::size_t beginIndex =
                         tx.tx.entries.size() - reversedCount;
-                    (void)ApplyJournalForward(tx.tx,
-                                              beginIndex,
-                                              tx.tx.entries.size(),
-                                              nullptr);
-                    undoStack_.push_back(tx);
-                    return constraintRc;
+                    const ErrorCode compensationRc =
+                        ApplyJournalForward(tx.tx,
+                                            beginIndex,
+                                            tx.tx.entries.size(),
+                                            nullptr);
+                    restoreUndoStack();
+                    return FinalizeReplayFailure(constraintRc, compensationRc);
                 }
                 const ErrorCode foreignKeyReferenceRc =
                     ValidateForeignKeyReferencesForTouchedTables(
@@ -7268,12 +7284,14 @@ namespace StableCore::Storage
                 {
                     const std::size_t beginIndex =
                         tx.tx.entries.size() - reversedCount;
-                    (void)ApplyJournalForward(tx.tx,
-                                              beginIndex,
-                                              tx.tx.entries.size(),
-                                              nullptr);
-                    undoStack_.push_back(tx);
-                    return foreignKeyReferenceRc;
+                    const ErrorCode compensationRc =
+                        ApplyJournalForward(tx.tx,
+                                            beginIndex,
+                                            tx.tx.entries.size(),
+                                            nullptr);
+                    restoreUndoStack();
+                    return FinalizeReplayFailure(foreignKeyReferenceRc,
+                                                 compensationRc);
                 }
                 const VersionId nextVersion = version_ + 1;
                 PersistTouchedRecords(tx.tx, nextVersion, true);
@@ -7284,12 +7302,13 @@ namespace StableCore::Storage
                 {
                     const std::size_t beginIndex =
                         tx.tx.entries.size() - reversedCount;
-                    (void)ApplyJournalForward(tx.tx,
-                                              beginIndex,
-                                              tx.tx.entries.size(),
-                                              nullptr);
-                    undoStack_.push_back(tx);
-                    return commitRc;
+                    const ErrorCode compensationRc =
+                        ApplyJournalForward(tx.tx,
+                                            beginIndex,
+                                            tx.tx.entries.size(),
+                                            nullptr);
+                    restoreUndoStack();
+                    return FinalizeReplayFailure(commitRc, compensationRc);
                 }
 
                 version_ = nextVersion;
@@ -7301,16 +7320,20 @@ namespace StableCore::Storage
                 {
                     const std::size_t beginIndex =
                         tx.tx.entries.size() - reversedCount;
-                    (void)ApplyJournalForward(tx.tx,
-                                              beginIndex,
-                                              tx.tx.entries.size(),
-                                              nullptr);
+                    const ErrorCode compensationRc =
+                        ApplyJournalForward(tx.tx,
+                                            beginIndex,
+                                            tx.tx.entries.size(),
+                                            nullptr);
+                    restoreUndoStack();
+                    return FinalizeReplayFailure(SC_E_FAIL, compensationRc);
                 }
-                undoStack_.push_back(tx);
+                restoreUndoStack();
                 return SC_E_FAIL;
             }
 
             RefreshReferenceIndexState();
+            ClearReplayCompensationFailure();
             NotifyObservers(BuildChangeSet(tx.tx, ChangeSource::Undo, version_));
             return SC_OK;
         }
@@ -7334,6 +7357,9 @@ namespace StableCore::Storage
 
             SqlitePersistedJournalTransaction tx = redoStack_.back();
             redoStack_.pop_back();
+            const auto restoreRedoStack = [&]() {
+                redoStack_.push_back(tx);
+            };
 
             std::size_t forwardedCount = 0;
             try
@@ -7343,27 +7369,31 @@ namespace StableCore::Storage
                     tx.tx, 0, tx.tx.entries.size(), &forwardedCount);
                 if (Failed(applyRc))
                 {
-                    (void)ApplyJournalReverse(tx.tx, 0, forwardedCount, nullptr);
-                    redoStack_.push_back(tx);
-                    return applyRc;
+                    const ErrorCode compensationRc =
+                        ApplyJournalReverse(tx.tx, 0, forwardedCount, nullptr);
+                    restoreRedoStack();
+                    return FinalizeReplayFailure(applyRc, compensationRc);
                 }
                 const ErrorCode constraintRc =
                     ValidateUniqueAndPrimaryKeyConstraintsForTouchedTables(
                         tx.tx, false);
                 if (Failed(constraintRc))
                 {
-                    (void)ApplyJournalReverse(tx.tx, 0, forwardedCount, nullptr);
-                    redoStack_.push_back(tx);
-                    return constraintRc;
+                    const ErrorCode compensationRc =
+                        ApplyJournalReverse(tx.tx, 0, forwardedCount, nullptr);
+                    restoreRedoStack();
+                    return FinalizeReplayFailure(constraintRc, compensationRc);
                 }
                 const ErrorCode foreignKeyReferenceRc =
                     ValidateForeignKeyReferencesForTouchedTables(
                         tx.tx, false);
                 if (Failed(foreignKeyReferenceRc))
                 {
-                    (void)ApplyJournalReverse(tx.tx, 0, forwardedCount, nullptr);
-                    redoStack_.push_back(tx);
-                    return foreignKeyReferenceRc;
+                    const ErrorCode compensationRc =
+                        ApplyJournalReverse(tx.tx, 0, forwardedCount, nullptr);
+                    restoreRedoStack();
+                    return FinalizeReplayFailure(foreignKeyReferenceRc,
+                                                 compensationRc);
                 }
                 const VersionId nextVersion = version_ + 1;
                 PersistTouchedRecords(tx.tx, nextVersion, false);
@@ -7372,9 +7402,10 @@ namespace StableCore::Storage
                 const ErrorCode commitRc = txn.Commit();
                 if (Failed(commitRc))
                 {
-                    (void)ApplyJournalReverse(tx.tx, 0, forwardedCount, nullptr);
-                    redoStack_.push_back(tx);
-                    return commitRc;
+                    const ErrorCode compensationRc =
+                        ApplyJournalReverse(tx.tx, 0, forwardedCount, nullptr);
+                    restoreRedoStack();
+                    return FinalizeReplayFailure(commitRc, compensationRc);
                 }
 
                 version_ = nextVersion;
@@ -7384,13 +7415,17 @@ namespace StableCore::Storage
             {
                 if (forwardedCount > 0)
                 {
-                    (void)ApplyJournalReverse(tx.tx, 0, forwardedCount, nullptr);
+                    const ErrorCode compensationRc =
+                        ApplyJournalReverse(tx.tx, 0, forwardedCount, nullptr);
+                    restoreRedoStack();
+                    return FinalizeReplayFailure(SC_E_FAIL, compensationRc);
                 }
-                redoStack_.push_back(tx);
+                restoreRedoStack();
                 return SC_E_FAIL;
             }
 
             RefreshReferenceIndexState();
+            ClearReplayCompensationFailure();
             NotifyObservers(BuildChangeSet(tx.tx, ChangeSource::Redo, version_));
             return SC_OK;
         }
@@ -7949,6 +7984,7 @@ namespace StableCore::Storage
                 baselineVersion_ = version_;
                 undoStack_.clear();
                 redoStack_.clear();
+                ClearReplayCompensationFailure();
             } catch (...)
             {
                 return SC_E_FAIL;
@@ -8005,7 +8041,8 @@ namespace StableCore::Storage
             }
 
             outState->open = true;
-            outState->dirty = static_cast<bool>(activeEdit_) || !undoStack_.empty();
+            outState->dirty = static_cast<bool>(activeEdit_) || !undoStack_.empty() ||
+                              replayCompensationFailureDetected_;
             outState->openMode = openMode_;
             outState->currentVersion = version_;
             outState->baselineVersion = baselineVersion_;
@@ -14419,6 +14456,24 @@ namespace StableCore::Storage
                 }
             }
             return SC_OK;
+        }
+
+        ErrorCode SqliteDatabase::FinalizeReplayFailure(ErrorCode primaryRc,
+                                                        ErrorCode compensationRc)
+        {
+            if (Failed(compensationRc))
+            {
+                replayCompensationFailureDetected_ = true;
+                return compensationRc;
+            }
+
+            RefreshReferenceIndexState();
+            return primaryRc;
+        }
+
+        void SqliteDatabase::ClearReplayCompensationFailure() noexcept
+        {
+            replayCompensationFailureDetected_ = false;
         }
 
         ErrorCode SqliteDatabase::ApplyEntry(const JournalEntry& entry, bool reverse)
