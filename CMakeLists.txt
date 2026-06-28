@@ -88,6 +88,13 @@ if (NOT DEFINED Qt6_DIR AND DEFINED ENV{QT6_8_x64} AND NOT "$ENV{QT6_8_x64}" STR
     set(Qt6_DIR "$ENV{QT6_8_x64}/lib/cmake/Qt6")
 endif()
 
+# SCCommon dependency (via stablecore_ui package)
+list(APPEND CMAKE_PREFIX_PATH "${CMAKE_CURRENT_SOURCE_DIR}/Extern/stablecore")
+set(stablecore_ui_DIR "${CMAKE_CURRENT_SOURCE_DIR}/Extern/stablecore/Lib/cmake/stablecore_ui"
+    CACHE PATH "stablecore_ui CMake directory" FORCE)
+find_package(stablecore_ui CONFIG REQUIRED)
+find_package(Qt6 6.8 REQUIRED COMPONENTS Core)
+
 set(SCSTORAGE_LIBRARY_SOURCES
     Src/SCFactory.cpp
     Src/Batch/SCBatchOperations.cpp
@@ -106,6 +113,12 @@ set(SCSTORAGE_LIBRARY_SOURCES
     Src/Query/SCQueryPlanner.cpp
     Src/Schema/SCSchemaEdit.cpp
     Src/Sqlite/SCSqliteAdapter.cpp
+    Src/Sqlite/SqliteImplCore.cpp
+    Src/Sqlite/SqliteImplSchema.cpp
+    Src/Sqlite/SqliteImplDatabase_Init.cpp
+    Src/Sqlite/SqliteImplDatabase_Edit.cpp
+    Src/Sqlite/SqliteImplDatabase_Constraints.cpp
+    Src/Sqlite/SqliteImplDatabase_Index.cpp
 )
 
 set(SCSTORAGE_LIBRARY_PRIVATE_HEADERS
@@ -113,6 +126,8 @@ set(SCSTORAGE_LIBRARY_PRIVATE_HEADERS
     Src/Query/SCQuerySqliteIndexAccess.h
     Src/Sqlite/SqliteUpgradeInterfaces.h
     Src/Sqlite/SqliteUpgradeRegistry.h
+    Src/Sqlite/SqliteImplCore.h
+    Src/Sqlite/SqliteImplDatabase.h
 )
 
 set(SCSTORAGE_PUBLIC_HEADERS
@@ -140,6 +155,11 @@ add_library(${SCSTORAGE_TARGET} SHARED
 )
 SCStorageConfigureOutputDirs(${SCSTORAGE_TARGET})
 
+target_link_libraries(${SCSTORAGE_TARGET}
+    PUBLIC
+        stablecore_ui::SCCommon
+)
+
 target_sources(${SCSTORAGE_TARGET}
     PRIVATE
         ${SCSTORAGE_PUBLIC_HEADERS}
@@ -160,6 +180,7 @@ target_include_directories(${SCSTORAGE_TARGET}
         $<INSTALL_INTERFACE:${SCSTORAGE_INSTALL_INCLUDE_DIR}>
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/Src/Query
+        ${CMAKE_CURRENT_SOURCE_DIR}/Src
 )
 
 target_compile_features(${SCSTORAGE_TARGET} PUBLIC cxx_std_20)
