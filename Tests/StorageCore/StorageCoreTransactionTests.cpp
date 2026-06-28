@@ -83,6 +83,52 @@ TEST_F(BeamTableTest, DeleteAndUndoRedo)
     EXPECT_TRUE(beam->IsDeleted());
 }
 
+TEST_F(BeamTableTest, CreateAndDeleteWithinEditRollbackRemovesTransientRecord)
+{
+    sc::SCEditPtr edit;
+    EXPECT_EQ(db()->BeginEdit(L"create and delete", edit), sc::SC_OK);
+
+    sc::SCRecordPtr beam;
+    EXPECT_EQ(beamTable()->CreateRecord(beam), sc::SC_OK);
+    const sc::RecordId beamId = beam->GetId();
+    EXPECT_EQ(beam->SetInt64(L"Width", 275), sc::SC_OK);
+    EXPECT_EQ(beamTable()->DeleteRecord(beamId), sc::SC_OK);
+    EXPECT_EQ(db()->Rollback(edit.Get()), sc::SC_OK);
+
+    sc::SCRecordCursorPtr cursor;
+    EXPECT_EQ(beamTable()->EnumerateRecords(cursor), sc::SC_OK);
+
+    sc::SCRecordPtr result;
+    EXPECT_EQ(cursor->Next(result), sc::SC_OK);
+    EXPECT_FALSE(static_cast<bool>(result));
+
+    sc::SCRecordPtr reloaded;
+    EXPECT_EQ(beamTable()->GetRecord(beamId, reloaded), sc::SC_E_RECORD_NOT_FOUND);
+}
+
+TEST_F(BeamTableTest, CreateAndDeleteWithinEditCommitDoesNotLeaveDeletedStub)
+{
+    sc::SCEditPtr edit;
+    EXPECT_EQ(db()->BeginEdit(L"create and delete", edit), sc::SC_OK);
+
+    sc::SCRecordPtr beam;
+    EXPECT_EQ(beamTable()->CreateRecord(beam), sc::SC_OK);
+    const sc::RecordId beamId = beam->GetId();
+    EXPECT_EQ(beam->SetInt64(L"Width", 275), sc::SC_OK);
+    EXPECT_EQ(beamTable()->DeleteRecord(beamId), sc::SC_OK);
+    EXPECT_EQ(db()->Commit(edit.Get()), sc::SC_OK);
+
+    sc::SCRecordCursorPtr cursor;
+    EXPECT_EQ(beamTable()->EnumerateRecords(cursor), sc::SC_OK);
+
+    sc::SCRecordPtr result;
+    EXPECT_EQ(cursor->Next(result), sc::SC_OK);
+    EXPECT_FALSE(static_cast<bool>(result));
+
+    sc::SCRecordPtr reloaded;
+    EXPECT_EQ(beamTable()->GetRecord(beamId, reloaded), sc::SC_E_RECORD_NOT_FOUND);
+}
+
 TEST_F(BeamTableTest, UncommittedEditDoesNotPersist)
 {
     sc::SCEditPtr createEdit;

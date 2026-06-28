@@ -7,6 +7,7 @@
 #include "ISCQuery.h"
 #include "SCStorage.h"
 
+#include "Support/TestFixtures.h"
 #include "Support/TestPaths.h"
 #include "Support/TestSqliteHelpers.h"
 #include "Support/TestSchemaBuilders.h"
@@ -160,6 +161,18 @@ TEST(SchemaEdit, BackendCreateTableFailureDoesNotLeaveVisibleTable)
     sc::SCTablePtr table;
     EXPECT_NE(db->CreateTable(L"Beam", table), sc::SC_OK);
     EXPECT_EQ(db->GetTable(L"Beam", table), sc::SC_E_TABLE_NOT_FOUND);
+}
+
+TEST_F(FileDbTest, CreateAndDeleteTableOutsideEditStillWorks)
+{
+    sc::SCTablePtr table;
+    EXPECT_EQ(db()->CreateTable(L"Transient", table), sc::SC_OK);
+
+    sc::SCTablePtr reloaded;
+    EXPECT_EQ(db()->GetTable(L"Transient", reloaded), sc::SC_OK);
+
+    EXPECT_EQ(db()->DeleteTable(L"Transient"), sc::SC_OK);
+    EXPECT_EQ(db()->GetTable(L"Transient", reloaded), sc::SC_E_TABLE_NOT_FOUND);
 }
 
 TEST(SchemaEdit, CreateTableFromSchemaSupportsSelfReferentialForeignKey)
