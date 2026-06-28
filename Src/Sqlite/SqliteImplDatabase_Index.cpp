@@ -1473,6 +1473,7 @@ namespace StableCore::Storage
             {
                 RemoveAllJournalEntriesForRecord(table->Name(), data->id);
                 data->values.clear();
+                table->Records().erase(data->id);
                 MarkReferenceIndexDirty();
                 return SC_OK;
             }
