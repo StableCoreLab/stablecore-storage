@@ -1,4 +1,4 @@
-﻿#include "SCDatabaseSession.h"
+#include "SCDatabaseSession.h"
 
 #include <algorithm>
 #include <cstdint>
