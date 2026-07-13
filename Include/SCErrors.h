@@ -1,5 +1,7 @@
 #pragma once
 
+#include <string>
+
 namespace StableCore::Storage
 {
 
@@ -55,5 +57,11 @@ namespace StableCore::Storage
     {
         return !Succeeded(code);
     }
+
+    const wchar_t* GetErrorCodeName(ErrorCode code) noexcept;
+
+    const wchar_t* GetErrorCodeCategory(ErrorCode code) noexcept;
+
+    std::wstring FormatErrorCode(ErrorCode code);
 
 }  // namespace StableCore::Storage

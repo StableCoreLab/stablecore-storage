@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<AutoVisualizer xmlns="http://schemas.microsoft.com/vstudio/debugger/natvis/2010">
+  <Type Name="Quantity::SCStorageException">
+    <DisplayString>{m_messageNarrow,s8}</DisplayString>
+    <StringView>m_messageNarrow,s8</StringView>
+    <Expand>
+      <Item Name="消息">m_messageNarrow,s8</Item>
+      <Item Name="目标">m_fieldNameWide,su</Item>
+      <Item Name="错误码">m_code</Item>
+    </Expand>
+  </Type>
+</AutoVisualizer>

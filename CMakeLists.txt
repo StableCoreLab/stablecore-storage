@@ -96,6 +96,7 @@ find_package(stablecore_ui CONFIG REQUIRED)
 find_package(Qt6 6.8 REQUIRED COMPONENTS Core)
 
 set(SCSTORAGE_LIBRARY_SOURCES
+    Src/SCErrors.cpp
     Src/SCFactory.cpp
     Src/Batch/SCBatchOperations.cpp
     Src/Computed/SCComputedRuntime.cpp
@@ -149,6 +150,11 @@ set(SCSTORAGE_PUBLIC_HEADERS
     Include/SCTypes.h
 )
 
+set(SCSTORAGE_PUBLIC_SDK_FILES
+    SCStorage.natvis
+    ${SCSTORAGE_PUBLIC_HEADERS}
+)
+
 add_library(${SCSTORAGE_TARGET} SHARED
     ${SCSTORAGE_LIBRARY_SOURCES}
     ${CMAKE_CURRENT_SOURCE_DIR}/../ThirdParty/Sqlite/sqlite3.c
@@ -162,14 +168,14 @@ target_link_libraries(${SCSTORAGE_TARGET}
 
 target_sources(${SCSTORAGE_TARGET}
     PRIVATE
-        ${SCSTORAGE_PUBLIC_HEADERS}
+        ${SCSTORAGE_PUBLIC_SDK_FILES}
         ${SCSTORAGE_LIBRARY_PRIVATE_HEADERS}
 )
 
 SCStorageSourceGroupTree("${CMAKE_CURRENT_SOURCE_DIR}"
     ${SCSTORAGE_LIBRARY_SOURCES}
     ${SCSTORAGE_LIBRARY_PRIVATE_HEADERS}
-    ${SCSTORAGE_PUBLIC_HEADERS}
+    ${SCSTORAGE_PUBLIC_SDK_FILES}
 )
 source_group("ThirdParty\\Sqlite" FILES ${CMAKE_CURRENT_SOURCE_DIR}/../ThirdParty/Sqlite/sqlite3.c)
 
@@ -434,7 +440,7 @@ install(FILES $<TARGET_PDB_FILE:${SCSTORAGE_TARGET}>
     DESTINATION ${SCSTORAGE_INSTALL_PDB_DIR}
 )
 
-install(FILES ${SCSTORAGE_PUBLIC_HEADERS}
+install(FILES ${SCSTORAGE_PUBLIC_SDK_FILES}
     DESTINATION ${SCSTORAGE_INSTALL_INCLUDE_DIR}
 )
 
