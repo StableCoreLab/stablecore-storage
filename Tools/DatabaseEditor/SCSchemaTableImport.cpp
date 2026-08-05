@@ -367,7 +367,7 @@ namespace StableCore::Storage::Editor
             column.displayName = column.name;
             column.columnKind = sc::ColumnKind::Fact;
             column.editable = true;
-            column.userDefined = true;
+            column.userDefined = false;
             column.nullable = true;
             column.indexed = false;
             column.participatesInCalc = false;

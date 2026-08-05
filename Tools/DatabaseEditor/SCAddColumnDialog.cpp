@@ -1,4 +1,4 @@
-﻿#include "SCAddColumnDialog.h"
+#include "SCAddColumnDialog.h"
 
 #include "SCBinaryUtils.h"
 #include "SCDatabaseSession.h"
@@ -138,7 +138,6 @@ namespace StableCore::Storage::Editor
         relationBindingCombo_ = new QComboBox(this);
         nullableCheck_ = new QCheckBox(this);
         editableCheck_ = new QCheckBox(this);
-        userDefinedCheck_ = new QCheckBox(this);
         indexedCheck_ = new QCheckBox(this);
         participatesInCalcCheck_ = new QCheckBox(this);
         unitEdit_ = new QLineEdit(this);
@@ -205,7 +204,6 @@ namespace StableCore::Storage::Editor
         form->addRow(QStringLiteral("关联方式"), relationBindingCombo_);
         form->addRow(QStringLiteral("可空"), nullableCheck_);
         form->addRow(QStringLiteral("可编辑"), editableCheck_);
-        form->addRow(QStringLiteral("用户定义"), userDefinedCheck_);
         form->addRow(QStringLiteral("已建索引"), indexedCheck_);
         form->addRow(QStringLiteral("参与计算"), participatesInCalcCheck_);
         form->addRow(QStringLiteral("单位"), unitEdit_);
@@ -278,7 +276,6 @@ namespace StableCore::Storage::Editor
         relationCheck_->setChecked(value.columnKind == sc::ColumnKind::Relation);
         nullableCheck_->setChecked(value.nullable);
         editableCheck_->setChecked(value.editable);
-        userDefinedCheck_->setChecked(value.userDefined);
         indexedCheck_->setChecked(value.indexed);
         participatesInCalcCheck_->setChecked(value.participatesInCalc);
         unitEdit_->setText(QString::fromStdWString(value.unit));
@@ -376,7 +373,6 @@ namespace StableCore::Storage::Editor
                                 : sc::ColumnKind::Fact;
         column.nullable = nullableCheck_->isChecked();
         column.editable = editableCheck_->isChecked();
-        column.userDefined = userDefinedCheck_->isChecked();
         column.indexed = indexedCheck_->isChecked();
         column.participatesInCalc = participatesInCalcCheck_->isChecked();
         column.unit = unitEdit_->text().toStdWString();

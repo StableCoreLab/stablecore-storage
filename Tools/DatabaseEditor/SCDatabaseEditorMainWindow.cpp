@@ -256,7 +256,7 @@ namespace StableCore::Storage::Editor
             schemaColumn.columnKind = sc::ColumnKind::Fact;
             schemaColumn.nullable = true;
             schemaColumn.editable = true;
-            schemaColumn.userDefined = true;
+            schemaColumn.userDefined = false;
             schemaColumn.indexed = false;
             schemaColumn.participatesInCalc = false;
             return schemaColumn;
@@ -1134,7 +1134,7 @@ namespace StableCore::Storage::Editor
 
         const QString filePath = QFileDialog::getSaveFileName(
             this, QStringLiteral("Create Database"), QString(),
-            QStringLiteral("SQLite Database (*.sqlite);;All Files (*)"));
+            QStringLiteral("SC Database (*.scdb);;All Files (*)"));
         if (filePath.isEmpty())
         {
             return;
@@ -1162,7 +1162,7 @@ namespace StableCore::Storage::Editor
 
         const QString filePath = QFileDialog::getOpenFileName(
             this, QStringLiteral("Open Database"), QString(),
-            QStringLiteral("SQLite Database (*.sqlite *.db);;All Files (*)"));
+            QStringLiteral("SC Database (*.scdb);;All Files (*)"));
         if (filePath.isEmpty())
         {
             return;
@@ -1237,10 +1237,10 @@ namespace StableCore::Storage::Editor
         const QString defaultPath =
             session_->DatabasePath().isEmpty()
                 ? QString()
-                : session_->DatabasePath() + QStringLiteral("_backup.sqlite");
+                : session_->DatabasePath() + QStringLiteral("_backup.scdb");
         const QString filePath = QFileDialog::getSaveFileName(
             this, QStringLiteral("Create Backup Copy"), defaultPath,
-            QStringLiteral("SQLite Database (*.sqlite);;All Files (*)"));
+            QStringLiteral("SC Database (*.scdb);;All Files (*)"));
         if (filePath.isEmpty())
         {
             return;
@@ -2250,8 +2250,8 @@ namespace StableCore::Storage::Editor
     void SCDatabaseEditorMainWindow::ExportDebugPackage()
     {
         const QString filePath = QFileDialog::getSaveFileName(
-            this, QStringLiteral("Export Debug Package"), QString(),
-            QStringLiteral("Debug Package (*.scdbg);;All Files (*)"));
+            this, QStringLiteral("SC DataBase"), QString(),
+            QStringLiteral("SC DataBase (*.scdbg);;All Files (*)"));
         if (filePath.isEmpty())
         {
             return;
@@ -2441,7 +2441,7 @@ namespace StableCore::Storage::Editor
             {
                 QVariant value;
                 QString error;
-                const bool ok = session_->GetCellDisplayValue(
+                const bool ok = session_->GetCellStoredValue(
                     visibleRows_[row].recordId,
                     QString::fromStdWString(columns_[col].name), &value,
                     &error);
