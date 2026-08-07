@@ -113,6 +113,64 @@ namespace StableCore::Storage
         VersionId baselineVersion{0};
         std::size_t undoCount{0};
         std::size_t redoCount{0};
+        bool consistencyLost{false};
+    };
+
+    // -- History Move types -------------------------------------------------------
+
+    enum class SCHistoryMoveDirection
+    {
+        Undo,
+        Redo,
+    };
+
+    struct SCHistoryPosition
+    {
+        CommitId commitId{0};
+        VersionId committedVersion{0};
+    };
+
+    struct SCHistoryPositionExpectation
+    {
+        bool commitIdEnabled{false};
+        bool committedVersionEnabled{false};
+        SCHistoryPosition position;
+
+        bool enabled() const noexcept
+        {
+            return commitIdEnabled || committedVersionEnabled;
+        }
+    };
+
+    struct SCHistoryMoveRequest
+    {
+        SCHistoryMoveDirection direction{SCHistoryMoveDirection::Undo};
+        SCHistoryPositionExpectation expectedCurrent;
+        SCHistoryPositionExpectation expectedTarget;
+    };
+
+    enum class SCHistoryMoveOutcome
+    {
+        NotMoved,
+        Moved,
+        ConsistencyLost,
+    };
+
+    struct SCHistoryMoveResult
+    {
+        SCHistoryMoveOutcome outcome{SCHistoryMoveOutcome::NotMoved};
+        SCHistoryPosition previousPosition;
+        SCHistoryPosition targetPosition;
+        SCHistoryPosition currentPosition;
+        SCEditLogEntry movedItem;
+        VersionId databaseVersion{0};
+        std::size_t undoCount{0};
+        std::size_t redoCount{0};
+
+        bool stateChanged() const noexcept
+        {
+            return outcome != SCHistoryMoveOutcome::NotMoved;
+        }
     };
 
     struct SCBackupOptions
@@ -336,6 +394,22 @@ namespace StableCore::Storage
         {
             (void)originalName;
             (void)newName;
+            return SC_E_NOTIMPL;
+        }
+
+        // History Move: atomically validates the current/target position,
+        // moves the undo/redo cursor, and returns the result.
+        // Must be appended after all existing virtual functions to preserve
+        // vtable slot ordering.
+        virtual ErrorCode MoveHistory(const SCHistoryMoveRequest& request,
+                                      SCHistoryMoveResult* outResult)
+        {
+            (void)request;
+            if (outResult == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+            *outResult = SCHistoryMoveResult{};
             return SC_E_NOTIMPL;
         }
     };

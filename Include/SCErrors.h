@@ -34,6 +34,7 @@ namespace StableCore::Storage
 
     constexpr ErrorCode SC_E_UNDO_STACK_EMPTY = 0xA0010201L;
     constexpr ErrorCode SC_E_REDO_STACK_EMPTY = 0xA0010202L;
+    constexpr ErrorCode SC_E_HISTORY_POSITION_MISMATCH = 0xA0010203L;
 
     constexpr ErrorCode SC_E_CONSTRAINT_VIOLATION = 0xA0010301L;
     constexpr ErrorCode SC_E_REFERENCE_INVALID = 0xA0010302L;
