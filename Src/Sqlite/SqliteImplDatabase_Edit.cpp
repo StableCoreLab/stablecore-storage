@@ -11,6 +11,11 @@ namespace StableCore::Storage
             {
                 return writableRc;
             }
+            const ErrorCode transitionRc = EnsureWriteTransitionAllowed();
+            if (Failed(transitionRc))
+            {
+                return transitionRc;
+            }
             if (activeEdit_)
             {
                 return SC_E_WRITE_CONFLICT;
@@ -30,6 +35,11 @@ namespace StableCore::Storage
             {
                 return writableRc;
             }
+            const ErrorCode transitionRc = EnsureWriteTransitionAllowed();
+            if (Failed(transitionRc))
+            {
+                return transitionRc;
+            }
             ClearConstraintViolation();
             const ErrorCode validate = ValidateActiveEdit(edit);
             if (Failed(validate))
@@ -43,7 +53,6 @@ namespace StableCore::Storage
                 activeEdit_.Reset();
                 activeJournal_ = JournalTransaction{};
                 activeSchemaOps_.clear();
-                ClearReplayCompensationFailure();
                 return SC_OK;
             }
 
@@ -101,7 +110,6 @@ namespace StableCore::Storage
                 activeEdit_->SetState(EditState::Committed);
                 activeJournal_ = committedJournal;
                 activeSchemaOps_.clear();
-                ClearReplayCompensationFailure();
             } catch (...)
             {
                 return SC_E_FAIL;
@@ -111,6 +119,12 @@ namespace StableCore::Storage
             const SCChangeSet SCChangeSet = BuildChangeSet(activeJournal_, ChangeSource::UserEdit, version_);
             activeEdit_.Reset();
             activeJournal_ = JournalTransaction{};
+            publicStateTransitionActive_ = true;
+            struct Guard
+            {
+                SqliteDatabase* db;
+                ~Guard() { db->publicStateTransitionActive_ = false; }
+            } guard{this};
             NotifyObservers(SCChangeSet);
             return SC_OK;
         }
@@ -121,6 +135,11 @@ namespace StableCore::Storage
             if (Failed(writableRc))
             {
                 return writableRc;
+            }
+            const ErrorCode transitionRc = EnsureWriteTransitionAllowed();
+            if (Failed(transitionRc))
+            {
+                return transitionRc;
             }
             const ErrorCode validate = ValidateActiveEdit(edit);
             if (Failed(validate))
@@ -187,217 +206,23 @@ namespace StableCore::Storage
             activeEdit_.Reset();
             activeJournal_ = JournalTransaction{};
             activeSchemaOps_.clear();
-            ClearReplayCompensationFailure();
             return SC_OK;
         }
 
         ErrorCode SqliteDatabase::Undo()
         {
-            const ErrorCode writableRc = EnsureWritable();
-            if (Failed(writableRc))
-            {
-                return writableRc;
-            }
-            ClearConstraintViolation();
-            if (activeEdit_)
-            {
-                return SC_E_WRITE_CONFLICT;
-            }
-            if (undoStack_.empty())
-            {
-                return SC_E_UNDO_STACK_EMPTY;
-            }
-
-            SqlitePersistedJournalTransaction tx = undoStack_.back();
-            undoStack_.pop_back();
-            const auto restoreUndoStack = [&]() {
-                undoStack_.push_back(tx);
-            };
-
-            std::size_t reversedCount = 0;
-            try
-            {
-                SqliteTxn txn(db_);
-                const ErrorCode applyRc = ApplyJournalReverse(
-                    tx.tx, 0, tx.tx.entries.size(), &reversedCount);
-                if (Failed(applyRc))
-                {
-                    const std::size_t beginIndex =
-                        tx.tx.entries.size() - reversedCount;
-                    const ErrorCode compensationRc =
-                        ApplyJournalForward(tx.tx,
-                                            beginIndex,
-                                            tx.tx.entries.size(),
-                                            nullptr);
-                    restoreUndoStack();
-                    return FinalizeReplayFailure(applyRc, compensationRc);
-                }
-                const ErrorCode constraintRc =
-                    ValidateUniqueAndPrimaryKeyConstraintsForTouchedTables(
-                        tx.tx, true);
-                if (Failed(constraintRc))
-                {
-                    const std::size_t beginIndex =
-                        tx.tx.entries.size() - reversedCount;
-                    const ErrorCode compensationRc =
-                        ApplyJournalForward(tx.tx,
-                                            beginIndex,
-                                            tx.tx.entries.size(),
-                                            nullptr);
-                    restoreUndoStack();
-                    return FinalizeReplayFailure(constraintRc, compensationRc);
-                }
-                const ErrorCode foreignKeyReferenceRc =
-                    ValidateForeignKeyReferencesForTouchedTables(
-                        tx.tx, true);
-                if (Failed(foreignKeyReferenceRc))
-                {
-                    const std::size_t beginIndex =
-                        tx.tx.entries.size() - reversedCount;
-                    const ErrorCode compensationRc =
-                        ApplyJournalForward(tx.tx,
-                                            beginIndex,
-                                            tx.tx.entries.size(),
-                                            nullptr);
-                    restoreUndoStack();
-                    return FinalizeReplayFailure(foreignKeyReferenceRc,
-                                                 compensationRc);
-                }
-                const VersionId nextVersion = version_ + 1;
-                PersistTouchedRecords(tx.tx, nextVersion, true);
-                UpdateJournalTransactionStack(tx.txId, kStackRedo, static_cast<int>(redoStack_.size()));
-                SaveMetadata(nextVersion);
-                const ErrorCode commitRc = txn.Commit();
-                if (Failed(commitRc))
-                {
-                    const std::size_t beginIndex =
-                        tx.tx.entries.size() - reversedCount;
-                    const ErrorCode compensationRc =
-                        ApplyJournalForward(tx.tx,
-                                            beginIndex,
-                                            tx.tx.entries.size(),
-                                            nullptr);
-                    restoreUndoStack();
-                    return FinalizeReplayFailure(commitRc, compensationRc);
-                }
-
-                version_ = nextVersion;
-                UpdateTouchedVersions(tx.tx, version_, true);
-                redoStack_.push_back(tx);
-            } catch (...)
-            {
-                if (reversedCount > 0)
-                {
-                    const std::size_t beginIndex =
-                        tx.tx.entries.size() - reversedCount;
-                    const ErrorCode compensationRc =
-                        ApplyJournalForward(tx.tx,
-                                            beginIndex,
-                                            tx.tx.entries.size(),
-                                            nullptr);
-                    restoreUndoStack();
-                    return FinalizeReplayFailure(SC_E_FAIL, compensationRc);
-                }
-                restoreUndoStack();
-                return SC_E_FAIL;
-            }
-
-            RefreshReferenceIndexState();
-            ClearReplayCompensationFailure();
-            NotifyObservers(BuildChangeSet(tx.tx, ChangeSource::Undo, version_));
-            return SC_OK;
+            SCHistoryMoveRequest request;
+            request.direction = SCHistoryMoveDirection::Undo;
+            SCHistoryMoveResult result;
+            return MoveHistory(request, &result);
         }
 
         ErrorCode SqliteDatabase::Redo()
         {
-            const ErrorCode writableRc = EnsureWritable();
-            if (Failed(writableRc))
-            {
-                return writableRc;
-            }
-            ClearConstraintViolation();
-            if (activeEdit_)
-            {
-                return SC_E_WRITE_CONFLICT;
-            }
-            if (redoStack_.empty())
-            {
-                return SC_E_REDO_STACK_EMPTY;
-            }
-
-            SqlitePersistedJournalTransaction tx = redoStack_.back();
-            redoStack_.pop_back();
-            const auto restoreRedoStack = [&]() {
-                redoStack_.push_back(tx);
-            };
-
-            std::size_t forwardedCount = 0;
-            try
-            {
-                SqliteTxn txn(db_);
-                const ErrorCode applyRc = ApplyJournalForward(
-                    tx.tx, 0, tx.tx.entries.size(), &forwardedCount);
-                if (Failed(applyRc))
-                {
-                    const ErrorCode compensationRc =
-                        ApplyJournalReverse(tx.tx, 0, forwardedCount, nullptr);
-                    restoreRedoStack();
-                    return FinalizeReplayFailure(applyRc, compensationRc);
-                }
-                const ErrorCode constraintRc =
-                    ValidateUniqueAndPrimaryKeyConstraintsForTouchedTables(
-                        tx.tx, false);
-                if (Failed(constraintRc))
-                {
-                    const ErrorCode compensationRc =
-                        ApplyJournalReverse(tx.tx, 0, forwardedCount, nullptr);
-                    restoreRedoStack();
-                    return FinalizeReplayFailure(constraintRc, compensationRc);
-                }
-                const ErrorCode foreignKeyReferenceRc =
-                    ValidateForeignKeyReferencesForTouchedTables(
-                        tx.tx, false);
-                if (Failed(foreignKeyReferenceRc))
-                {
-                    const ErrorCode compensationRc =
-                        ApplyJournalReverse(tx.tx, 0, forwardedCount, nullptr);
-                    restoreRedoStack();
-                    return FinalizeReplayFailure(foreignKeyReferenceRc,
-                                                 compensationRc);
-                }
-                const VersionId nextVersion = version_ + 1;
-                PersistTouchedRecords(tx.tx, nextVersion, false);
-                UpdateJournalTransactionStack(tx.txId, kStackUndo, static_cast<int>(undoStack_.size()));
-                SaveMetadata(nextVersion);
-                const ErrorCode commitRc = txn.Commit();
-                if (Failed(commitRc))
-                {
-                    const ErrorCode compensationRc =
-                        ApplyJournalReverse(tx.tx, 0, forwardedCount, nullptr);
-                    restoreRedoStack();
-                    return FinalizeReplayFailure(commitRc, compensationRc);
-                }
-
-                version_ = nextVersion;
-                UpdateTouchedVersions(tx.tx, version_, false);
-                undoStack_.push_back(tx);
-            } catch (...)
-            {
-                if (forwardedCount > 0)
-                {
-                    const ErrorCode compensationRc =
-                        ApplyJournalReverse(tx.tx, 0, forwardedCount, nullptr);
-                    restoreRedoStack();
-                    return FinalizeReplayFailure(SC_E_FAIL, compensationRc);
-                }
-                restoreRedoStack();
-                return SC_E_FAIL;
-            }
-
-            RefreshReferenceIndexState();
-            ClearReplayCompensationFailure();
-            NotifyObservers(BuildChangeSet(tx.tx, ChangeSource::Redo, version_));
-            return SC_OK;
+            SCHistoryMoveRequest request;
+            request.direction = SCHistoryMoveDirection::Redo;
+            SCHistoryMoveResult result;
+            return MoveHistory(request, &result);
         }
 
         ErrorCode SqliteDatabase::GetTable(const wchar_t* name, SCTablePtr& outTable)
@@ -449,6 +274,11 @@ namespace StableCore::Storage
             if (Failed(writableRc))
             {
                 return writableRc;
+            }
+            const ErrorCode transitionRc = EnsureWriteTransitionAllowed();
+            if (Failed(transitionRc))
+            {
+                return transitionRc;
             }
             if (name == nullptr || *name == L'\0')
             {
@@ -511,6 +341,11 @@ namespace StableCore::Storage
             if (Failed(writableRc))
             {
                 return writableRc;
+            }
+            const ErrorCode transitionRc = EnsureWriteTransitionAllowed();
+            if (Failed(transitionRc))
+            {
+                return transitionRc;
             }
             if (name == nullptr || *name == L'\0')
             {
@@ -737,6 +572,11 @@ namespace StableCore::Storage
             {
                 return writableRc;
             }
+            const ErrorCode transitionRc = EnsureWriteTransitionAllowed();
+            if (Failed(transitionRc))
+            {
+                return transitionRc;
+            }
             if (originalName == nullptr || newName == nullptr ||
                 *originalName == L'\0' || *newName == L'\0')
             {
@@ -923,6 +763,11 @@ namespace StableCore::Storage
 
         ErrorCode SqliteDatabase::ResetHistoryBaseline(SCBackupResult* outResult)
         {
+            const ErrorCode writableRc = EnsureWritable();
+            if (Failed(writableRc))
+            {
+                return writableRc;
+            }
             if (readOnly_)
             {
                 return SC_E_READ_ONLY_DATABASE;
@@ -930,6 +775,11 @@ namespace StableCore::Storage
             if (activeEdit_)
             {
                 return SC_E_WRITE_CONFLICT;
+            }
+            const ErrorCode transitionRc = EnsureWriteTransitionAllowed();
+            if (Failed(transitionRc))
+            {
+                return transitionRc;
             }
 
             std::size_t removedTransactionCount = 0;
@@ -954,7 +804,6 @@ namespace StableCore::Storage
                 baselineVersion_ = version_;
                 undoStack_.clear();
                 redoStack_.clear();
-                ClearReplayCompensationFailure();
             } catch (...)
             {
                 return SC_E_FAIL;
@@ -1018,6 +867,7 @@ namespace StableCore::Storage
             outState->baselineVersion = baselineVersion_;
             outState->undoCount = openMode_ == SCDatabaseOpenMode::NoHistory ? 0 : undoStack_.size();
             outState->redoCount = openMode_ == SCDatabaseOpenMode::NoHistory ? 0 : redoStack_.size();
+            outState->consistencyLost = replayCompensationFailureDetected_;
             return SC_OK;
         }
 
@@ -1788,6 +1638,522 @@ namespace StableCore::Storage
                 }
             }
             return false;
+        }
+
+        // ==== History Move helpers ====
+
+        SCHistoryPosition SqliteDatabase::CurrentHistoryPosition() const noexcept
+        {
+            SCHistoryPosition p;
+            if (!undoStack_.empty())
+            {
+                const auto& tx = undoStack_.back().tx;
+                p.commitId = tx.commitId;
+                p.committedVersion = tx.committedVersion;
+            }
+            else
+            {
+                p.commitId = 0;
+                p.committedVersion = baselineVersion_;
+            }
+            return p;
+        }
+
+        SCHistoryPosition SqliteDatabase::TargetHistoryPosition(
+            SCHistoryMoveDirection direction) const noexcept
+        {
+            if (direction == SCHistoryMoveDirection::Undo)
+            {
+                if (undoStack_.size() >= 2)
+                {
+                    const auto& tx = undoStack_[undoStack_.size() - 2].tx;
+                    return SCHistoryPosition{tx.commitId, tx.committedVersion};
+                }
+                return SCHistoryPosition{0, baselineVersion_};
+            }
+            else
+            {
+                if (!redoStack_.empty())
+                {
+                    const auto& tx = redoStack_.back().tx;
+                    return SCHistoryPosition{tx.commitId, tx.committedVersion};
+                }
+                return CurrentHistoryPosition();
+            }
+        }
+
+        void SqliteDatabase::FillHistoryMoveResultState(
+            SCHistoryMoveResult* outResult) const noexcept
+        {
+            outResult->previousPosition = CurrentHistoryPosition();
+            outResult->currentPosition = outResult->previousPosition;
+            outResult->databaseVersion = version_;
+            outResult->undoCount = undoStack_.size();
+            outResult->redoCount = redoStack_.size();
+        }
+
+        ErrorCode SqliteDatabase::EnsureWriteTransitionAllowed() const noexcept
+        {
+            if (publicStateTransitionActive_)
+            {
+                return SC_E_WRITE_CONFLICT;
+            }
+            return SC_OK;
+        }
+
+        // ==== History Move core ====
+
+        ErrorCode SqliteDatabase::ExecuteUndoCore(HistoryMoveCoreResult* outCoreResult)
+        {
+            outCoreResult->outcome = SCHistoryMoveOutcome::NotMoved;
+            outCoreResult->hasChangeSet = false;
+
+            SqlitePersistedJournalTransaction tx = undoStack_.back();
+            undoStack_.pop_back();
+            const auto restoreUndoStack = [&]() {
+                undoStack_.push_back(tx);
+            };
+
+            std::size_t reversedCount = 0;
+            try
+            {
+                SqliteTxn txn(db_);
+                const ErrorCode applyRc = ApplyJournalReverse(
+                    tx.tx, 0, tx.tx.entries.size(), &reversedCount);
+
+                // Fault injection: primary failure
+                if (journalFailureInjection_.operation == JournalFailureOperation::Undo &&
+                    reversedCount >= journalFailureInjection_.failPrimaryAfterAppliedEntries)
+                {
+                    const std::size_t beginIndex =
+                        tx.tx.entries.size() - reversedCount;
+                    std::size_t compensationApplied = 0;
+                    ErrorCode compensationRc =
+                        ApplyJournalForward(tx.tx,
+                                            beginIndex,
+                                            tx.tx.entries.size(),
+                                            &compensationApplied);
+                    // Fault injection: compensation failure
+                    if (compensationRc == SC_OK &&
+                        compensationApplied >= journalFailureInjection_.failCompensationAfterAppliedEntries)
+                    {
+                        compensationRc = SC_E_FAIL;
+                    }
+                    restoreUndoStack();
+                    const ErrorCode finalized = FinalizeReplayFailure(SC_E_FAIL, compensationRc);
+                    if (Failed(compensationRc))
+                    {
+                        outCoreResult->outcome = SCHistoryMoveOutcome::ConsistencyLost;
+                    }
+                    return finalized;
+                }
+
+                if (Failed(applyRc))
+                {
+                    const std::size_t beginIndex =
+                        tx.tx.entries.size() - reversedCount;
+                    const ErrorCode compensationRc =
+                        ApplyJournalForward(tx.tx,
+                                            beginIndex,
+                                            tx.tx.entries.size(),
+                                            nullptr);
+                    restoreUndoStack();
+                    const ErrorCode finalized = FinalizeReplayFailure(applyRc, compensationRc);
+                    if (Failed(compensationRc))
+                    {
+                        outCoreResult->outcome = SCHistoryMoveOutcome::ConsistencyLost;
+                    }
+                    return finalized;
+                }
+                const ErrorCode constraintRc =
+                    ValidateUniqueAndPrimaryKeyConstraintsForTouchedTables(
+                        tx.tx, true);
+                if (Failed(constraintRc))
+                {
+                    const std::size_t beginIndex =
+                        tx.tx.entries.size() - reversedCount;
+                    const ErrorCode compensationRc =
+                        ApplyJournalForward(tx.tx,
+                                            beginIndex,
+                                            tx.tx.entries.size(),
+                                            nullptr);
+                    restoreUndoStack();
+                    const ErrorCode finalized = FinalizeReplayFailure(constraintRc, compensationRc);
+                    if (Failed(compensationRc))
+                    {
+                        outCoreResult->outcome = SCHistoryMoveOutcome::ConsistencyLost;
+                    }
+                    return finalized;
+                }
+                const ErrorCode foreignKeyReferenceRc =
+                    ValidateForeignKeyReferencesForTouchedTables(
+                        tx.tx, true);
+                if (Failed(foreignKeyReferenceRc))
+                {
+                    const std::size_t beginIndex =
+                        tx.tx.entries.size() - reversedCount;
+                    const ErrorCode compensationRc =
+                        ApplyJournalForward(tx.tx,
+                                            beginIndex,
+                                            tx.tx.entries.size(),
+                                            nullptr);
+                    restoreUndoStack();
+                    const ErrorCode finalized = FinalizeReplayFailure(foreignKeyReferenceRc,
+                                                 compensationRc);
+                    if (Failed(compensationRc))
+                    {
+                        outCoreResult->outcome = SCHistoryMoveOutcome::ConsistencyLost;
+                    }
+                    return finalized;
+                }
+                const VersionId nextVersion = version_ + 1;
+                PersistTouchedRecords(tx.tx, nextVersion, true);
+                UpdateJournalTransactionStack(tx.txId, kStackRedo, static_cast<int>(redoStack_.size()));
+                SaveMetadata(nextVersion);
+                const ErrorCode commitRc = txn.Commit();
+                if (Failed(commitRc))
+                {
+                    const std::size_t beginIndex =
+                        tx.tx.entries.size() - reversedCount;
+                    const ErrorCode compensationRc =
+                        ApplyJournalForward(tx.tx,
+                                            beginIndex,
+                                            tx.tx.entries.size(),
+                                            nullptr);
+                    restoreUndoStack();
+                    const ErrorCode finalized = FinalizeReplayFailure(commitRc, compensationRc);
+                    if (Failed(compensationRc))
+                    {
+                        outCoreResult->outcome = SCHistoryMoveOutcome::ConsistencyLost;
+                    }
+                    return finalized;
+                }
+
+                version_ = nextVersion;
+                UpdateTouchedVersions(tx.tx, version_, true);
+                redoStack_.push_back(tx);
+            } catch (...)
+            {
+                if (reversedCount > 0)
+                {
+                    const std::size_t beginIndex =
+                        tx.tx.entries.size() - reversedCount;
+                    const ErrorCode compensationRc =
+                        ApplyJournalForward(tx.tx,
+                                            beginIndex,
+                                            tx.tx.entries.size(),
+                                            nullptr);
+                    restoreUndoStack();
+                    const ErrorCode finalized = FinalizeReplayFailure(SC_E_FAIL, compensationRc);
+                    if (Failed(compensationRc))
+                    {
+                        outCoreResult->outcome = SCHistoryMoveOutcome::ConsistencyLost;
+                    }
+                    return finalized;
+                }
+                restoreUndoStack();
+                return SC_E_FAIL;
+            }
+
+            RefreshReferenceIndexState();
+
+            outCoreResult->outcome = SCHistoryMoveOutcome::Moved;
+            outCoreResult->hasChangeSet = true;
+            outCoreResult->changeSet = BuildChangeSet(tx.tx, ChangeSource::Undo, version_);
+            return SC_OK;
+        }
+
+        ErrorCode SqliteDatabase::ExecuteRedoCore(HistoryMoveCoreResult* outCoreResult)
+        {
+            outCoreResult->outcome = SCHistoryMoveOutcome::NotMoved;
+            outCoreResult->hasChangeSet = false;
+
+            SqlitePersistedJournalTransaction tx = redoStack_.back();
+            redoStack_.pop_back();
+            const auto restoreRedoStack = [&]() {
+                redoStack_.push_back(tx);
+            };
+
+            std::size_t forwardedCount = 0;
+            try
+            {
+                SqliteTxn txn(db_);
+                const ErrorCode applyRc = ApplyJournalForward(
+                    tx.tx, 0, tx.tx.entries.size(), &forwardedCount);
+
+                // Fault injection: primary failure
+                if (journalFailureInjection_.operation == JournalFailureOperation::Redo &&
+                    forwardedCount >= journalFailureInjection_.failPrimaryAfterAppliedEntries)
+                {
+                    std::size_t compensationApplied = 0;
+                    ErrorCode compensationRc =
+                        ApplyJournalReverse(tx.tx, 0, forwardedCount, &compensationApplied);
+                    // Fault injection: compensation failure
+                    if (compensationRc == SC_OK &&
+                        compensationApplied >= journalFailureInjection_.failCompensationAfterAppliedEntries)
+                    {
+                        compensationRc = SC_E_FAIL;
+                    }
+                    restoreRedoStack();
+                    const ErrorCode finalized = FinalizeReplayFailure(SC_E_FAIL, compensationRc);
+                    if (Failed(compensationRc))
+                    {
+                        outCoreResult->outcome = SCHistoryMoveOutcome::ConsistencyLost;
+                    }
+                    return finalized;
+                }
+
+                if (Failed(applyRc))
+                {
+                    const ErrorCode compensationRc =
+                        ApplyJournalReverse(tx.tx, 0, forwardedCount, nullptr);
+                    restoreRedoStack();
+                    const ErrorCode finalized = FinalizeReplayFailure(applyRc, compensationRc);
+                    if (Failed(compensationRc))
+                    {
+                        outCoreResult->outcome = SCHistoryMoveOutcome::ConsistencyLost;
+                    }
+                    return finalized;
+                }
+                const ErrorCode constraintRc =
+                    ValidateUniqueAndPrimaryKeyConstraintsForTouchedTables(
+                        tx.tx, false);
+                if (Failed(constraintRc))
+                {
+                    const ErrorCode compensationRc =
+                        ApplyJournalReverse(tx.tx, 0, forwardedCount, nullptr);
+                    restoreRedoStack();
+                    const ErrorCode finalized = FinalizeReplayFailure(constraintRc, compensationRc);
+                    if (Failed(compensationRc))
+                    {
+                        outCoreResult->outcome = SCHistoryMoveOutcome::ConsistencyLost;
+                    }
+                    return finalized;
+                }
+                const ErrorCode foreignKeyReferenceRc =
+                    ValidateForeignKeyReferencesForTouchedTables(
+                        tx.tx, false);
+                if (Failed(foreignKeyReferenceRc))
+                {
+                    const ErrorCode compensationRc =
+                        ApplyJournalReverse(tx.tx, 0, forwardedCount, nullptr);
+                    restoreRedoStack();
+                    const ErrorCode finalized = FinalizeReplayFailure(foreignKeyReferenceRc,
+                                                 compensationRc);
+                    if (Failed(compensationRc))
+                    {
+                        outCoreResult->outcome = SCHistoryMoveOutcome::ConsistencyLost;
+                    }
+                    return finalized;
+                }
+                const VersionId nextVersion = version_ + 1;
+                PersistTouchedRecords(tx.tx, nextVersion, false);
+                UpdateJournalTransactionStack(tx.txId, kStackUndo, static_cast<int>(undoStack_.size()));
+                SaveMetadata(nextVersion);
+                const ErrorCode commitRc = txn.Commit();
+                if (Failed(commitRc))
+                {
+                    const ErrorCode compensationRc =
+                        ApplyJournalReverse(tx.tx, 0, forwardedCount, nullptr);
+                    restoreRedoStack();
+                    const ErrorCode finalized = FinalizeReplayFailure(commitRc, compensationRc);
+                    if (Failed(compensationRc))
+                    {
+                        outCoreResult->outcome = SCHistoryMoveOutcome::ConsistencyLost;
+                    }
+                    return finalized;
+                }
+
+                version_ = nextVersion;
+                UpdateTouchedVersions(tx.tx, version_, false);
+                undoStack_.push_back(tx);
+            } catch (...)
+            {
+                if (forwardedCount > 0)
+                {
+                    const ErrorCode compensationRc =
+                        ApplyJournalReverse(tx.tx, 0, forwardedCount, nullptr);
+                    restoreRedoStack();
+                    const ErrorCode finalized = FinalizeReplayFailure(SC_E_FAIL, compensationRc);
+                    if (Failed(compensationRc))
+                    {
+                        outCoreResult->outcome = SCHistoryMoveOutcome::ConsistencyLost;
+                    }
+                    return finalized;
+                }
+                restoreRedoStack();
+                return SC_E_FAIL;
+            }
+
+            RefreshReferenceIndexState();
+
+            outCoreResult->outcome = SCHistoryMoveOutcome::Moved;
+            outCoreResult->hasChangeSet = true;
+            outCoreResult->changeSet = BuildChangeSet(tx.tx, ChangeSource::Redo, version_);
+            return SC_OK;
+        }
+
+        ErrorCode SqliteDatabase::MoveHistory(const SCHistoryMoveRequest& request,
+                                              SCHistoryMoveResult* outResult)
+        {
+            if (outResult == nullptr)
+            {
+                return SC_E_POINTER;
+            }
+            *outResult = SCHistoryMoveResult{};
+
+            // Validate direction
+            if (request.direction != SCHistoryMoveDirection::Undo &&
+                request.direction != SCHistoryMoveDirection::Redo)
+            {
+                return SC_E_INVALIDARG;
+            }
+
+            // Ensure writable + no reentry
+            const ErrorCode writableRc = EnsureWritable();
+            if (Failed(writableRc))
+            {
+                return writableRc;
+            }
+            ClearConstraintViolation();
+            const ErrorCode transitionRc = EnsureWriteTransitionAllowed();
+            if (Failed(transitionRc))
+            {
+                return transitionRc;
+            }
+            if (activeEdit_)
+            {
+                return SC_E_WRITE_CONFLICT;
+            }
+
+            // Compute positions
+            FillHistoryMoveResultState(outResult);
+            const SCHistoryPosition expectedTarget =
+                TargetHistoryPosition(request.direction);
+            outResult->targetPosition = expectedTarget;
+
+            // Check stack empty
+            if (request.direction == SCHistoryMoveDirection::Undo && undoStack_.empty())
+            {
+                return SC_E_UNDO_STACK_EMPTY;
+            }
+            if (request.direction == SCHistoryMoveDirection::Redo && redoStack_.empty())
+            {
+                return SC_E_REDO_STACK_EMPTY;
+            }
+
+            // Match check: expectedCurrent
+            const auto& expectedCurrent = request.expectedCurrent;
+            if (expectedCurrent.commitIdEnabled)
+            {
+                if (expectedCurrent.position.commitId != outResult->previousPosition.commitId)
+                {
+                    return SC_E_HISTORY_POSITION_MISMATCH;
+                }
+            }
+            if (expectedCurrent.committedVersionEnabled)
+            {
+                if (expectedCurrent.position.committedVersion != outResult->previousPosition.committedVersion)
+                {
+                    return SC_E_HISTORY_POSITION_MISMATCH;
+                }
+            }
+
+            // Match check: expectedTarget
+            const auto& expectedTargetReq = request.expectedTarget;
+            if (expectedTargetReq.commitIdEnabled)
+            {
+                if (expectedTargetReq.position.commitId != expectedTarget.commitId)
+                {
+                    return SC_E_HISTORY_POSITION_MISMATCH;
+                }
+            }
+            if (expectedTargetReq.committedVersionEnabled)
+            {
+                if (expectedTargetReq.position.committedVersion != expectedTarget.committedVersion)
+                {
+                    return SC_E_HISTORY_POSITION_MISMATCH;
+                }
+            }
+
+            // Save candidate item before moving
+            SCEditLogEntry candidateItem;
+            if (request.direction == SCHistoryMoveDirection::Undo)
+            {
+                const auto& backTx = undoStack_.back().tx;
+                candidateItem = SCEditLogEntry{backTx.commitId, backTx.committedVersion,
+                                                SCEditLogActionKind::Commit, backTx.actionName, L"", 0};
+            }
+            else
+            {
+                const auto& backTx = redoStack_.back().tx;
+                candidateItem = SCEditLogEntry{backTx.commitId, backTx.committedVersion,
+                                                SCEditLogActionKind::Commit, backTx.actionName, L"", 0};
+            }
+
+            // Activate reentry protection
+            publicStateTransitionActive_ = true;
+            struct Guard {
+                SqliteDatabase* db;
+                ~Guard() { db->publicStateTransitionActive_ = false; }
+            } guard{this};
+
+            // Execute core
+            HistoryMoveCoreResult coreResult;
+            ErrorCode coreRc;
+            if (request.direction == SCHistoryMoveDirection::Undo)
+            {
+                coreRc = ExecuteUndoCore(&coreResult);
+            }
+            else
+            {
+                coreRc = ExecuteRedoCore(&coreResult);
+            }
+
+            // Update result state
+            outResult->outcome = coreResult.outcome;
+            outResult->undoCount = undoStack_.size();
+            outResult->redoCount = redoStack_.size();
+            outResult->databaseVersion = version_;
+
+            if (coreResult.outcome == SCHistoryMoveOutcome::Moved ||
+                coreResult.outcome == SCHistoryMoveOutcome::ConsistencyLost)
+            {
+                outResult->movedItem = candidateItem;
+                outResult->currentPosition = CurrentHistoryPosition();
+            }
+
+            if (coreResult.outcome == SCHistoryMoveOutcome::Moved)
+            {
+                if (coreResult.hasChangeSet)
+                {
+                    NotifyObservers(coreResult.changeSet);
+                }
+                else
+                {
+                    // Internal inconsistency: Moved without ChangeSet
+                    replayCompensationFailureDetected_ = true;
+                    outResult->outcome = SCHistoryMoveOutcome::ConsistencyLost;
+                    outResult->currentPosition = CurrentHistoryPosition();
+                    return SC_E_FAIL;
+                }
+                return coreRc;
+            }
+
+            return coreRc;
+        }
+
+        // ==== Fault injection for testing ====
+
+        void SqliteDatabase::SetJournalFailureInjectionForTesting(
+            const JournalFailureInjection& injection)
+        {
+            journalFailureInjection_ = injection;
+        }
+
+        void SqliteDatabase::ClearJournalFailureInjectionForTesting() noexcept
+        {
+            journalFailureInjection_ = JournalFailureInjection{};
         }
 
 } // namespace StableCore::Storage

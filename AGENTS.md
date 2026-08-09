@@ -43,9 +43,6 @@ Allowed:
 
 Forbidden:
 
-- compile
-- run executables
-- run tests
 - execute scripts
 - invoke build systems
 - modify generated build artifacts

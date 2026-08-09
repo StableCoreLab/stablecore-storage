@@ -563,6 +563,16 @@ namespace StableCore::Storage
 
         ErrorCode SqliteDatabase::BackfillSchemaMetadataV3()
         {
+            const ErrorCode writableRc = EnsureWritable();
+            if (Failed(writableRc))
+            {
+                return writableRc;
+            }
+            const ErrorCode transitionRc = EnsureWriteTransitionAllowed();
+            if (Failed(transitionRc))
+            {
+                return transitionRc;
+            }
             EnsureSchemaMetadataTables();
 
             for (const auto& [_, tableRef] : tables_)
@@ -1149,10 +1159,23 @@ namespace StableCore::Storage
                 return finish(SC_E_READ_ONLY_DATABASE);
             }
 
+            const ErrorCode transitionRc = EnsureWriteTransitionAllowed();
+            if (Failed(transitionRc))
+            {
+                return finish(transitionRc);
+            }
+
             if (!cleanShutdown_)
             {
                 result.status = SCUpgradeStatus::Unsupported;
                 result.failureReason = L"Upgrade is not allowed after an unclean shutdown.";
+                return finish(SC_E_WRITE_CONFLICT);
+            }
+
+            if (replayCompensationFailureDetected_)
+            {
+                result.status = SCUpgradeStatus::Unsupported;
+                result.failureReason = L"Upgrade is not allowed after a history synchronization failure.";
                 return finish(SC_E_WRITE_CONFLICT);
             }
 
@@ -1456,6 +1479,11 @@ namespace StableCore::Storage
             {
                 return writableRc;
             }
+            const ErrorCode transitionRc = EnsureWriteTransitionAllowed();
+            if (Failed(transitionRc))
+            {
+                return transitionRc;
+            }
             if (outSession == nullptr)
             {
                 return SC_E_POINTER;
@@ -1518,6 +1546,11 @@ namespace StableCore::Storage
             if (Failed(writableRc))
             {
                 return writableRc;
+            }
+            const ErrorCode transitionRc = EnsureWriteTransitionAllowed();
+            if (Failed(transitionRc))
+            {
+                return transitionRc;
             }
             if (session == nullptr)
             {
@@ -1647,6 +1680,11 @@ namespace StableCore::Storage
             {
                 return writableRc;
             }
+            const ErrorCode transitionRc = EnsureWriteTransitionAllowed();
+            if (Failed(transitionRc))
+            {
+                return transitionRc;
+            }
             if (!commit.confirmed)
             {
                 return SC_E_INVALIDARG;
@@ -1691,6 +1729,11 @@ namespace StableCore::Storage
             {
                 return writableRc;
             }
+            const ErrorCode transitionRc = EnsureWriteTransitionAllowed();
+            if (Failed(transitionRc))
+            {
+                return transitionRc;
+            }
 
             const ErrorCode storeRc = EnsureImportSessionStore();
             if (Failed(storeRc))
@@ -1705,7 +1748,15 @@ namespace StableCore::Storage
 
         ErrorCode SqliteDatabase::EnsureWritable() const
         {
-            return readOnly_ ? SC_E_READ_ONLY_DATABASE : SC_OK;
+            if (readOnly_)
+            {
+                return SC_E_READ_ONLY_DATABASE;
+            }
+            if (replayCompensationFailureDetected_)
+            {
+                return SC_E_WRITE_CONFLICT;
+            }
+            return SC_OK;
         }
 
         ErrorCode SqliteDatabase::CollectDiagnostics(SCStorageHealthReport* outReport) const
@@ -1769,6 +1820,16 @@ namespace StableCore::Storage
 
         ErrorCode SqliteDatabase::RebuildQueryIndex()
         {
+            const ErrorCode writableRc = EnsureWritable();
+            if (Failed(writableRc))
+            {
+                return writableRc;
+            }
+            const ErrorCode transitionRc = EnsureWriteTransitionAllowed();
+            if (Failed(transitionRc))
+            {
+                return transitionRc;
+            }
             if (activeEdit_)
             {
                 return SC_E_WRITE_CONFLICT;

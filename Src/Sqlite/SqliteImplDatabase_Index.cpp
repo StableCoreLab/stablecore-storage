@@ -1759,6 +1759,12 @@ namespace StableCore::Storage
 
         ErrorCode SqliteDatabase::RebuildReferenceIndexes()
         {
+            const ErrorCode writableRc = EnsureWritable();
+            if (Failed(writableRc))
+            {
+                return writableRc;
+            }
+
             if (readOnly_)
             {
                 return SC_E_READ_ONLY_DATABASE;
@@ -2866,6 +2872,11 @@ namespace StableCore::Storage
 
         ErrorCode SqliteDatabase::ClearColumnValues(ISCTable* table, const wchar_t* name)
         {
+            const ErrorCode writableRc = EnsureWritable();
+            if (Failed(writableRc))
+            {
+                return writableRc;
+            }
             if (name == nullptr)
             {
                 return SC_E_INVALIDARG;
@@ -3911,11 +3922,6 @@ namespace StableCore::Storage
 
             RefreshReferenceIndexState();
             return primaryRc;
-        }
-
-        void SqliteDatabase::ClearReplayCompensationFailure() noexcept
-        {
-            replayCompensationFailureDetected_ = false;
         }
 
         ErrorCode SqliteDatabase::ApplyEntry(const JournalEntry& entry, bool reverse)

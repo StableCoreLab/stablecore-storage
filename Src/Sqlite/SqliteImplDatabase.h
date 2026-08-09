@@ -161,6 +161,8 @@ public:
     ErrorCode Rollback(ISCEditSession* edit) override;
     ErrorCode Undo() override;
     ErrorCode Redo() override;
+    ErrorCode MoveHistory(const SCHistoryMoveRequest& request,
+                          SCHistoryMoveResult* outResult) override;
     ErrorCode GetTableCount(std::int32_t* outCount) override;
     ErrorCode GetTableName(std::int32_t index, std::wstring* outName) override;
     ErrorCode GetTable(const wchar_t* name, SCTablePtr& outTable) override;
@@ -236,6 +238,24 @@ public:
     ErrorCode PersistAddedColumn(SqliteSchema* schema, const SCColumnDef& def);
     ErrorCode PersistUpdatedColumn(SqliteSchema* schema, const SCColumnDef& def);
     ErrorCode PersistRemovedColumn(SqliteSchema* schema, const wchar_t* columnName);
+
+    // ==== Internal test fault injection (non-SDK) ====
+    enum class JournalFailureOperation
+    {
+        Rollback,
+        Undo,
+        Redo,
+    };
+
+    struct JournalFailureInjection
+    {
+        JournalFailureOperation operation{JournalFailureOperation::Undo};
+        std::size_t failPrimaryAfterAppliedEntries{~std::size_t{0}};
+        std::size_t failCompensationAfterAppliedEntries{~std::size_t{0}};
+    };
+
+    void SetJournalFailureInjectionForTesting(const JournalFailureInjection& injection);
+    void ClearJournalFailureInjectionForTesting() noexcept;
 
 private:
     struct JournalLookup
@@ -452,7 +472,6 @@ private:
                                   std::size_t endIndex,
                                   std::size_t* outAppliedCount = nullptr);
     ErrorCode FinalizeReplayFailure(ErrorCode primaryRc, ErrorCode compensationRc);
-    void ClearReplayCompensationFailure() noexcept;
     ErrorCode ApplyEntry(const JournalEntry& entry, bool reverse);
     ErrorCode ApplySchemaEntry(const JournalEntry& entry, bool reverse);
     void UpdateTouchedVersions(const JournalTransaction& tx,
@@ -474,6 +493,21 @@ private:
     void ReloadColumnValuesFromStorage(SqliteTable* table, const wchar_t* columnName);
     std::wstring SerializeImportSession(const SCImportStagingArea& session) const;
     ErrorCode DeserializeImportSession(const std::wstring& payload, SCImportStagingArea* outSession) const;
+
+    // ==== History Move core ====
+    struct HistoryMoveCoreResult
+    {
+        SCHistoryMoveOutcome outcome{SCHistoryMoveOutcome::NotMoved};
+        bool hasChangeSet{false};
+        SCChangeSet changeSet;
+    };
+
+    SCHistoryPosition CurrentHistoryPosition() const noexcept;
+    SCHistoryPosition TargetHistoryPosition(SCHistoryMoveDirection direction) const noexcept;
+    void FillHistoryMoveResultState(SCHistoryMoveResult* outResult) const noexcept;
+    ErrorCode ExecuteUndoCore(HistoryMoveCoreResult* outCoreResult);
+    ErrorCode ExecuteRedoCore(HistoryMoveCoreResult* outCoreResult);
+    ErrorCode EnsureWriteTransitionAllowed() const noexcept;
 
     std::wstring path_;
     SqliteDb db_;
@@ -508,6 +542,8 @@ private:
     std::vector<SqlitePersistedJournalTransaction> undoStack_;
     std::vector<SqlitePersistedJournalTransaction> redoStack_;
     std::unordered_map<std::wstring, std::int64_t> queryIndexRowIdsByTableAndName_;
+    mutable bool publicStateTransitionActive_{false};
+    JournalFailureInjection journalFailureInjection_;
 };
 
 } // namespace StableCore::Storage

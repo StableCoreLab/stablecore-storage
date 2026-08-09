@@ -330,6 +330,8 @@ if (SCSTORAGE_BUILD_TESTS)
     target_include_directories(${SCSTORAGE_TESTS_TARGET}
         PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/Tests
+            ${CMAKE_CURRENT_SOURCE_DIR}/Src
+            ${CMAKE_CURRENT_SOURCE_DIR}/Src/Query
     )
 
     target_link_libraries(${SCSTORAGE_TESTS_TARGET}
