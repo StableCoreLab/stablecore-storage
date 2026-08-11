@@ -30,6 +30,7 @@
 #include <SCTreeGrid/SCTreeGridCtrl.h>
 
 #include <functional>
+#include <optional>
 #include <vector>
 
 #include "SCBatch.h"
@@ -718,15 +719,21 @@ namespace StableCore::Storage::Editor
                         : QStringLiteral("Selected table: ") +
                               currentTableName);
             });
-        connect(session_, &SCDatabaseSession::RecordsChanged, this, [this]() {
-            UpdateGridSummary();
-            RefreshCurrentRecordPanel();
-            RefreshRelationPanel();
-            RefreshOverviewPanels();
-            UpdateDatabaseStatusBar();
-            RefreshWorkspaceHeader();
-            RefreshWorkspacePages();
-        });
+        // Queued: RecordsChanged can be emitted from inside a grid callback
+        // (for example OnCommitEditText). Rebuilding the grid there would
+        // re-enter SCTreeGrid while it is still committing an editor.
+        connect(
+            session_, &SCDatabaseSession::RecordsChanged, this,
+            [this]() {
+                RefreshGridData();
+                RefreshCurrentRecordPanel();
+                RefreshRelationPanel();
+                RefreshOverviewPanels();
+                UpdateDatabaseStatusBar();
+                RefreshWorkspaceHeader();
+                RefreshWorkspacePages();
+            },
+            Qt::QueuedConnection);
     }
 
     void SCDatabaseEditorMainWindow::BuildUi()
@@ -782,9 +789,11 @@ namespace StableCore::Storage::Editor
         tableLayout->addLayout(filterLayout);
 
         dataTable_ = new SCTreeGrid(tablePage_);
-        dataTable_->SetSelectionMode(SCSelectionMode::Row);
+        dataTable_->SetSelectionMode(SCSelectionMode::Cell);
         dataTable_->SetEnterKeyBehavior(SCEnterKeyBehavior::BeginEdit);
-        dataTable_->setContextMenuPolicy(Qt::CustomContextMenu);
+        // Policy lives on the viewport so the delivered position is already in
+        // viewport coordinates, which is what HitTestCell expects.
+        dataTable_->viewport()->setContextMenuPolicy(Qt::CustomContextMenu);
         tableLayout->addWidget(dataTable_, 1);
 
         workspaceStack_->addWidget(tablePage_);
@@ -800,7 +809,8 @@ namespace StableCore::Storage::Editor
                 &SCDatabaseEditorMainWindow::OnFilterTextChanged);
         connect(clearFilterButton, &QPushButton::clicked, filterEdit_,
                 &QLineEdit::clear);
-        connect(dataTable_, &QWidget::customContextMenuRequested, this,
+        connect(dataTable_->viewport(), &QWidget::customContextMenuRequested,
+                this,
                 &SCDatabaseEditorMainWindow::OnGridContextMenuRequested);
         connect(workspaceModeBar_, &QTabBar::currentChanged, this,
                 &SCDatabaseEditorMainWindow::OnWorkspaceModeChanged);
@@ -2040,13 +2050,17 @@ namespace StableCore::Storage::Editor
 
     void SCDatabaseEditorMainWindow::DeleteSelectedRecord()
     {
-        const QVector<int> selected = dataTable_->SelectedRows();
-        if (selected.isEmpty())
+        if (dataTable_ == nullptr)
         {
             return;
         }
 
-        const int row = selected.first();
+        const int row = dataTable_->CurrentRow();
+        if (row < 0)
+        {
+            return;
+        }
+
         const sc::RecordId recordId = RecordIdAt(row);
         if (recordId == 0)
         {
@@ -2148,25 +2162,21 @@ namespace StableCore::Storage::Editor
             return;
         }
 
-        // Map click position to viewport and select the cell under cursor.
-        // SCTreeGrid defaults: header height 28, row height 24.
-        const QPoint viewportPos = dataTable_->viewport()->mapFrom(dataTable_, pos);
-        constexpr int kHeaderHeight = 28;
-        constexpr int kRowHeight = 24;
-        const int row = (viewportPos.y() - kHeaderHeight) / kRowHeight;
-        if (row >= 0 && row < static_cast<int>(visibleRows_.size()))
+        // pos is already in viewport coordinates, which is what HitTestCell
+        // requires. y() is the data row, x() the column.
+        if (const std::optional<QPoint> hitCell = dataTable_->HitTestCell(pos))
         {
-            dataTable_->SetCurrentCell(row, 0);
+            dataTable_->SetCurrentCell(hitCell->y(), hitCell->x());
         }
         else
         {
-            currentRow_ = -1;
-            currentColumn_ = -1;
+            dataTable_->ClearCurrentCell();
         }
 
         QMenu menu(dataTable_);
         const bool canEditRows =
             session_->IsOpen() && !session_->CurrentTableName().isEmpty();
+        const int deletionRow = dataTable_->CurrentRow();
         QAction* addAction =
             menu.addAction(QStringLiteral("Add Record"), this,
                            &SCDatabaseEditorMainWindow::AddRecord);
@@ -2174,9 +2184,8 @@ namespace StableCore::Storage::Editor
         QAction* deleteAction =
             menu.addAction(QStringLiteral("Delete Record"), this,
                            &SCDatabaseEditorMainWindow::DeleteSelectedRecord);
-        deleteAction->setEnabled(
-            canEditRows && !dataTable_->SelectedRows().isEmpty());
-        menu.exec(dataTable_->mapToGlobal(pos));
+        deleteAction->setEnabled(canEditRows && RecordIdAt(deletionRow) != 0);
+        menu.exec(dataTable_->viewport()->mapToGlobal(pos));
     }
 
     void SCDatabaseEditorMainWindow::UndoLastAction()
@@ -2861,10 +2870,12 @@ namespace StableCore::Storage::Editor
             return;
         }
 
-        dataTable_->OnCurrentCellChanged = [this](int row, int col, int, int) {
-            currentRow_ = row;
-            currentColumn_ = col;
-            OnGridCellSelected(row, col);
+        // OnSelectionChanged also covers clearing and refresh invalidation, so
+        // it subsumes OnCurrentCellChanged for tracking the current cell.
+        dataTable_->OnSelectionChanged = [this]() {
+            currentRow_ = dataTable_->CurrentRow();
+            currentColumn_ = dataTable_->CurrentColumn();
+            OnGridCellSelected(currentRow_, currentColumn_);
         };
 
         dataTable_->OnCommitEditText = [this](SCEditorContext& context) {
@@ -2892,7 +2903,8 @@ namespace StableCore::Storage::Editor
                 return false;
             }
 
-            RefreshGridData();
+            // The grid rebuild is driven by RecordsChanged, which SetCellValue
+            // emits; refreshing here too would rebuild twice per edit.
             return true;
         };
 
@@ -2920,6 +2932,8 @@ namespace StableCore::Storage::Editor
                 return data;
             };
             dataTable_->Refresh();
+            currentRow_ = dataTable_->CurrentRow();
+            currentColumn_ = dataTable_->CurrentColumn();
             UpdateGridSummary();
             return;
         }
@@ -3073,6 +3087,8 @@ namespace StableCore::Storage::Editor
         };
 
         dataTable_->Refresh();
+        currentRow_ = dataTable_->CurrentRow();
+        currentColumn_ = dataTable_->CurrentColumn();
         UpdateGridSummary();
         update();
     }

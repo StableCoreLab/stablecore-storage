@@ -390,6 +390,8 @@ if (SCSTORAGE_BUILD_TESTS)
             Tests/DatabaseEditorSchemaTableTests.cpp
             Tools/DatabaseEditor/SCDatabaseSession.cpp
             Tools/DatabaseEditor/SCDatabaseSession.h
+            Tools/DatabaseEditor/SCRecordTableModel.cpp
+            Tools/DatabaseEditor/SCRecordTableModel.h
             Tools/DatabaseEditor/SCSchemaTableImport.cpp
             Tools/DatabaseEditor/SCSchemaTableImport.h
             Tools/DatabaseEditor/SCSchemaTableGenerator.cpp
@@ -417,6 +419,8 @@ if (SCSTORAGE_BUILD_TESTS)
             Tests/DatabaseEditorSchemaTableTests.cpp
             Tools/DatabaseEditor/SCDatabaseSession.cpp
             Tools/DatabaseEditor/SCDatabaseSession.h
+            Tools/DatabaseEditor/SCRecordTableModel.cpp
+            Tools/DatabaseEditor/SCRecordTableModel.h
             Tools/DatabaseEditor/SCSchemaTableImport.cpp
             Tools/DatabaseEditor/SCSchemaTableImport.h
             Tools/DatabaseEditor/SCSchemaTableGenerator.cpp

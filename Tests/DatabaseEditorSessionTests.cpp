@@ -8,6 +8,7 @@
 
 #include "SCBatch.h"
 #include "SCDatabaseSession.h"
+#include "SCRecordTableModel.h"
 #include "SCSchemaTableImport.h"
 
 namespace sc = StableCore::Storage;
@@ -1683,6 +1684,36 @@ TEST(DatabaseEditorSession, AddAndDeleteRecordStayOnCurrentTable)
     ASSERT_EQ(session.CurrentTable()->EnumerateRecords(cursor), sc::SC_OK);
     ASSERT_EQ(cursor->Next(record), sc::SC_OK);
     EXPECT_FALSE(static_cast<bool>(record));
+}
+
+TEST(DatabaseEditorSession, DeleteRecordRefreshesRecordTableModelRowCount)
+{
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_DbEditor_DeleteRecordRefreshesModel.sqlite");
+
+    editor::SCDatabaseSession session;
+    QString error;
+
+    ASSERT_TRUE(session.CreateDatabase(QString::fromStdWString(dbPath.wstring()), &error)) << error.toStdString();
+    ASSERT_TRUE(session.CreateTable(QStringLiteral("Beam"), &error)) << error.toStdString();
+    ASSERT_TRUE(session.AddColumn(MakeIntColumn(L"Width"), &error)) << error.toStdString();
+    ASSERT_TRUE(session.AddRecord(&error)) << error.toStdString();
+    ASSERT_TRUE(session.AddRecord(&error)) << error.toStdString();
+
+    ASSERT_TRUE(session.SelectTable(QStringLiteral("Beam"), &error)) << error.toStdString();
+
+    editor::SCRecordTableModel model(&session);
+    model.Refresh();
+    EXPECT_EQ(model.RowCountValue(), 2);
+
+    ASSERT_TRUE(session.CurrentTable() != nullptr);
+    sc::SCRecordCursorPtr cursor;
+    ASSERT_EQ(session.CurrentTable()->EnumerateRecords(cursor), sc::SC_OK);
+    sc::SCRecordPtr record;
+    ASSERT_EQ(cursor->Next(record), sc::SC_OK);
+    ASSERT_TRUE(static_cast<bool>(record));
+
+    ASSERT_TRUE(session.DeleteRecord(record->GetId(), &error)) << error.toStdString();
+    EXPECT_EQ(model.RowCountValue(), 1);
 }
 
 TEST(DatabaseEditorSession, RemoveColumnParticipatesInUndoRedo)
