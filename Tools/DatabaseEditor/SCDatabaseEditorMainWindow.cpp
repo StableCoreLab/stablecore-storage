@@ -29,6 +29,7 @@
 
 #include <SCTreeGrid/SCTreeGridCtrl.h>
 
+#include <algorithm>
 #include <functional>
 #include <optional>
 #include <vector>
@@ -791,9 +792,9 @@ namespace StableCore::Storage::Editor
         dataTable_ = new SCTreeGrid(tablePage_);
         dataTable_->SetSelectionMode(SCSelectionMode::Cell);
         dataTable_->SetEnterKeyBehavior(SCEnterKeyBehavior::BeginEdit);
-        // Policy lives on the viewport so the delivered position is already in
-        // viewport coordinates, which is what HitTestCell expects.
-        dataTable_->viewport()->setContextMenuPolicy(Qt::CustomContextMenu);
+        // Leave contextMenuPolicy at Qt::DefaultContextMenu: setting
+        // Qt::CustomContextMenu would silently disable
+        // SCTreeGrid::OnContextMenuRequested.
         tableLayout->addWidget(dataTable_, 1);
 
         workspaceStack_->addWidget(tablePage_);
@@ -809,9 +810,6 @@ namespace StableCore::Storage::Editor
                 &SCDatabaseEditorMainWindow::OnFilterTextChanged);
         connect(clearFilterButton, &QPushButton::clicked, filterEdit_,
                 &QLineEdit::clear);
-        connect(dataTable_->viewport(), &QWidget::customContextMenuRequested,
-                this,
-                &SCDatabaseEditorMainWindow::OnGridContextMenuRequested);
         connect(workspaceModeBar_, &QTabBar::currentChanged, this,
                 &SCDatabaseEditorMainWindow::OnWorkspaceModeChanged);
         connect(tableDesignPane_, &SCTableDesignPane::StatusMessage, this,
@@ -2155,37 +2153,59 @@ namespace StableCore::Storage::Editor
     }
 
     void SCDatabaseEditorMainWindow::OnGridContextMenuRequested(
-        const QPoint& pos)
+        const QPoint& viewportPos, SCGridRegion region)
     {
         if (dataTable_ == nullptr)
         {
             return;
         }
 
-        // pos is already in viewport coordinates, which is what HitTestCell
-        // requires. y() is the data row, x() the column.
-        if (const std::optional<QPoint> hitCell = dataTable_->HitTestCell(pos))
+        // The column context menu would need the clicked column, and
+        // SCTreeGrid exposes no public header hit test yet, so the header gets
+        // no menu instead of a misleading record menu.
+        if (region == SCGridRegion::Header)
         {
-            dataTable_->SetCurrentCell(hitCell->y(), hitCell->x());
+            return;
         }
-        else
+
+        // The grid already moved the current cell for the data area. The row
+        // header leaves the data selection untouched, so resolve the clicked
+        // row here and make it current before the menu can act on it.
+        if (region == SCGridRegion::RowHeader)
         {
-            dataTable_->ClearCurrentCell();
+            if (const std::optional<int> hitRow =
+                    dataTable_->HitTestRow(viewportPos))
+            {
+                // Keep the column the user was on; fall back to the first
+                // column when there is no current cell yet, since
+                // SetCurrentCell() with a negative column leaves no row to
+                // delete.
+                const int column = std::max(dataTable_->CurrentColumn(), 0);
+                dataTable_->SetCurrentCell(*hitRow, column);
+            }
         }
 
         QMenu menu(dataTable_);
         const bool canEditRows =
             session_->IsOpen() && !session_->CurrentTableName().isEmpty();
-        const int deletionRow = dataTable_->CurrentRow();
         QAction* addAction =
             menu.addAction(QStringLiteral("Add Record"), this,
                            &SCDatabaseEditorMainWindow::AddRecord);
         addAction->setEnabled(canEditRows);
-        QAction* deleteAction =
-            menu.addAction(QStringLiteral("Delete Record"), this,
-                           &SCDatabaseEditorMainWindow::DeleteSelectedRecord);
-        deleteAction->setEnabled(canEditRows && RecordIdAt(deletionRow) != 0);
-        menu.exec(dataTable_->viewport()->mapToGlobal(pos));
+
+        // Empty space has no row to act on, so Delete Record is only offered
+        // where the click resolved to one.
+        if (region != SCGridRegion::Empty)
+        {
+            const int deletionRow = dataTable_->CurrentRow();
+            QAction* deleteAction = menu.addAction(
+                QStringLiteral("Delete Record"), this,
+                &SCDatabaseEditorMainWindow::DeleteSelectedRecord);
+            deleteAction->setEnabled(canEditRows &&
+                                     RecordIdAt(deletionRow) != 0);
+        }
+
+        menu.exec(dataTable_->viewport()->mapToGlobal(viewportPos));
     }
 
     void SCDatabaseEditorMainWindow::UndoLastAction()
@@ -2910,6 +2930,14 @@ namespace StableCore::Storage::Editor
 
         dataTable_->OnFilterRow = [this](int row) {
             return RowPassesQuickFilter(row);
+        };
+
+        // The grid resolves the trigger source, commits any pending edit and
+        // moves the current cell before calling back, so no event filter or
+        // hit-test fixup is needed here.
+        dataTable_->OnContextMenuRequested = [this](const QPoint& viewportPos,
+                                                    SCGridRegion region) {
+            OnGridContextMenuRequested(viewportPos, region);
         };
     }
 

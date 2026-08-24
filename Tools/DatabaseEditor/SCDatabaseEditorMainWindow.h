@@ -63,7 +63,6 @@ namespace StableCore::Storage::Editor
         void ExportCurrentTableCsv();
         void ImportCsvIntoCurrentTable();
         void OnObjectExplorerContextMenuRequested(const QPoint& pos);
-        void OnGridContextMenuRequested(const QPoint& pos);
         void OnTableSelectionChanged();
         void OnGridCellSelected(int row, int col);
         void OnFilterTextChanged(const QString& text);
@@ -106,6 +105,11 @@ namespace StableCore::Storage::Editor
         void BuildUi();
         void BuildMenus();
         void WireGridCallbacks();
+        // Invoked from SCTreeGrid::OnContextMenuRequested; viewportPos is in
+        // viewport coordinates and region tells the data area apart from the
+        // header, row header and empty space.
+        void OnGridContextMenuRequested(const QPoint& viewportPos,
+                                        SCGridRegion region);
         void SetWorkspaceMode(WorkspaceMode mode);
         void RefreshWorkspaceHeader();
         void RefreshWorkspacePages();
