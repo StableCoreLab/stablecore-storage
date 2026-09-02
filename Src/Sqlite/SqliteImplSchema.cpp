@@ -1202,6 +1202,15 @@ ErrorCode SqliteTable::EnumerateRecords(SCRecordCursorPtr& outCursor)
             records.push_back(MakeRecord(data));
         }
     }
+
+    // records_ is an unordered_map, so its iteration order is not stable.
+    // Enumeration is the public record order used by clients such as the
+    // DatabaseEditor; make that order deterministic by RecordId.
+    std::sort(records.begin(), records.end(),
+              [](const SCRecordPtr& left, const SCRecordPtr& right) {
+                  return left->GetId() < right->GetId();
+              });
+
     outCursor = SCMakeRef<SqliteRecordCursor>(std::move(records));
     return SC_OK;
 }
