@@ -1138,6 +1138,11 @@ namespace StableCore::Storage
                                                      bool confirmed,
                                                      SCUpgradeResult* outResult)
         {
+            const ErrorCode usableRc = EnsureUsable();
+            if (Failed(usableRc))
+            {
+                return usableRc;
+            }
             if (outResult == nullptr)
             {
                 return SC_E_POINTER;
@@ -1474,10 +1479,10 @@ namespace StableCore::Storage
         ErrorCode SqliteDatabase::BeginImportSession(const SCImportSessionOptions& options,
                                                      SCImportStagingArea* outSession)
         {
-            const ErrorCode writableRc = EnsureWritable();
-            if (Failed(writableRc))
+            const ErrorCode editableRc = EnsureEditableState();
+            if (Failed(editableRc))
             {
-                return writableRc;
+                return editableRc;
             }
             const ErrorCode transitionRc = EnsureWriteTransitionAllowed();
             if (Failed(transitionRc))
@@ -1542,10 +1547,10 @@ namespace StableCore::Storage
                                                     const SCImportChunk& chunk,
                                                     SCImportCheckpoint* outCheckpoint)
         {
-            const ErrorCode writableRc = EnsureWritable();
-            if (Failed(writableRc))
+            const ErrorCode editableRc = EnsureEditableState();
+            if (Failed(editableRc))
             {
-                return writableRc;
+                return editableRc;
             }
             const ErrorCode transitionRc = EnsureWriteTransitionAllowed();
             if (Failed(transitionRc))
@@ -1602,6 +1607,11 @@ namespace StableCore::Storage
 
         ErrorCode SqliteDatabase::LoadImportRecoveryState(std::uint64_t sessionId, SCImportRecoveryState* outState)
         {
+            const ErrorCode usableRc = EnsureUsable();
+            if (Failed(usableRc))
+            {
+                return usableRc;
+            }
             if (outState == nullptr)
             {
                 return SC_E_POINTER;
@@ -1675,10 +1685,10 @@ namespace StableCore::Storage
         ErrorCode SqliteDatabase::FinalizeImportSession(const SCImportFinalizeCommit& commit,
                                                         SCImportRecoveryState* outState)
         {
-            const ErrorCode writableRc = EnsureWritable();
-            if (Failed(writableRc))
+            const ErrorCode editableRc = EnsureEditableState();
+            if (Failed(editableRc))
             {
-                return writableRc;
+                return editableRc;
             }
             const ErrorCode transitionRc = EnsureWriteTransitionAllowed();
             if (Failed(transitionRc))
@@ -1724,10 +1734,10 @@ namespace StableCore::Storage
 
         ErrorCode SqliteDatabase::AbortImportSession(std::uint64_t sessionId)
         {
-            const ErrorCode writableRc = EnsureWritable();
-            if (Failed(writableRc))
+            const ErrorCode editableRc = EnsureEditableState();
+            if (Failed(editableRc))
             {
-                return writableRc;
+                return editableRc;
             }
             const ErrorCode transitionRc = EnsureWriteTransitionAllowed();
             if (Failed(transitionRc))
@@ -1748,12 +1758,41 @@ namespace StableCore::Storage
 
         ErrorCode SqliteDatabase::EnsureWritable() const
         {
+            if (replayCompensationFailureDetected_)
+            {
+                // DatabaseFaulted has a single internal source. Once consistency
+                // is lost the connection is permanently unusable and every
+                // writing entry point has to report it with the dedicated code
+                // instead of a generic conflict.
+                return SC_E_DATABASE_FAULTED;
+            }
             if (readOnly_)
             {
                 return SC_E_READ_ONLY_DATABASE;
             }
+            return SC_OK;
+        }
+
+        ErrorCode SqliteDatabase::EnsureUsable() const
+        {
             if (replayCompensationFailureDetected_)
             {
+                return SC_E_DATABASE_FAULTED;
+            }
+            return SC_OK;
+        }
+
+        ErrorCode SqliteDatabase::EnsureEditableState() const
+        {
+            const ErrorCode writableRc = EnsureWritable();
+            if (Failed(writableRc))
+            {
+                return writableRc;
+            }
+            if (activeEditPoisoned_)
+            {
+                // The active edit entered Poisoned: only Rollback()/Recover may
+                // touch it. Normal reads and writes stay blocked.
                 return SC_E_WRITE_CONFLICT;
             }
             return SC_OK;
@@ -1810,6 +1849,11 @@ namespace StableCore::Storage
 
         ErrorCode SqliteDatabase::CheckQueryIndex(QueryIndexCheckResult* outResult) const
         {
+            const ErrorCode usableRc = EnsureUsable();
+            if (Failed(usableRc))
+            {
+                return usableRc;
+            }
             if (outResult == nullptr)
             {
                 return SC_E_POINTER;

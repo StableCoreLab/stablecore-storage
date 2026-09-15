@@ -196,7 +196,10 @@ TEST(SchemaEdit, UniqueConstraintRejectsDuplicateValueWrites)
     EXPECT_EQ(db->BeginEdit(L"duplicate width", duplicateEdit), sc::SC_OK);
     sc::SCRecordPtr second;
     EXPECT_EQ(table->CreateRecord(second), sc::SC_OK);
-    EXPECT_EQ(second->SetInt64(L"Width", 100), sc::SC_E_CONSTRAINT_VIOLATION);
+    // A newly created record is a draft: the unique conflict is only detected
+    // by the final Commit() validation, not by SetValue().
+    EXPECT_EQ(second->SetInt64(L"Width", 100), sc::SC_OK);
+    EXPECT_EQ(db->Commit(duplicateEdit.Get()), sc::SC_E_CONSTRAINT_VIOLATION);
     EXPECT_EQ(db->Rollback(duplicateEdit.Get()), sc::SC_OK);
 }
 
@@ -303,7 +306,9 @@ TEST(SchemaEdit, CompositeUniqueConstraintRejectsDuplicateValueWrites)
     sc::SCRecordPtr second;
     EXPECT_EQ(table->CreateRecord(second), sc::SC_OK);
     EXPECT_EQ(second->SetInt64(L"Width", 100), sc::SC_OK);
-    EXPECT_EQ(second->SetString(L"Name", L"Alpha"), sc::SC_E_CONSTRAINT_VIOLATION);
+    // Deferred draft validation: the composite unique conflict surfaces here.
+    EXPECT_EQ(second->SetString(L"Name", L"Alpha"), sc::SC_OK);
+    EXPECT_EQ(db->Commit(duplicateEdit.Get()), sc::SC_E_CONSTRAINT_VIOLATION);
     EXPECT_EQ(db->Rollback(duplicateEdit.Get()), sc::SC_OK);
 }
 
@@ -510,7 +515,9 @@ TEST(SchemaEdit, CompositePrimaryKeyConstraintRejectsDuplicateValueWrites)
     sc::SCRecordPtr second;
     EXPECT_EQ(table->CreateRecord(second), sc::SC_OK);
     EXPECT_EQ(second->SetInt64(L"Width", 100), sc::SC_OK);
-    EXPECT_EQ(second->SetString(L"Name", L"Alpha"), sc::SC_E_CONSTRAINT_VIOLATION);
+    // Deferred draft validation: the composite primary key conflict surfaces here.
+    EXPECT_EQ(second->SetString(L"Name", L"Alpha"), sc::SC_OK);
+    EXPECT_EQ(db->Commit(duplicateEdit.Get()), sc::SC_E_CONSTRAINT_VIOLATION);
     EXPECT_EQ(db->Rollback(duplicateEdit.Get()), sc::SC_OK);
 }
 
@@ -793,7 +800,9 @@ TEST(SchemaEdit, PrimaryKeyConstraintRejectsDuplicateValueWrites)
     EXPECT_EQ(db->BeginEdit(L"duplicate primary key value", duplicateEdit), sc::SC_OK);
     sc::SCRecordPtr second;
     EXPECT_EQ(table->CreateRecord(second), sc::SC_OK);
-    EXPECT_EQ(second->SetInt64(L"Width", 100), sc::SC_E_CONSTRAINT_VIOLATION);
+    // Deferred draft validation: the primary key conflict surfaces here.
+    EXPECT_EQ(second->SetInt64(L"Width", 100), sc::SC_OK);
+    EXPECT_EQ(db->Commit(duplicateEdit.Get()), sc::SC_E_CONSTRAINT_VIOLATION);
     EXPECT_EQ(db->Rollback(duplicateEdit.Get()), sc::SC_OK);
 }
 
@@ -820,8 +829,28 @@ TEST(SchemaEdit, PrimaryKeyConstraintRejectsNullValuesOnCreateRecord)
     sc::SCEditPtr edit;
     EXPECT_EQ(db->BeginEdit(L"commit missing primary key", edit), sc::SC_OK);
     sc::SCRecordPtr record;
-    EXPECT_EQ(table->CreateRecord(record), sc::SC_E_CONSTRAINT_VIOLATION);
-    EXPECT_EQ(db->Rollback(edit.Get()), sc::SC_OK);
+    // CreateRecord() only registers a draft; the null primary key is reported
+    // by the commit time primary key validation, not by CreateRecord().
+    EXPECT_EQ(table->CreateRecord(record), sc::SC_OK);
+    EXPECT_EQ(db->Commit(edit.Get()), sc::SC_E_CONSTRAINT_VIOLATION);
+
+    // The violation comes from the explicit primary key constraint, so it keeps
+    // the SchemaConstraint source and the PrimaryKey kind.
+    sc::SCConstraintViolationInfo violation;
+    EXPECT_EQ(db->GetLastConstraintViolationInfo(&violation), sc::SC_OK);
+    EXPECT_EQ(violation.source, sc::SCConstraintViolationSource::SchemaConstraint);
+    EXPECT_EQ(violation.kind, sc::SCConstraintKind::PrimaryKey);
+    EXPECT_EQ(violation.constraintName, std::wstring(L"pk_Beam_Code"));
+    EXPECT_EQ(violation.columns.size(), 1u);
+    if (!violation.columns.empty())
+    {
+        EXPECT_EQ(violation.columns.front(), std::wstring(L"Code"));
+    }
+
+    // A rejected commit keeps the edit Active so the draft can be fixed.
+    EXPECT_EQ(edit->GetState(), sc::EditState::Active);
+    EXPECT_EQ(record->SetString(L"Code", L"B-1"), sc::SC_OK);
+    EXPECT_EQ(db->Commit(edit.Get()), sc::SC_OK);
 }
 
 TEST(SchemaEdit, CheckConstraintRejectsInvalidWrites)
@@ -1385,16 +1414,23 @@ TEST(SchemaEdit, ConstraintViolationInfoReportsOffendingConstraint)
     EXPECT_EQ(db->BeginEdit(L"duplicate unique violation info", duplicateEdit), sc::SC_OK);
     sc::SCRecordPtr second;
     EXPECT_EQ(table->CreateRecord(second), sc::SC_OK);
-    EXPECT_EQ(second->SetInt64(L"Width", 100), sc::SC_E_CONSTRAINT_VIOLATION);
+    // A newly created record is a draft: the unique conflict is only detected
+    // by the final Commit() validation, not by SetValue().
+    EXPECT_EQ(second->SetInt64(L"Width", 100), sc::SC_OK);
+    EXPECT_EQ(db->Commit(duplicateEdit.Get()), sc::SC_E_CONSTRAINT_VIOLATION);
 
     sc::SCConstraintViolationInfo info;
     EXPECT_EQ(db->GetLastConstraintViolationInfo(&info), sc::SC_OK);
     EXPECT_EQ(info.tableName, L"Beam");
     EXPECT_EQ(info.constraintName, L"uq_Beam_Width");
     EXPECT_EQ(info.kind, sc::SCConstraintKind::Unique);
+    EXPECT_EQ(info.source, sc::SCConstraintViolationSource::SchemaConstraint);
     ASSERT_EQ(info.columns.size(), 1u);
     EXPECT_EQ(info.columns.front(), L"Width");
     EXPECT_EQ(info.recordId, second->GetId());
+    // A rejected commit keeps the edit Active so the draft can be fixed or
+    // rolled back.
+    EXPECT_EQ(duplicateEdit->GetState(), sc::EditState::Active);
     EXPECT_EQ(db->Rollback(duplicateEdit.Get()), sc::SC_OK);
 }
 

@@ -326,7 +326,7 @@ TEST(SqliteImport, ExecuteImportUsesChunkedSessionModel)
         requests.push_back(request);
     }
 
-    sc::SCBatchExecutionOptions options;
+    sc::SCImportExecutionOptions options;
     options.editName = L"chunked import";
     options.chunkSize = 2;
 
@@ -363,7 +363,7 @@ TEST(SqliteImport, ExecuteImportKeepsRecoveryStateWhenCommitFails)
     request.creates.push_back(sc::SCBatchCreateRecordRequest{{{L"Width", sc::SCValue::FromInt64(256)}}});
     requests.push_back(request);
 
-    sc::SCBatchExecutionOptions options;
+    sc::SCImportExecutionOptions options;
     options.editName = L"import commit failure";
     options.chunkSize = 1;
 
@@ -399,7 +399,7 @@ TEST(SqliteImport, ExecuteImportClearsRecoveryStateOnSuccess)
     request.creates.push_back(sc::SCBatchCreateRecordRequest{{{L"Width", sc::SCValue::FromInt64(320)}}});
     requests.push_back(request);
 
-    sc::SCBatchExecutionOptions options;
+    sc::SCImportExecutionOptions options;
     options.editName = L"import finalize success";
     options.chunkSize = 1;
 

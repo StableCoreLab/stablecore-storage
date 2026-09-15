@@ -48,6 +48,16 @@ namespace StableCore::Storage
     constexpr ErrorCode SC_E_IO_ERROR = 0xA001030AL;
     constexpr ErrorCode SC_E_UPGRADE_PATH_NOT_FOUND = 0xA001030BL;
     constexpr ErrorCode SC_E_JOURNAL_TABLE_MISSING = 0xA001030CL;
+    // Permanent connection level fault: a rollback / recovery attempt failed,
+    // so the in-memory model can no longer be trusted against storage. The
+    // caller must release the database object and reopen it. This code never
+    // replaces the original I/O, commit or recovery error that triggered it.
+    constexpr ErrorCode SC_E_DATABASE_FAULTED = 0xA001030DL;
+    // The import data has been committed, but clearing the staging checkpoint
+    // failed. The caller must not treat this as a full rollback: the imported
+    // records are already durable and the session can be retried/cleaned via
+    // the recovery APIs.
+    constexpr ErrorCode SC_E_IMPORT_CLEANUP_FAILED = 0xA001030EL;
 
     inline bool Succeeded(ErrorCode code) noexcept
     {

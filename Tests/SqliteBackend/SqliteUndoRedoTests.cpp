@@ -867,11 +867,250 @@ TEST(SqliteUndoRedo, MoveHistory_ConsistencyLost_OnCompensationFailure)
     EXPECT_TRUE(state.dirty);
     EXPECT_TRUE(observer.seen.empty());
 
-    // Further writes must be blocked until reopen
+    // Further writes must be blocked until reopen. Once the database is
+    // faulted every ErrorCode-returning entry point reports
+    // SC_E_DATABASE_FAULTED instead of a generic write conflict.
     sc::SCEditPtr blockedEdit;
-    EXPECT_EQ(db->BeginEdit(L"blocked", blockedEdit), sc::SC_E_WRITE_CONFLICT);
+    EXPECT_EQ(db->BeginEdit(L"blocked", blockedEdit), sc::SC_E_DATABASE_FAULTED);
 
     // Clear injection
     sqliteDb->ClearJournalFailureInjectionForTesting();
     EXPECT_EQ(db->RemoveObserver(&observer), sc::SC_OK);
+}
+
+TEST(SqliteUndoRedo, DatabaseFaultedBlocksAllReadEntries)
+{
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_Sqlite_Faulted_ReadBlocked.sqlite");
+
+    sc::SCDbPtr db;
+    EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
+    sc::SCTablePtr beamTable = CreateBeamTable(db);
+
+    sc::SCEditPtr edit;
+    EXPECT_EQ(db->BeginEdit(L"create", edit), sc::SC_OK);
+    sc::SCRecordPtr beam;
+    EXPECT_EQ(beamTable->CreateRecord(beam), sc::SC_OK);
+    EXPECT_EQ(beam->SetInt64(L"Width", 100), sc::SC_OK);
+    EXPECT_EQ(db->Commit(edit.Get()), sc::SC_OK);
+
+    // Snapshot handles before the fault, so we can prove they are blocked later.
+    sc::SCRecordPtr reloaded;
+    EXPECT_EQ(beamTable->GetRecord(beam->GetId(), reloaded), sc::SC_OK);
+    sc::SCRecordCursorPtr cursor;
+    EXPECT_EQ(beamTable->EnumerateRecords(cursor), sc::SC_OK);
+
+    auto* sqliteDb = dynamic_cast<sc::SqliteDatabase*>(db.Get());
+    ASSERT_NE(sqliteDb, nullptr);
+
+    sc::SqliteDatabase::JournalFailureInjection injection;
+    injection.operation = sc::SqliteDatabase::JournalFailureOperation::Undo;
+    injection.failPrimaryAfterAppliedEntries = 0;
+    injection.failCompensationAfterAppliedEntries = 0;
+    sqliteDb->SetJournalFailureInjectionForTesting(injection);
+
+    sc::SCHistoryMoveRequest request;
+    request.direction = sc::SCHistoryMoveDirection::Undo;
+    sc::SCHistoryMoveResult result;
+    EXPECT_TRUE(sc::Failed(db->MoveHistory(request, &result)));
+
+    // Every ordinary read entry point now reports the connection-level fault.
+    sc::SCSchemaPtr schema;
+    EXPECT_EQ(beamTable->GetSchema(schema), sc::SC_E_DATABASE_FAULTED);
+
+    const wchar_t* text = nullptr;
+    EXPECT_EQ(reloaded->GetString(L"Width", &text), sc::SC_E_DATABASE_FAULTED);
+
+    const std::uint8_t* bytes = nullptr;
+    std::size_t size = 0;
+    EXPECT_EQ(reloaded->GetBinary(L"Width", &bytes, &size), sc::SC_E_DATABASE_FAULTED);
+
+    sc::RecordId refId = 0;
+    EXPECT_EQ(reloaded->GetRef(L"Width", &refId), sc::SC_E_DATABASE_FAULTED);
+
+    sc::SCRecordPtr fromCursor;
+    EXPECT_EQ(cursor->Next(fromCursor), sc::SC_E_DATABASE_FAULTED);
+
+    sc::SCRecordCursorPtr freshCursor;
+    EXPECT_EQ(beamTable->EnumerateRecords(freshCursor), sc::SC_E_DATABASE_FAULTED);
+
+    // The low-level ExecuteSql escape hatch is also blocked once faulted.
+    EXPECT_EQ(sqliteDb->ExecuteSql("SELECT 1;"), sc::SC_E_DATABASE_FAULTED);
+
+    sqliteDb->ClearJournalFailureInjectionForTesting();
+}
+
+TEST(SqliteUndoRedo, PoisonedEditBlocksWritesUntilRollback)
+{
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_Sqlite_Poisoned_BlocksWrites.sqlite");
+
+    sc::SCDbPtr db;
+    EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
+    sc::SCTablePtr beamTable = CreateBeamTable(db);
+
+    sc::SCSchemaPtr schema;
+    EXPECT_EQ(beamTable->GetSchema(schema), sc::SC_OK);
+
+    auto* sqliteDb = dynamic_cast<sc::SqliteDatabase*>(db.Get());
+    ASSERT_NE(sqliteDb, nullptr);
+
+    sc::SCEditPtr edit;
+    EXPECT_EQ(db->BeginEdit(L"poison candidate", edit), sc::SC_OK);
+    sc::SCRecordPtr beam;
+    EXPECT_EQ(beamTable->CreateRecord(beam), sc::SC_OK);
+    EXPECT_EQ(beam->SetInt64(L"Width", 320), sc::SC_OK);
+
+    sc::SqliteDatabase::JournalFailureInjection injection;
+    injection.operation = sc::SqliteDatabase::JournalFailureOperation::Commit;
+    injection.failCommitRollback = true;
+    sqliteDb->SetJournalFailureInjectionForTesting(injection);
+
+    // Commit() reports the persistence error and the edit becomes Poisoned.
+    EXPECT_EQ(db->Commit(edit.Get()), sc::SC_E_IO_ERROR);
+    EXPECT_EQ(edit->GetState(), sc::EditState::Active);
+
+    // A stale record handle must not keep mutating the journal.
+    EXPECT_EQ(beam->SetInt64(L"Width", 400), sc::SC_E_WRITE_CONFLICT);
+
+    // Schema edits and new tables are blocked while poisoned.
+    sc::SCColumnDef extra;
+    extra.name = L"Grade";
+    extra.displayName = L"Grade";
+    extra.valueKind = sc::ValueKind::String;
+    extra.nullable = true;
+    EXPECT_EQ(schema->AddColumn(extra), sc::SC_E_WRITE_CONFLICT);
+
+    sc::SCTablePtr another;
+    EXPECT_EQ(db->CreateTable(L"Other", another), sc::SC_E_WRITE_CONFLICT);
+
+    // Import entry points are blocked as well.
+    sc::SCImportSessionOptions options;
+    options.sessionName = L"PoisonedImport";
+    sc::SCImportStagingArea staging;
+    EXPECT_EQ(db->BeginImportSession(options, &staging), sc::SC_E_WRITE_CONFLICT);
+
+    // FinalizeImportSession / AbortImportSession / RebuildReferenceIndexes are
+    // also ordinary writes and must respect the poisoned gate.
+    sc::SCImportFinalizeCommit finalize;
+    finalize.confirmed = true;
+    sc::SCImportRecoveryState recovery;
+    EXPECT_EQ(db->FinalizeImportSession(finalize, &recovery), sc::SC_E_WRITE_CONFLICT);
+    EXPECT_EQ(db->AbortImportSession(999), sc::SC_E_WRITE_CONFLICT);
+    EXPECT_EQ(sqliteDb->RebuildReferenceIndexes(), sc::SC_E_WRITE_CONFLICT);
+
+    // SetRef() must report the same gate before any relation resolution.
+    EXPECT_EQ(beam->SetRef(L"Width", sc::RecordId{0}), sc::SC_E_WRITE_CONFLICT);
+
+    // The low-level ExecuteSql escape hatch is also rejected while poisoned.
+    EXPECT_EQ(sqliteDb->ExecuteSql("SELECT 1;"), sc::SC_E_WRITE_CONFLICT);
+
+    // A second Commit is rejected; only Rollback() may close the poisoned edit.
+    EXPECT_EQ(db->Commit(edit.Get()), sc::SC_E_WRITE_CONFLICT);
+
+    sqliteDb->ClearJournalFailureInjectionForTesting();
+    EXPECT_EQ(db->Rollback(edit.Get()), sc::SC_OK);
+
+    // After Rollback the database is usable again and the reference index was
+    // rebuilt by the recovery path (not left stale from the poisoned edit).
+    sc::ReferenceIndexCheckResult refCheck;
+    EXPECT_EQ(sqliteDb->CheckReferenceIndex(&refCheck), sc::SC_OK);
+    EXPECT_EQ(refCheck.state, sc::ReferenceIndexHealthState::Healthy);
+
+    sc::SCEditPtr freshEdit;
+    EXPECT_EQ(db->BeginEdit(L"fresh", freshEdit), sc::SC_OK);
+    EXPECT_EQ(db->Rollback(freshEdit.Get()), sc::SC_OK);
+}
+
+TEST(SqliteUndoRedo, PoisonedRollbackRestoresReferenceQueries)
+{
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_Sqlite_Poisoned_RefRestore.sqlite");
+
+    sc::SCDbPtr db;
+    EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
+
+    // Floor (parent) with a unique Code business key.
+    sc::SCTablePtr floorTable;
+    EXPECT_EQ(db->CreateTable(L"Floor", floorTable), sc::SC_OK);
+    sc::SCSchemaPtr floorSchema;
+    EXPECT_EQ(floorTable->GetSchema(floorSchema), sc::SC_OK);
+    sc::SCColumnDef floorCode;
+    floorCode.name = L"Code";
+    floorCode.displayName = L"Code";
+    floorCode.valueKind = sc::ValueKind::String;
+    floorCode.nullable = false;
+    floorCode.defaultValue = sc::SCValue::FromString(L"");
+    EXPECT_EQ(floorSchema->AddColumn(floorCode), sc::SC_OK);
+    sc::SCConstraintDef floorUnique;
+    floorUnique.kind = sc::SCConstraintKind::Unique;
+    floorUnique.name = L"uq_Floor_Code";
+    floorUnique.columns.push_back(L"Code");
+    EXPECT_EQ(floorSchema->AddConstraint(floorUnique), sc::SC_OK);
+
+    // Beam (child) with a Relation column pointing at Floor.Code.
+    sc::SCTablePtr beamTable;
+    EXPECT_EQ(db->CreateTable(L"Beam", beamTable), sc::SC_OK);
+    sc::SCSchemaPtr beamSchema;
+    EXPECT_EQ(beamTable->GetSchema(beamSchema), sc::SC_OK);
+    sc::SCColumnDef beamName;
+    beamName.name = L"Name";
+    beamName.displayName = L"Name";
+    beamName.valueKind = sc::ValueKind::String;
+    beamName.defaultValue = sc::SCValue::FromString(L"");
+    EXPECT_EQ(beamSchema->AddColumn(beamName), sc::SC_OK);
+    sc::SCColumnDef floorRef;
+    floorRef.name = L"FloorRef";
+    floorRef.displayName = L"FloorRef";
+    floorRef.valueKind = sc::ValueKind::String;
+    floorRef.columnKind = sc::ColumnKind::Relation;
+    floorRef.referenceTable = L"Floor";
+    floorRef.referenceStorageColumn = L"Code";
+    floorRef.nullable = true;
+    floorRef.defaultValue = sc::SCValue::Null();
+    EXPECT_EQ(beamSchema->AddColumn(floorRef), sc::SC_OK);
+
+    // Seed: one Floor + one Beam referencing it via the Relation column.
+    sc::SCEditPtr seedEdit;
+    EXPECT_EQ(db->BeginEdit(L"seed", seedEdit), sc::SC_OK);
+    sc::SCRecordPtr floor;
+    EXPECT_EQ(floorTable->CreateRecord(floor), sc::SC_OK);
+    EXPECT_EQ(floor->SetString(L"Code", L"F-001"), sc::SC_OK);
+    sc::SCRecordPtr beam;
+    EXPECT_EQ(beamTable->CreateRecord(beam), sc::SC_OK);
+    EXPECT_EQ(beam->SetString(L"Name", L"B-1"), sc::SC_OK);
+    EXPECT_EQ(beam->SetRef(L"FloorRef", floor->GetId()), sc::SC_OK);
+    EXPECT_EQ(db->Commit(seedEdit.Get()), sc::SC_OK);
+
+    auto* sqliteDb = dynamic_cast<sc::SqliteDatabase*>(db.Get());
+    ASSERT_NE(sqliteDb, nullptr);
+
+    // Baseline: exactly one reverse reference from Beam -> Floor.
+    std::vector<sc::ReverseReferenceRecord> reverseRefs;
+    EXPECT_EQ(sqliteDb->GetReferencesByTarget(L"Floor", floor->GetId(), &reverseRefs), sc::SC_OK);
+    EXPECT_EQ(reverseRefs.size(), 1u);
+
+    // Open an edit that adds a second referencing Beam, then poison it.
+    sc::SCEditPtr edit;
+    EXPECT_EQ(db->BeginEdit(L"poison refs", edit), sc::SC_OK);
+    sc::SCRecordPtr beam2;
+    EXPECT_EQ(beamTable->CreateRecord(beam2), sc::SC_OK);
+    EXPECT_EQ(beam2->SetString(L"Name", L"B-2"), sc::SC_OK);
+    EXPECT_EQ(beam2->SetRef(L"FloorRef", floor->GetId()), sc::SC_OK);
+
+    sc::SqliteDatabase::JournalFailureInjection injection;
+    injection.operation = sc::SqliteDatabase::JournalFailureOperation::Commit;
+    injection.failCommitRollback = true;
+    sqliteDb->SetJournalFailureInjectionForTesting(injection);
+    EXPECT_EQ(db->Commit(edit.Get()), sc::SC_E_IO_ERROR);
+
+    sqliteDb->ClearJournalFailureInjectionForTesting();
+    EXPECT_EQ(db->Rollback(edit.Get()), sc::SC_OK);
+
+    // After Rollback the reference index was rebuilt by the recovery path, so
+    // the reverse query still reports only the single committed reference.
+    std::vector<sc::ReverseReferenceRecord> reverseRefsAfter;
+    EXPECT_EQ(sqliteDb->GetReferencesByTarget(L"Floor", floor->GetId(), &reverseRefsAfter), sc::SC_OK);
+    EXPECT_EQ(reverseRefsAfter.size(), 1u);
+
+    sc::ReferenceIndexCheckResult refCheck;
+    EXPECT_EQ(sqliteDb->CheckReferenceIndex(&refCheck), sc::SC_OK);
+    EXPECT_EQ(refCheck.state, sc::ReferenceIndexHealthState::Healthy);
 }

@@ -631,6 +631,11 @@ SCColumnDef StorageCodec::ReadColumnDef(SqliteStmt& stmt,
 
 ErrorCode SqliteSchema::GetColumnCount(std::int32_t* outCount)
 {
+    const ErrorCode usableRc = db_->EnsureUsable();
+    if (Failed(usableRc))
+    {
+        return usableRc;
+    }
     if (outCount == nullptr)
     {
         return SC_E_POINTER;
@@ -641,6 +646,11 @@ ErrorCode SqliteSchema::GetColumnCount(std::int32_t* outCount)
 
 ErrorCode SqliteSchema::GetColumn(std::int32_t index, SCColumnDef* outDef)
 {
+    const ErrorCode usableRc = db_->EnsureUsable();
+    if (Failed(usableRc))
+    {
+        return usableRc;
+    }
     if (outDef == nullptr)
     {
         return SC_E_POINTER;
@@ -655,6 +665,11 @@ ErrorCode SqliteSchema::GetColumn(std::int32_t index, SCColumnDef* outDef)
 
 ErrorCode SqliteSchema::FindColumn(const wchar_t* name, SCColumnDef* outDef)
 {
+    const ErrorCode usableRc = db_->EnsureUsable();
+    if (Failed(usableRc))
+    {
+        return usableRc;
+    }
     if (name == nullptr)
     {
         return SC_E_INVALIDARG;
@@ -674,6 +689,11 @@ ErrorCode SqliteSchema::FindColumn(const wchar_t* name, SCColumnDef* outDef)
 
 ErrorCode SqliteSchema::GetSchemaSnapshot(SCTableSchemaSnapshot* outSnapshot)
 {
+    const ErrorCode usableRc = db_->EnsureUsable();
+    if (Failed(usableRc))
+    {
+        return usableRc;
+    }
     if (outSnapshot == nullptr)
     {
         return SC_E_POINTER;
@@ -708,6 +728,11 @@ ErrorCode SqliteSchema::GetSchemaSnapshot(SCTableSchemaSnapshot* outSnapshot)
 
 ErrorCode SqliteSchema::GetConstraintCount(std::int32_t* outCount)
 {
+    const ErrorCode usableRc = db_->EnsureUsable();
+    if (Failed(usableRc))
+    {
+        return usableRc;
+    }
     if (outCount == nullptr)
     {
         return SC_E_POINTER;
@@ -718,6 +743,11 @@ ErrorCode SqliteSchema::GetConstraintCount(std::int32_t* outCount)
 
 ErrorCode SqliteSchema::GetConstraint(std::int32_t index, SCConstraintDef* outDef)
 {
+    const ErrorCode usableRc = db_->EnsureUsable();
+    if (Failed(usableRc))
+    {
+        return usableRc;
+    }
     if (outDef == nullptr)
     {
         return SC_E_POINTER;
@@ -733,6 +763,11 @@ ErrorCode SqliteSchema::GetConstraint(std::int32_t index, SCConstraintDef* outDe
 
 ErrorCode SqliteSchema::FindConstraint(const wchar_t* name, SCConstraintDef* outDef)
 {
+    const ErrorCode usableRc = db_->EnsureUsable();
+    if (Failed(usableRc))
+    {
+        return usableRc;
+    }
     if (name == nullptr)
     {
         return SC_E_INVALIDARG;
@@ -754,6 +789,11 @@ ErrorCode SqliteSchema::FindConstraint(const wchar_t* name, SCConstraintDef* out
 
 ErrorCode SqliteSchema::GetIndexCount(std::int32_t* outCount)
 {
+    const ErrorCode usableRc = db_->EnsureUsable();
+    if (Failed(usableRc))
+    {
+        return usableRc;
+    }
     if (outCount == nullptr)
     {
         return SC_E_POINTER;
@@ -764,6 +804,11 @@ ErrorCode SqliteSchema::GetIndexCount(std::int32_t* outCount)
 
 ErrorCode SqliteSchema::GetIndex(std::int32_t index, SCIndexDef* outDef)
 {
+    const ErrorCode usableRc = db_->EnsureUsable();
+    if (Failed(usableRc))
+    {
+        return usableRc;
+    }
     if (outDef == nullptr)
     {
         return SC_E_POINTER;
@@ -779,6 +824,11 @@ ErrorCode SqliteSchema::GetIndex(std::int32_t index, SCIndexDef* outDef)
 
 ErrorCode SqliteSchema::FindIndex(const wchar_t* name, SCIndexDef* outDef)
 {
+    const ErrorCode usableRc = db_->EnsureUsable();
+    if (Failed(usableRc))
+    {
+        return usableRc;
+    }
     if (name == nullptr)
     {
         return SC_E_INVALIDARG;
@@ -800,6 +850,11 @@ ErrorCode SqliteSchema::FindIndex(const wchar_t* name, SCIndexDef* outDef)
 
 ErrorCode SqliteSchema::AddColumn(const SCColumnDef& def)
 {
+    const ErrorCode editableRc = db_->EnsureEditableState();
+    if (Failed(editableRc))
+    {
+        return editableRc;
+    }
     const ErrorCode validate = db_->ValidateColumnDefForSchema(this, def);
     if (Failed(validate))
     {
@@ -815,6 +870,11 @@ ErrorCode SqliteSchema::AddColumn(const SCColumnDef& def)
 
 ErrorCode SqliteSchema::UpdateColumn(const SCColumnDef& def)
 {
+    const ErrorCode editableRc = db_->EnsureEditableState();
+    if (Failed(editableRc))
+    {
+        return editableRc;
+    }
     const ErrorCode validate = db_->ValidateColumnDefForUpdate(this, def);
     if (Failed(validate))
     {
@@ -831,6 +891,11 @@ ErrorCode SqliteSchema::UpdateColumn(const SCColumnDef& def)
 
 ErrorCode SqliteSchema::RemoveColumn(const wchar_t* name)
 {
+    const ErrorCode editableRc = db_->EnsureEditableState();
+    if (Failed(editableRc))
+    {
+        return editableRc;
+    }
     if (name == nullptr)
     {
         return SC_E_INVALIDARG;
@@ -844,6 +909,11 @@ ErrorCode SqliteSchema::RemoveColumn(const wchar_t* name)
 
 ErrorCode SqliteSchema::AddConstraint(const SCConstraintDef& def)
 {
+    const ErrorCode editableRc = db_->EnsureEditableState();
+    if (Failed(editableRc))
+    {
+        return editableRc;
+    }
     const ErrorCode validate = db_->ValidateConstraintDefForSchema(this, def);
     if (Failed(validate))
     {
@@ -858,6 +928,11 @@ ErrorCode SqliteSchema::AddConstraint(const SCConstraintDef& def)
 
 ErrorCode SqliteSchema::RemoveConstraint(const wchar_t* name)
 {
+    const ErrorCode editableRc = db_->EnsureEditableState();
+    if (Failed(editableRc))
+    {
+        return editableRc;
+    }
     if (name == nullptr)
     {
         return SC_E_INVALIDARG;
@@ -871,6 +946,11 @@ ErrorCode SqliteSchema::RemoveConstraint(const wchar_t* name)
 
 ErrorCode SqliteSchema::AddIndex(const SCIndexDef& def)
 {
+    const ErrorCode editableRc = db_->EnsureEditableState();
+    if (Failed(editableRc))
+    {
+        return editableRc;
+    }
     const ErrorCode validate = db_->ValidateIndexDefForSchema(this, def);
     if (Failed(validate))
     {
@@ -885,6 +965,11 @@ ErrorCode SqliteSchema::AddIndex(const SCIndexDef& def)
 
 ErrorCode SqliteSchema::RemoveIndex(const wchar_t* name)
 {
+    const ErrorCode editableRc = db_->EnsureEditableState();
+    if (Failed(editableRc))
+    {
+        return editableRc;
+    }
     if (name == nullptr)
     {
         return SC_E_INVALIDARG;
@@ -949,6 +1034,11 @@ ErrorCode SqliteRecord::ResolveValueStorage(const wchar_t* name, const SCValue**
 
 ErrorCode SqliteRecord::GetValue(const wchar_t* name, SCValue* outValue)
 {
+    const ErrorCode usableRc = db_->EnsureUsable();
+    if (Failed(usableRc))
+    {
+        return usableRc;
+    }
     if (outValue == nullptr)
     {
         return SC_E_POINTER;
@@ -970,6 +1060,13 @@ ErrorCode SqliteRecord::GetValue(const wchar_t* name, SCValue* outValue)
 
 ErrorCode SqliteRecord::SetValue(const wchar_t* name, const SCValue& value)
 {
+    // A poisoned edit may only be closed through Rollback(): normal writes on a
+    // stale record handle must not keep mutating the active journal.
+    const ErrorCode editableRc = db_->EnsureEditableState();
+    if (Failed(editableRc))
+    {
+        return editableRc;
+    }
     if (name == nullptr)
     {
         return SC_E_INVALIDARG;
@@ -1027,6 +1124,11 @@ ErrorCode SqliteRecord::SetBool(const wchar_t* name, bool value)
 
 ErrorCode SqliteRecord::GetString(const wchar_t* name, const wchar_t** outValue)
 {
+    const ErrorCode usableRc = db_->EnsureUsable();
+    if (Failed(usableRc))
+    {
+        return usableRc;
+    }
     const SCValue* storage = nullptr;
     const ErrorCode rc = ResolveValueStorage(name, &storage);
     if (Failed(rc))
@@ -1054,6 +1156,11 @@ ErrorCode SqliteRecord::SetString(const wchar_t* name, const wchar_t* value)
 
 ErrorCode SqliteRecord::GetBinary(const wchar_t* name, const std::uint8_t** outValue, std::size_t* outSize)
 {
+    const ErrorCode usableRc = db_->EnsureUsable();
+    if (Failed(usableRc))
+    {
+        return usableRc;
+    }
     const SCValue* storage = nullptr;
     const ErrorCode rc = ResolveValueStorage(name, &storage);
     if (Failed(rc))
@@ -1090,6 +1197,11 @@ ErrorCode SqliteRecord::SetBinary(const wchar_t* name, const std::uint8_t* value
 
 ErrorCode SqliteRecord::GetRef(const wchar_t* name, RecordId* outValue)
 {
+    const ErrorCode usableRc = db_->EnsureUsable();
+    if (Failed(usableRc))
+    {
+        return usableRc;
+    }
     if (outValue == nullptr)
     {
         return SC_E_POINTER;
@@ -1113,6 +1225,13 @@ ErrorCode SqliteRecord::GetRef(const wchar_t* name, RecordId* outValue)
 
 ErrorCode SqliteRecord::SetRef(const wchar_t* name, RecordId value)
 {
+    // The faulted / poisoned check must come before any schema or relation
+    // resolution so every Set* entry reports the same state-machine code.
+    const ErrorCode editableRc = db_->EnsureEditableState();
+    if (Failed(editableRc))
+    {
+        return editableRc;
+    }
     if (name == nullptr)
     {
         return SC_E_INVALIDARG;
@@ -1138,8 +1257,25 @@ ErrorCode SqliteRecord::SetRef(const wchar_t* name, RecordId value)
 // (from source lines 5150-5255)
 // ========================================================================
 
+ErrorCode SqliteTable::GetSchema(SCSchemaPtr& outSchema)
+{
+    const ErrorCode usableRc = db_->EnsureUsable();
+    if (Failed(usableRc))
+    {
+        return usableRc;
+    }
+    outSchema = schema_;
+    return SC_OK;
+}
+
 ErrorCode SqliteTable::GetRecord(RecordId id, SCRecordPtr& outRecord)
 {
+    const ErrorCode usableRc = db_->EnsureUsable();
+    if (Failed(usableRc))
+    {
+        return usableRc;
+    }
+
     auto data = FindRecordData(id);
     if (!data)
     {
@@ -1151,6 +1287,11 @@ ErrorCode SqliteTable::GetRecord(RecordId id, SCRecordPtr& outRecord)
 
 ErrorCode SqliteTable::CreateRecord(SCRecordPtr& outRecord)
 {
+    const ErrorCode editableRc = db_->EnsureEditableState();
+    if (Failed(editableRc))
+    {
+        return editableRc;
+    }
     if (!db_->HasActiveEdit())
     {
         return SC_E_NO_ACTIVE_EDIT;
@@ -1167,16 +1308,14 @@ ErrorCode SqliteTable::CreateRecord(SCRecordPtr& outRecord)
         return SC_E_SCHEMA_VIOLATION;
     }
 
+    // CreateRecord() registers a draft record inside the active edit. Full
+    // schema constraints (primary key, non-null, unique, check, foreign key)
+    // are intentionally deferred: the caller still has to fill the primary key
+    // and other required fields through SetValue(). Commit() is the only place
+    // where the complete candidate state is validated.
     auto data = std::make_shared<SqliteRecordData>(db_->AllocateRecordId());
     records_.emplace(data->id, data);
     db_->RecordCreate(this, data);
-    const ErrorCode constraintRc = db_->ValidateTableConstraints(this, data);
-    if (Failed(constraintRc))
-    {
-        db_->RemoveAllJournalEntriesForRecord(name_, data->id);
-        records_.erase(data->id);
-        return constraintRc;
-    }
     db_->MarkReferenceIndexDirty();
     outRecord = MakeRecord(data);
     return SC_OK;
@@ -1184,6 +1323,12 @@ ErrorCode SqliteTable::CreateRecord(SCRecordPtr& outRecord)
 
 ErrorCode SqliteTable::DeleteRecord(RecordId id)
 {
+    const ErrorCode editableRc = db_->EnsureEditableState();
+    if (Failed(editableRc))
+    {
+        return editableRc;
+    }
+
     auto data = FindRecordData(id);
     if (!data)
     {
@@ -1194,6 +1339,12 @@ ErrorCode SqliteTable::DeleteRecord(RecordId id)
 
 ErrorCode SqliteTable::EnumerateRecords(SCRecordCursorPtr& outCursor)
 {
+    const ErrorCode usableRc = db_->EnsureUsable();
+    if (Failed(usableRc))
+    {
+        return usableRc;
+    }
+
     std::vector<SCRecordPtr> records;
     for (const auto& [_, data] : records_)
     {
@@ -1211,12 +1362,34 @@ ErrorCode SqliteTable::EnumerateRecords(SCRecordCursorPtr& outCursor)
                   return left->GetId() < right->GetId();
               });
 
-    outCursor = SCMakeRef<SqliteRecordCursor>(std::move(records));
+    outCursor = SCMakeRef<SqliteRecordCursor>(db_, std::move(records));
+    return SC_OK;
+}
+
+ErrorCode SqliteRecordCursor::Next(SCRecordPtr& outRecord)
+{
+    const ErrorCode usableRc = db_->EnsureUsable();
+    if (Failed(usableRc))
+    {
+        return usableRc;
+    }
+    if (index_ < records_.size())
+    {
+        outRecord = records_[index_++];
+        return SC_OK;
+    }
+    outRecord.Reset();
     return SC_OK;
 }
 
 ErrorCode SqliteTable::FindRecords(const SCQueryCondition& condition, SCRecordCursorPtr& outCursor)
 {
+    const ErrorCode usableRc = db_->EnsureUsable();
+    if (Failed(usableRc))
+    {
+        return usableRc;
+    }
+
     QueryPlan legacyPlan;
     const ErrorCode bridgeRc = SCQueryBridge::BuildPlanFromLegacyFindRecords(name_, condition, &legacyPlan);
     if (Failed(bridgeRc))

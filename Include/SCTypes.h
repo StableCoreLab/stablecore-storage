@@ -423,6 +423,16 @@ namespace StableCore::Storage
         SetDefault,
     };
 
+    // Distinguishes an explicit schema constraint failure (PrimaryKey, Unique,
+    // ForeignKey, Check) from a generic "column requires a value" failure.
+    // Column level `nullable = false` is not an addable/removable schema
+    // constraint, so it must not be reported as a new SCConstraintKind.
+    enum class SCConstraintViolationSource
+    {
+        SchemaConstraint,
+        RequiredColumnValue,
+    };
+
     struct SCConstraintViolationInfo
     {
         std::wstring tableName;
@@ -432,6 +442,12 @@ namespace StableCore::Storage
         RecordId recordId{0};
         RecordId referencedRecordId{0};
         std::wstring reason;
+
+        // Appended last on purpose: existing positional aggregate
+        // initialisation of the fields above keeps compiling and keeps the
+        // default source value.
+        SCConstraintViolationSource source{
+            SCConstraintViolationSource::SchemaConstraint};
     };
 
     struct SCConstraintDef

@@ -3097,7 +3097,7 @@ namespace StableCore::Storage::Editor
         return ok;
     }
 
-    bool SCDatabaseSession::SavePendingChanges(QString* outError)
+    bool SCDatabaseSession::CommitCurrentEdit(QString* outError)
     {
         if (!db_)
         {
@@ -3120,6 +3120,8 @@ namespace StableCore::Storage::Editor
         const sc::ErrorCode rc = db_->Commit(pendingEdit_.Get());
         if (sc::Failed(rc))
         {
+            // The edit stays active on validation failures so the caller can
+            // fix the draft and commit again.
             if (outError != nullptr)
             {
                 *outError = ErrorToString(rc);
@@ -3132,7 +3134,7 @@ namespace StableCore::Storage::Editor
         return true;
     }
 
-    bool SCDatabaseSession::DiscardPendingChanges(QString* outError)
+    bool SCDatabaseSession::RollbackCurrentEdit(QString* outError)
     {
         if (!db_)
         {

@@ -284,7 +284,25 @@ namespace StableCore::Storage
         // Returns both alive and deleted records when addressed by id. Deleted
         // state must be checked on the record.
         virtual ErrorCode GetRecord(RecordId id, SCRecordPtr& outRecord) = 0;
-        // Creates a new record in the current edit session.
+        // Creates a new DRAFT record inside the current edit session.
+        //
+        // Lifecycle:
+        //   1. CreateRecord() only allocates the record identity and inserts it
+        //      into the active edit transaction. It does NOT require primary key
+        //      or other required columns to be filled yet, and it does NOT run
+        //      the full constraint validation. A table with zero columns still
+        //      cannot create records and returns SC_E_SCHEMA_VIOLATION.
+        //   2. The caller fills the primary key and required columns through the
+        //      ISCRecord Set* accessors. Field level checks (column exists, type
+        //      compatibility, RecordId format, relation metadata) still apply
+        //      immediately, but unique / check / foreign key conflicts on a
+        //      record created in this edit are deferred.
+        //   3. ISCDatabase::Commit() is the single final constraint boundary. It
+        //      validates required values, primary key, unique, check and foreign
+        //      key constraints before any persistence happens.
+        //
+        // Out parameter:
+        //   outRecord is only assigned on success and stays untouched on failure.
         virtual ErrorCode CreateRecord(SCRecordPtr& outRecord) = 0;
         virtual ErrorCode DeleteRecord(RecordId id) = 0;
 
@@ -315,7 +333,17 @@ namespace StableCore::Storage
     public:
         // Starts the single active edit session for this database.
         virtual ErrorCode BeginEdit(const wchar_t* name, SCEditPtr& outEdit) = 0;
+
+        // Finalizes the edit session. Commit() first validates required values,
+        // primary key, unique, check and foreign key constraints; nothing is
+        // written to storage when validation fails and the edit stays Active so
+        // the caller can fix the draft and commit again. A failure while
+        // persisting moves the edit to a poisoned state where Rollback() is the
+        // only allowed transition.
         virtual ErrorCode Commit(ISCEditSession* edit) = 0;
+
+        // Discards the edit session. Rollback() is also the only recovery path
+        // for a poisoned edit.
         virtual ErrorCode Rollback(ISCEditSession* edit) = 0;
 
         virtual ErrorCode Undo() = 0;
@@ -374,18 +402,27 @@ namespace StableCore::Storage
             return SC_E_NOTIMPL;
         }
 
+        // Diagnostic escape hatch: reports the in-memory undo / redo stacks. It
+        // must stay usable even when the database is in the DatabaseFaulted
+        // state, and it must not touch storage.
         virtual ErrorCode GetEditLogState(SCEditLogState* outState) const
         {
             (void)outState;
             return SC_E_NOTIMPL;
         }
 
+        // Diagnostic escape hatch: reports the active edit state. It must stay
+        // usable even when the database is in the DatabaseFaulted state, and it
+        // must not touch storage. consistencyLost is set when replay
+        // compensation failed.
         virtual ErrorCode GetEditingState(SCEditingDatabaseState* outState) const
         {
             (void)outState;
             return SC_E_NOTIMPL;
         }
 
+        // Last confirmed in-memory version snapshot. Never touches storage, so
+        // it stays callable in the DatabaseFaulted state.
         virtual VersionId GetCurrentVersion() const noexcept = 0;
         virtual std::int32_t GetSchemaVersion() const noexcept = 0;
 

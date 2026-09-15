@@ -970,6 +970,11 @@ namespace StableCore::Storage
 
         ErrorCode SqliteDatabase::AnalyzeCompositeIndexPlan(const QueryPlan& inputPlan, QueryPlan* outPlan)
         {
+            const ErrorCode usableRc = EnsureUsable();
+            if (Failed(usableRc))
+            {
+                return usableRc;
+            }
             if (outPlan == nullptr)
             {
                 return SC_E_POINTER;
@@ -1209,6 +1214,11 @@ namespace StableCore::Storage
                                                                  std::vector<RecordId>* outRecordIds,
                                                                  std::uint64_t* outScannedEntries)
         {
+            const ErrorCode usableRc = EnsureUsable();
+            if (Failed(usableRc))
+            {
+                return usableRc;
+            }
             if (outRecordIds == nullptr)
             {
                 return SC_E_POINTER;
@@ -1364,10 +1374,12 @@ namespace StableCore::Storage
                                              const std::wstring& fieldName,
                                              const SCValue& value)
         {
-            const ErrorCode writableRc = EnsureWritable();
-            if (Failed(writableRc))
+            // A poisoned edit may only be closed through Rollback(): a stale
+            // record handle must not keep mutating the active journal.
+            const ErrorCode editableRc = EnsureEditableState();
+            if (Failed(editableRc))
             {
-                return writableRc;
+                return editableRc;
             }
             ClearConstraintViolation();
             const ErrorCode validate = ValidateWrite(table, data, fieldName, value);
@@ -1406,11 +1418,20 @@ namespace StableCore::Storage
                 return SC_OK;
             }
 
-            const ErrorCode constraintRc =
-                ValidateTableConstraints(table, data, &fieldName, &storedValue);
-            if (Failed(constraintRc))
+            // A record created inside the active edit stays a draft until
+            // Commit(): Unique / Check / ForeignKey conflicts are deferred to
+            // the single commit-time constraint boundary. The value written by
+            // this call is preserved so the caller can fix the conflicting
+            // field and Commit() again. Records that already existed keep the
+            // immediate validation semantics.
+            if (!lookup.createdInActiveEdit)
             {
-                return constraintRc;
+                const ErrorCode constraintRc =
+                    ValidateTableConstraints(table, data, &fieldName, &storedValue);
+                if (Failed(constraintRc))
+                {
+                    return constraintRc;
+                }
             }
 
             const bool hasForeignKeyReferences = HasForeignKeyReferencesToColumn(table->Name(), fieldName);
@@ -1435,10 +1456,10 @@ namespace StableCore::Storage
 
         ErrorCode SqliteDatabase::DeleteRecord(SqliteTable* table, const std::shared_ptr<SqliteRecordData>& data)
         {
-            const ErrorCode writableRc = EnsureWritable();
-            if (Failed(writableRc))
+            const ErrorCode editableRc = EnsureEditableState();
+            if (Failed(editableRc))
             {
-                return writableRc;
+                return editableRc;
             }
             ClearConstraintViolation();
             if (!activeEdit_)
@@ -1489,6 +1510,11 @@ namespace StableCore::Storage
                                                         RecordId sourceRecordId,
                                                         std::vector<ReferenceRecord>* outRecords) const
         {
+            const ErrorCode usableRc = EnsureUsable();
+            if (Failed(usableRc))
+            {
+                return usableRc;
+            }
             if (outRecords == nullptr)
             {
                 return SC_E_POINTER;
@@ -1575,6 +1601,11 @@ namespace StableCore::Storage
                                                         RecordId targetRecordId,
                                                         std::vector<ReverseReferenceRecord>* outRecords) const
         {
+            const ErrorCode usableRc = EnsureUsable();
+            if (Failed(usableRc))
+            {
+                return usableRc;
+            }
             if (outRecords == nullptr)
             {
                 return SC_E_POINTER;
@@ -1654,6 +1685,11 @@ namespace StableCore::Storage
 
         ErrorCode SqliteDatabase::CheckReferenceIndex(ReferenceIndexCheckResult* outResult) const
         {
+            const ErrorCode usableRc = EnsureUsable();
+            if (Failed(usableRc))
+            {
+                return usableRc;
+            }
             if (outResult == nullptr)
             {
                 return SC_E_POINTER;
@@ -1679,6 +1715,11 @@ namespace StableCore::Storage
 
         ErrorCode SqliteDatabase::GetAllReferencesDiagnosticOnly(ReferenceIndex* outIndex) const
         {
+            const ErrorCode usableRc = EnsureUsable();
+            if (Failed(usableRc))
+            {
+                return usableRc;
+            }
             if (outIndex == nullptr)
             {
                 return SC_E_POINTER;
@@ -1757,19 +1798,8 @@ namespace StableCore::Storage
             return SC_OK;
         }
 
-        ErrorCode SqliteDatabase::RebuildReferenceIndexes()
+        ErrorCode SqliteDatabase::RebuildReferenceIndexesInternal()
         {
-            const ErrorCode writableRc = EnsureWritable();
-            if (Failed(writableRc))
-            {
-                return writableRc;
-            }
-
-            if (readOnly_)
-            {
-                return SC_E_READ_ONLY_DATABASE;
-            }
-
             ReferenceIndex index;
             const ErrorCode rc = GetAllReferencesDiagnosticOnly(&index);
             if (Failed(rc))
@@ -1783,9 +1813,30 @@ namespace StableCore::Storage
             return SC_OK;
         }
 
+        ErrorCode SqliteDatabase::RebuildReferenceIndexes()
+        {
+            const ErrorCode editableRc = EnsureEditableState();
+            if (Failed(editableRc))
+            {
+                return editableRc;
+            }
+
+            if (readOnly_)
+            {
+                return SC_E_READ_ONLY_DATABASE;
+            }
+
+            return RebuildReferenceIndexesInternal();
+        }
+
         ErrorCode SqliteDatabase::CommitReferenceDelta(const ReferenceIndex& forwardDelta,
                                                        const ReverseReferenceIndex& reverseDelta)
         {
+            const ErrorCode usableRc = EnsureUsable();
+            if (Failed(usableRc))
+            {
+                return usableRc;
+            }
             if (forwardDelta.records.size() != reverseDelta.records.size())
             {
                 return SC_E_INVALIDARG;
@@ -2076,7 +2127,11 @@ namespace StableCore::Storage
 
         void SqliteDatabase::RefreshReferenceIndexState()
         {
-            const ErrorCode rc = RebuildReferenceIndexes();
+            // Recovery path: must not be gated by the public Poisoned check.
+            // Rollback() relies on this to rebuild derived state after closing a
+            // poisoned edit. GetAllReferencesDiagnosticOnly() already gates on
+            // EnsureUsable() (connection-level fault only).
+            const ErrorCode rc = RebuildReferenceIndexesInternal();
             if (Failed(rc))
             {
                 referenceIndexBuilt_ = false;
@@ -2872,10 +2927,10 @@ namespace StableCore::Storage
 
         ErrorCode SqliteDatabase::ClearColumnValues(ISCTable* table, const wchar_t* name)
         {
-            const ErrorCode writableRc = EnsureWritable();
-            if (Failed(writableRc))
+            const ErrorCode editableRc = EnsureEditableState();
+            if (Failed(editableRc))
             {
-                return writableRc;
+                return editableRc;
             }
             if (name == nullptr)
             {

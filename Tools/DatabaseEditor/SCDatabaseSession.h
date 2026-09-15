@@ -72,8 +72,11 @@ namespace StableCore::Storage::Editor
         bool AddRecord(QString* outError);
         bool DeleteRecord(StableCore::Storage::RecordId recordId,
                           QString* outError);
-        bool SavePendingChanges(QString* outError);
-        bool DiscardPendingChanges(QString* outError);
+        // Session level lifetime management for the current SCEditPtr. These
+        // forward straight to the public transaction interfaces and add no
+        // transaction semantics of their own.
+        bool CommitCurrentEdit(QString* outError);
+        bool RollbackCurrentEdit(QString* outError);
         bool Undo(QString* outError);
         bool Redo(QString* outError);
         bool BeginImportSession(const QString& sessionName,

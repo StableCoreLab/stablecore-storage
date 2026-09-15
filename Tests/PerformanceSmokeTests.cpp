@@ -188,7 +188,7 @@ TEST(StoragePerformance, SqliteBulkImportBaseline)
 
     const auto requests = BuildBeamImportRequests(floor->GetId(), kSmokeRowCount);
 
-    sc::SCBatchExecutionOptions options;
+    sc::SCImportExecutionOptions options;
     options.editName = L"perf bulk import";
     options.chunkSize = 256;
 
@@ -237,7 +237,7 @@ TEST(StoragePerformance, SqliteQueryAndSortBaseline)
     }
     requests.push_back(std::move(request));
 
-    sc::SCBatchExecutionOptions options;
+    sc::SCImportExecutionOptions options;
     options.editName = L"perf query seed";
     options.chunkSize = 256;
 

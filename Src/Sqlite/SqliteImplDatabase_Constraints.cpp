@@ -1646,6 +1646,28 @@ namespace StableCore::Storage
                     return countRc;
                 }
 
+                // Columns that take part in the primary key are reported with a
+                // dedicated reason; they are still a required column value, not
+                // a new NotNull constraint kind.
+                std::set<std::wstring> primaryKeyColumns;
+                std::int32_t constraintCount = 0;
+                if (Succeeded(schema->GetConstraintCount(&constraintCount)))
+                {
+                    for (std::int32_t constraintIndex = 0; constraintIndex < constraintCount; ++constraintIndex)
+                    {
+                        SCConstraintDef constraint;
+                        if (Failed(schema->GetConstraint(constraintIndex, &constraint)))
+                        {
+                            continue;
+                        }
+                        if (constraint.kind != SCConstraintKind::PrimaryKey)
+                        {
+                            continue;
+                        }
+                        primaryKeyColumns.insert(constraint.columns.begin(), constraint.columns.end());
+                    }
+                }
+
                 for (std::int32_t columnIndex = 0; columnIndex < columnCount; ++columnIndex)
                 {
                     SCColumnDef column;
@@ -1669,10 +1691,23 @@ namespace StableCore::Storage
                         }
 
                         const auto valueIt = data->values.find(column.name);
-                        if (valueIt == data->values.end() || valueIt->second.IsNull())
+                        if (valueIt != data->values.end() && !valueIt->second.IsNull())
                         {
-                            return SC_E_SCHEMA_VIOLATION;
+                            continue;
                         }
+
+                        SCConstraintViolationInfo info{};
+                        info.tableName = table->Name();
+                        info.constraintName.clear();
+                        info.kind = SCConstraintKind::PrimaryKey;
+                        info.columns.assign(1, column.name);
+                        info.recordId = data->id;
+                        info.reason = (primaryKeyColumns.find(column.name) != primaryKeyColumns.end())
+                                          ? L"Required primary key column value is missing."
+                                          : L"Required column value is missing.";
+                        info.source = SCConstraintViolationSource::RequiredColumnValue;
+                        SetConstraintViolation(info);
+                        return SC_E_SCHEMA_VIOLATION;
                     }
                 }
             }
@@ -1737,6 +1772,125 @@ namespace StableCore::Storage
             }
 
             return SC_OK;
+        }
+
+        ErrorCode SqliteDatabase::ValidateConstraintsOfKindForTouchedTables(const JournalTransaction& tx,
+                                                                            SCConstraintKind kind,
+                                                                            bool reverseRenameResolution) const
+        {
+            std::vector<std::wstring> touchedTableNames;
+            CollectTouchedTableNames(tx, &touchedTableNames, reverseRenameResolution);
+
+            for (const std::wstring& tableName : touchedTableNames)
+            {
+                auto tableIt = tables_.find(tableName);
+                if (tableIt == tables_.end())
+                {
+                    continue;
+                }
+
+                auto* table = static_cast<SqliteTable*>(tableIt->second.Get());
+                if (table == nullptr)
+                {
+                    continue;
+                }
+
+                SCSchemaPtr schema;
+                const ErrorCode schemaRc = table->GetSchema(schema);
+                if (Failed(schemaRc) || !schema)
+                {
+                    return Failed(schemaRc) ? schemaRc : SC_E_FAIL;
+                }
+
+                std::int32_t constraintCount = 0;
+                const ErrorCode countRc = schema->GetConstraintCount(&constraintCount);
+                if (Failed(countRc))
+                {
+                    return countRc;
+                }
+
+                for (std::int32_t index = 0; index < constraintCount; ++index)
+                {
+                    SCConstraintDef constraint;
+                    const ErrorCode constraintRc = schema->GetConstraint(index, &constraint);
+                    if (Failed(constraintRc))
+                    {
+                        return constraintRc;
+                    }
+                    if (constraint.kind != kind)
+                    {
+                        continue;
+                    }
+
+                    // An empty candidate makes the validator sweep every
+                    // non-deleted record of the table, so records created in the
+                    // active edit are checked against each other and against the
+                    // records that already existed.
+                    ErrorCode validateRc = SC_OK;
+                    switch (kind)
+                    {
+                        case SCConstraintKind::PrimaryKey:
+                        case SCConstraintKind::Unique:
+                            validateRc =
+                                ValidateConstraintUniqueness(table, constraint, std::shared_ptr<SqliteRecordData>{});
+                            break;
+                        case SCConstraintKind::Check:
+                            validateRc =
+                                ValidateCheckConstraint(table, constraint, std::shared_ptr<SqliteRecordData>{});
+                            break;
+                        default:
+                            break;
+                    }
+
+                    if (Failed(validateRc))
+                    {
+                        return validateRc;
+                    }
+                }
+            }
+
+            return SC_OK;
+        }
+
+        ErrorCode SqliteDatabase::ValidateCommitCandidateState() const
+        {
+            // Commit() is the single final constraint boundary. It validates the
+            // in-memory candidate state only, so a rejected edit stays Active and
+            // never reaches the persistence phase.
+
+            // 1. Required column values (nullable = false without default).
+            const ErrorCode requiredValueRc = ValidateRequiredValuesForCommit();
+            if (Failed(requiredValueRc))
+            {
+                return requiredValueRc;
+            }
+
+            // 2. Primary key and unique constraints.
+            ErrorCode validateRc = ValidateConstraintsOfKindForTouchedTables(
+                activeJournal_, SCConstraintKind::PrimaryKey, false);
+            if (Failed(validateRc))
+            {
+                return validateRc;
+            }
+            validateRc = ValidateConstraintsOfKindForTouchedTables(
+                activeJournal_, SCConstraintKind::Unique, false);
+            if (Failed(validateRc))
+            {
+                return validateRc;
+            }
+
+            // 3. Check constraints. SetValue() defers them for records created
+            //    in the active edit, so this is the compensating pass.
+            validateRc = ValidateConstraintsOfKindForTouchedTables(
+                activeJournal_, SCConstraintKind::Check, false);
+            if (Failed(validateRc))
+            {
+                return validateRc;
+            }
+
+            // 4. Foreign keys and the referential integrity triggered by
+            //    deletes and updates.
+            return ValidateForeignKeyReferencesForTouchedTables(activeJournal_, false);
         }
 
 } // namespace StableCore::Storage

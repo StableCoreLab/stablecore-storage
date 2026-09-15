@@ -53,6 +53,8 @@ namespace StableCore::Storage
             {SC_E_IO_ERROR, L"SC_E_IO_ERROR"},
             {SC_E_UPGRADE_PATH_NOT_FOUND, L"SC_E_UPGRADE_PATH_NOT_FOUND"},
             {SC_E_JOURNAL_TABLE_MISSING, L"SC_E_JOURNAL_TABLE_MISSING"},
+            {SC_E_DATABASE_FAULTED, L"SC_E_DATABASE_FAULTED"},
+            {SC_E_IMPORT_CLEANUP_FAILED, L"SC_E_IMPORT_CLEANUP_FAILED"},
         };
 
     }  // namespace

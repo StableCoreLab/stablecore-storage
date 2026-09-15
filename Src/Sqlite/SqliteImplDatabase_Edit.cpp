@@ -11,6 +11,12 @@ namespace StableCore::Storage
             {
                 return writableRc;
             }
+            // A poisoned edit must be closed by Rollback() before a new edit
+            // can be started.
+            if (activeEditPoisoned_)
+            {
+                return SC_E_WRITE_CONFLICT;
+            }
             const ErrorCode transitionRc = EnsureWriteTransitionAllowed();
             if (Failed(transitionRc))
             {
@@ -35,6 +41,11 @@ namespace StableCore::Storage
             {
                 return writableRc;
             }
+            // A poisoned edit may only be closed through Rollback().
+            if (activeEditPoisoned_)
+            {
+                return SC_E_WRITE_CONFLICT;
+            }
             const ErrorCode transitionRc = EnsureWriteTransitionAllowed();
             if (Failed(transitionRc))
             {
@@ -56,63 +67,24 @@ namespace StableCore::Storage
                 return SC_OK;
             }
 
-            const ErrorCode requiredValueRc = ValidateRequiredValuesForCommit();
-            if (Failed(requiredValueRc))
+            // Phase 1: final constraint boundary. It runs entirely on the
+            // in-memory candidate state and never touches SQLite, so a rejected
+            // candidate leaves the edit Active and the caller can fix the
+            // values and Commit() again.
+            const ErrorCode candidateRc = ValidateCommitCandidateState();
+            if (Failed(candidateRc))
             {
-                return requiredValueRc;
+                return candidateRc;
             }
 
-            try
+            // Phase 2: persistence attempt. Every failure - error code,
+            // exception or txn.Commit() - leaves through the single
+            // FinalizeCommitFailure() exit so memory is never left in a state
+            // that disagrees with storage.
+            const ErrorCode persistRc = CommitPersistencePhase();
+            if (Failed(persistRc))
             {
-                const VersionId committedVersion = version_ + 1;
-                JournalTransaction committedJournal = activeJournal_;
-                SqliteTxn txn(db_);
-                const ErrorCode schemaRc = PersistDeferredSchemaOps();
-                if (Failed(schemaRc))
-                {
-                    return schemaRc;
-                }
-
-                const ErrorCode uniqueConstraintRc =
-                    ValidateUniqueAndPrimaryKeyConstraintsForTouchedTables(
-                        activeJournal_, false);
-                if (Failed(uniqueConstraintRc))
-                {
-                    return uniqueConstraintRc;
-                }
-                const ErrorCode foreignKeyReferenceRc =
-                    ValidateForeignKeyReferencesForTouchedTables(
-                        activeJournal_, false);
-                if (Failed(foreignKeyReferenceRc))
-                {
-                    return foreignKeyReferenceRc;
-                }
-                PersistTouchedRecords(committedJournal,
-                                      committedVersion,
-                                      false);
-                DeleteRedoJournalRows();
-                committedJournal.committedVersion = committedVersion;
-                const std::int64_t txId =
-                    InsertJournalTransaction(committedJournal, kStackUndo, static_cast<int>(undoStack_.size()));
-                committedJournal.commitId = static_cast<CommitId>(txId);
-                PersistJournalEntries(txId, committedJournal);
-                SaveMetadata(committedVersion);
-                const ErrorCode commitRc = txn.Commit();
-                if (Failed(commitRc))
-                {
-                    return commitRc;
-                }
-
-                version_ = committedVersion;
-                UpdateTouchedVersions(committedJournal, version_, false);
-                undoStack_.push_back(SqlitePersistedJournalTransaction{txId, committedJournal});
-                redoStack_.clear();
-                activeEdit_->SetState(EditState::Committed);
-                activeJournal_ = committedJournal;
-                activeSchemaOps_.clear();
-            } catch (...)
-            {
-                return SC_E_FAIL;
+                return persistRc;
             }
 
             RefreshReferenceIndexState();
@@ -127,6 +99,121 @@ namespace StableCore::Storage
             } guard{this};
             NotifyObservers(SCChangeSet);
             return SC_OK;
+        }
+
+        ErrorCode SqliteDatabase::CommitPersistencePhase()
+        {
+            const VersionId committedVersion = version_ + 1;
+            JournalTransaction pendingJournal = activeJournal_;
+
+            try
+            {
+                SqliteTxn txn(db_);
+                // Fault injection: simulate a persistence failure after the
+                // transaction has already been opened. FinalizeCommitFailure()
+                // decides whether the edit stays usable or becomes Poisoned.
+                if (journalFailureInjection_.operation == JournalFailureOperation::Commit)
+                {
+                    return FinalizeCommitFailure(SC_E_IO_ERROR, pendingJournal);
+                }
+                const ErrorCode schemaRc = PersistDeferredSchemaOps();
+                if (Failed(schemaRc))
+                {
+                    return FinalizeCommitFailure(schemaRc, pendingJournal);
+                }
+
+                PersistTouchedRecords(pendingJournal,
+                                      committedVersion,
+                                      false);
+                DeleteRedoJournalRows();
+                pendingJournal.committedVersion = committedVersion;
+                const std::int64_t txId =
+                    InsertJournalTransaction(pendingJournal, kStackUndo, static_cast<int>(undoStack_.size()));
+                pendingJournal.commitId = static_cast<CommitId>(txId);
+                PersistJournalEntries(txId, pendingJournal);
+                SaveMetadata(committedVersion);
+                const ErrorCode commitRc = txn.Commit();
+                if (Failed(commitRc))
+                {
+                    return FinalizeCommitFailure(commitRc, pendingJournal);
+                }
+
+                version_ = committedVersion;
+                UpdateTouchedVersions(pendingJournal, version_, false);
+                undoStack_.push_back(SqlitePersistedJournalTransaction{txId, pendingJournal});
+                redoStack_.clear();
+                activeEdit_->SetState(EditState::Committed);
+                activeJournal_ = pendingJournal;
+                activeSchemaOps_.clear();
+                return SC_OK;
+            } catch (...)
+            {
+                return FinalizeCommitFailure(SC_E_FAIL, pendingJournal);
+            }
+        }
+
+        ErrorCode SqliteDatabase::FinalizeCommitFailure(ErrorCode primaryRc,
+                                                        const JournalTransaction& pendingJournal)
+        {
+            // Nothing in the persistence phase is allowed to change the
+            // in-memory model before txn.Commit() succeeds: version, undo stack
+            // and the active journal are only touched afterwards. The only
+            // thing left to prove is that SQLite really left the transaction,
+            // because a still open transaction would mean storage may hold part
+            // of the candidate while memory does not.
+            bool restored = false;
+            if (db_.Raw() != nullptr)
+            {
+                if (sqlite3_get_autocommit(db_.Raw()) != 0)
+                {
+                    // No transaction is active: SQLite already ended it (a
+                    // failed COMMIT is atomic, it never leaves a partial write).
+                    restored = true;
+                } else
+                {
+                    // The transaction is still open (statement error before
+                    // COMMIT). Roll it back right here instead of relying on the
+                    // SqliteTxn destructor, so the outcome can be verified.
+                    const ErrorCode rollbackRc = db_.Execute("ROLLBACK;");
+                    restored = Succeeded(rollbackRc) && sqlite3_get_autocommit(db_.Raw()) != 0;
+                    // Fault injection: force the recovery ROLLBACK to be
+                    // considered failed, which drives the edit into Poisoned.
+                    if (journalFailureInjection_.failCommitRollback)
+                    {
+                        restored = false;
+                    }
+                }
+            }
+
+            if (restored)
+            {
+                try
+                {
+                    // Rebuild the derived state (reference index) from the
+                    // unchanged candidate records and verify the journal is
+                    // still the one this attempt started from.
+                    RefreshReferenceIndexState();
+                    restored = !replayCompensationFailureDetected_ &&
+                               pendingJournal.entries.size() == activeJournal_.entries.size();
+                } catch (...)
+                {
+                    restored = false;
+                }
+            }
+
+            if (!restored)
+            {
+                // Recovery cannot be proven: the edit becomes Poisoned. Normal
+                // reads, writes, Commit(), Undo, Redo and BeginEdit() are
+                // rejected; only Rollback() may still close it.
+                activeEditPoisoned_ = true;
+                return primaryRc;
+            }
+
+            // Verified: memory matches storage again, so the edit stays usable.
+            // A later Rollback() can close it normally.
+            activeEditPoisoned_ = false;
+            return primaryRc;
         }
 
         ErrorCode SqliteDatabase::Rollback(ISCEditSession* edit)
@@ -206,6 +293,10 @@ namespace StableCore::Storage
             activeEdit_.Reset();
             activeJournal_ = JournalTransaction{};
             activeSchemaOps_.clear();
+            // Rollback() is the only way out of a poisoned edit: the active
+            // journal, the in-memory records and the reference index are all
+            // back to the pre-edit state, so the connection is usable again.
+            activeEditPoisoned_ = false;
             return SC_OK;
         }
 
@@ -227,6 +318,11 @@ namespace StableCore::Storage
 
         ErrorCode SqliteDatabase::GetTable(const wchar_t* name, SCTablePtr& outTable)
         {
+            const ErrorCode usableRc = EnsureUsable();
+            if (Failed(usableRc))
+            {
+                return usableRc;
+            }
             if (name == nullptr)
             {
                 return SC_E_INVALIDARG;
@@ -242,6 +338,11 @@ namespace StableCore::Storage
 
         ErrorCode SqliteDatabase::GetTableCount(std::int32_t* outCount)
         {
+            const ErrorCode usableRc = EnsureUsable();
+            if (Failed(usableRc))
+            {
+                return usableRc;
+            }
             if (outCount == nullptr)
             {
                 return SC_E_POINTER;
@@ -253,6 +354,11 @@ namespace StableCore::Storage
 
         ErrorCode SqliteDatabase::GetTableName(std::int32_t index, std::wstring* outName)
         {
+            const ErrorCode usableRc = EnsureUsable();
+            if (Failed(usableRc))
+            {
+                return usableRc;
+            }
             if (outName == nullptr)
             {
                 return SC_E_POINTER;
@@ -270,10 +376,10 @@ namespace StableCore::Storage
 
         ErrorCode SqliteDatabase::CreateTable(const wchar_t* name, SCTablePtr& outTable)
         {
-            const ErrorCode writableRc = EnsureWritable();
-            if (Failed(writableRc))
+            const ErrorCode editableRc = EnsureEditableState();
+            if (Failed(editableRc))
             {
-                return writableRc;
+                return editableRc;
             }
             const ErrorCode transitionRc = EnsureWriteTransitionAllowed();
             if (Failed(transitionRc))
@@ -337,10 +443,10 @@ namespace StableCore::Storage
 
         ErrorCode SqliteDatabase::DeleteTable(const wchar_t* name)
         {
-            const ErrorCode writableRc = EnsureWritable();
-            if (Failed(writableRc))
+            const ErrorCode editableRc = EnsureEditableState();
+            if (Failed(editableRc))
             {
-                return writableRc;
+                return editableRc;
             }
             const ErrorCode transitionRc = EnsureWriteTransitionAllowed();
             if (Failed(transitionRc))
@@ -567,10 +673,10 @@ namespace StableCore::Storage
         ErrorCode SqliteDatabase::RenameTable(const wchar_t* originalName,
                                               const wchar_t* newName)
         {
-            const ErrorCode writableRc = EnsureWritable();
-            if (Failed(writableRc))
+            const ErrorCode editableRc = EnsureEditableState();
+            if (Failed(editableRc))
             {
-                return writableRc;
+                return editableRc;
             }
             const ErrorCode transitionRc = EnsureWriteTransitionAllowed();
             if (Failed(transitionRc))
@@ -626,6 +732,11 @@ namespace StableCore::Storage
 
         ErrorCode SqliteDatabase::GetLastConstraintViolationInfo(SCConstraintViolationInfo* outInfo) const
         {
+            const ErrorCode usableRc = EnsureUsable();
+            if (Failed(usableRc))
+            {
+                return usableRc;
+            }
             if (outInfo == nullptr)
             {
                 return SC_E_POINTER;
@@ -653,6 +764,11 @@ namespace StableCore::Storage
                                                    const SCBackupOptions& options,
                                                    SCBackupResult* outResult)
         {
+            const ErrorCode usableRc = EnsureUsable();
+            if (Failed(usableRc))
+            {
+                return usableRc;
+            }
             if (targetPath == nullptr || *targetPath == L'\0')
             {
                 return SC_E_INVALIDARG;
@@ -2014,6 +2130,12 @@ namespace StableCore::Storage
             if (Failed(writableRc))
             {
                 return writableRc;
+            }
+            // Undo / Redo are rejected while an edit is poisoned: history moves
+            // would replay on top of a candidate whose durability is unknown.
+            if (activeEditPoisoned_)
+            {
+                return SC_E_WRITE_CONFLICT;
             }
             ClearConstraintViolation();
             const ErrorCode transitionRc = EnsureWriteTransitionAllowed();

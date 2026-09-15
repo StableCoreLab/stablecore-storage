@@ -222,7 +222,6 @@ TEST(DatabaseEditorSession, ExecuteBatchEditCreatesRecordsWithValues)
 
     sc::SCBatchExecutionOptions options;
     options.editName = L"Import CSV";
-    options.rollbackOnError = true;
 
     sc::SCBatchExecutionResult result;
     const sc::ErrorCode rc = sc::ExecuteBatchEdit(session.Database(), requests, options, &result);
@@ -334,7 +333,7 @@ TEST(DatabaseEditorSession, AddIndexRejectsWhilePendingEditIsActive)
         QStringLiteral(
             "A pending edit is active. Save or discard it before starting a new action."));
 
-    ASSERT_TRUE(session.DiscardPendingChanges(&error)) << error.toStdString();
+    ASSERT_TRUE(session.RollbackCurrentEdit(&error)) << error.toStdString();
 }
 
 TEST(DatabaseEditorSession, AddRecordCreatesPendingEditForRequiredColumnsAndSaveRequiresValues)
@@ -352,10 +351,10 @@ TEST(DatabaseEditorSession, AddRecordCreatesPendingEditForRequiredColumnsAndSave
 
     EXPECT_TRUE(session.HasPendingEdit());
 
-    EXPECT_FALSE(session.SavePendingChanges(&error));
+    EXPECT_FALSE(session.CommitCurrentEdit(&error));
     EXPECT_EQ(error, QStringLiteral("Storage error: 0xffffffffa0010008"));
 
-    ASSERT_TRUE(session.DiscardPendingChanges(&error)) << error.toStdString();
+    ASSERT_TRUE(session.RollbackCurrentEdit(&error)) << error.toStdString();
 
     ASSERT_TRUE(session.CurrentTable() != nullptr);
     sc::SCRecordCursorPtr cursor;
@@ -388,7 +387,7 @@ TEST(DatabaseEditorSession, AddRecordAllowsExplicitRequiredValuesBeforeSave)
         session.SetCellValue(record->GetId(), QStringLiteral("Width"), QVariant::fromValue<qlonglong>(42), &error))
         << error.toStdString();
 
-    ASSERT_TRUE(session.SavePendingChanges(&error)) << error.toStdString();
+    ASSERT_TRUE(session.CommitCurrentEdit(&error)) << error.toStdString();
 
     EXPECT_FALSE(session.HasPendingEdit());
 
@@ -437,7 +436,7 @@ TEST(DatabaseEditorSession, BinaryCellValuesRoundTripThroughEditorSession)
         << error.toStdString();
     EXPECT_EQ(storedValue.toString(), QStringLiteral("0xAABBCC"));
 
-    ASSERT_TRUE(session.SavePendingChanges(&error)) << error.toStdString();
+    ASSERT_TRUE(session.CommitCurrentEdit(&error)) << error.toStdString();
 
     editor::SCDatabaseSession reopened;
     ASSERT_TRUE(reopened.OpenDatabase(QString::fromStdWString(dbPath.wstring()), &error))
@@ -715,7 +714,7 @@ TEST(DatabaseEditorSession, RelationFieldUsesConfiguredStorageAndDisplayColumns)
         << error.toStdString();
 
     const sc::RecordId floorRecordId = floorRecord->GetId();
-    ASSERT_TRUE(session.SavePendingChanges(&error)) << error.toStdString();
+    ASSERT_TRUE(session.CommitCurrentEdit(&error)) << error.toStdString();
 
     ASSERT_TRUE(session.SelectTable(QStringLiteral("Beam"), &error)) << error.toStdString();
     ASSERT_TRUE(session.AddRecord(&error)) << error.toStdString();
@@ -730,7 +729,7 @@ TEST(DatabaseEditorSession, RelationFieldUsesConfiguredStorageAndDisplayColumns)
                                      QStringLiteral("F-001"), &error))
         << error.toStdString();
 
-    ASSERT_TRUE(session.SavePendingChanges(&error)) << error.toStdString();
+    ASSERT_TRUE(session.CommitCurrentEdit(&error)) << error.toStdString();
 
     QVariant displayValue;
     const sc::RecordId beamRecordId = beamRecord->GetId();
@@ -777,7 +776,7 @@ TEST(DatabaseEditorSession, RelationCandidatesSupportRecordIdBinding)
     ASSERT_TRUE(session.SetCellValue(floorRecord->GetId(), QStringLiteral("Name"),
                                      QStringLiteral("1F"), &error))
         << error.toStdString();
-    ASSERT_TRUE(session.SavePendingChanges(&error)) << error.toStdString();
+    ASSERT_TRUE(session.CommitCurrentEdit(&error)) << error.toStdString();
 
     ASSERT_TRUE(session.CreateTable(QStringLiteral("Beam"), &error)) << error.toStdString();
     ASSERT_TRUE(session.AddColumn(MakeRecordIdRelationColumn(L"FloorRef", L"Floor"), &error)) << error.toStdString();
@@ -845,7 +844,7 @@ TEST(DatabaseEditorSession, PendingRequiredEditBlocksTableSwitchUntilSaved)
               QStringLiteral("Save or discard pending changes before switching "
                              "tables."));
 
-    ASSERT_TRUE(session.DiscardPendingChanges(&error)) << error.toStdString();
+    ASSERT_TRUE(session.RollbackCurrentEdit(&error)) << error.toStdString();
     ASSERT_TRUE(session.SelectTable(QStringLiteral("Other"), &error)) << error.toStdString();
 }
 
@@ -877,7 +876,6 @@ TEST(DatabaseEditorSession, ExecuteBatchEditRollsBackOnInvalidAssignment)
 
     sc::SCBatchExecutionOptions options;
     options.editName = L"Import CSV";
-    options.rollbackOnError = true;
 
     sc::SCBatchExecutionResult result;
     const sc::ErrorCode rc = sc::ExecuteBatchEdit(session.Database(), requests, options, &result);

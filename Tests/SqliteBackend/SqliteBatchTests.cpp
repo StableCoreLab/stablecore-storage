@@ -43,9 +43,10 @@ TEST(SqliteBatch, BatchFailureDoesNotLeaveActiveEdit)
     EXPECT_EQ(CreateFileDb(dbPath.c_str(), db), sc::SC_OK);
     sc::SCTablePtr beamTable = CreateBeamTable(db);
 
+    // ExecuteBatchEdit() has no rollbackOnError option: it always rolls the
+    // whole batch back atomically, so this case must not depend on the flag.
     sc::SCBatchExecutionOptions options;
     options.editName = L"broken batch";
-    options.rollbackOnError = false;
 
     std::vector<sc::SCBatchTableRequest> requests;
     sc::SCBatchTableRequest request;

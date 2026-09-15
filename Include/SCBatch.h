@@ -46,7 +46,47 @@ namespace StableCore::Storage
         std::vector<RecordId> deletes;
     };
 
+    enum class SCBatchOperationKind
+    {
+        Create,
+        Update,
+        Delete,
+    };
+
+    struct SCBatchFailureLocation
+    {
+        bool valid{false};
+        SCImportChunkId chunkId{0};
+        std::size_t tableRequestIndex{0};
+        // false means a table request level failure (for example ResolveTable):
+        // operationKind / operationIndex / recordId are not available.
+        bool hasOperation{false};
+        SCBatchOperationKind operationKind{SCBatchOperationKind::Create};
+        std::size_t operationIndex{0};
+        RecordId recordId{0};
+        // Field assignment position of Create / Update failures. Stays at the
+        // default value with an empty name when there is no field context.
+        std::size_t assignmentIndex{0};
+        std::wstring fieldName;
+        // Only true when the storage layer actually provided constraint
+        // violation details. Immediate errors such as a type mismatch must not
+        // present a default constructed value as a PrimaryKey violation.
+        bool hasConstraintViolation{false};
+        SCConstraintViolationInfo constraintViolation;
+    };
+
     struct SCBatchExecutionOptions
+    {
+        std::wstring editName;
+        std::size_t chunkSize{128};
+        bool persistCheckpoints{true};
+    };
+
+    // rollbackOnError only belongs to the import session flow: it controls
+    // whether a failing chunk append aborts and cleans up the session. Plain
+    // batch edits are always atomic, so SCBatchExecutionOptions does not carry
+    // the flag any more.
+    struct SCImportExecutionOptions
     {
         std::wstring editName;
         std::size_t chunkSize{128};
@@ -115,9 +155,12 @@ namespace StableCore::Storage
         SCImportSessionId importSessionId{0};
         std::size_t chunkCount{0};
         std::size_t checkpointCount{0};
+        // Attribution for failures that only surface inside Commit(). Empty
+        // (valid == false) when the batch succeeded.
+        SCBatchFailureLocation failureLocation;
     };
 
-    using ISCmportOptions = SCBatchExecutionOptions;
+    using ISCmportOptions = SCImportExecutionOptions;
     using ISCmportResult = SCBatchExecutionResult;
 
     ErrorCode ExecuteBatchEdit(ISCDatabase* database,

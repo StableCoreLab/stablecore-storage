@@ -975,12 +975,14 @@ namespace StableCore::Storage::Editor
         editMenu->addAction(QStringLiteral("Redo"), this,
                             &SCDatabaseEditorMainWindow::RedoLastAction);
         editMenu->addSeparator();
-        savePendingChangesAction_ = editMenu->addAction(
-            QStringLiteral("Save Pending Changes"), this,
-            &SCDatabaseEditorMainWindow::SavePendingChanges);
-        discardPendingChangesAction_ = editMenu->addAction(
-            QStringLiteral("Discard Pending Changes"), this,
-            &SCDatabaseEditorMainWindow::DiscardPendingChanges);
+        // Row-by-row auto commit is triggered by switching rows and Esc, so the
+        // menu only exposes the batch transaction entry points.
+        commitCurrentEditAction_ = editMenu->addAction(
+            QStringLiteral("提交本批次"), this,
+            &SCDatabaseEditorMainWindow::CommitCurrentEdit);
+        rollbackCurrentEditAction_ = editMenu->addAction(
+            QStringLiteral("放弃本批次"), this,
+            &SCDatabaseEditorMainWindow::RollbackCurrentEdit);
         editMenu->addAction(QStringLiteral("Refresh"), this,
                             &SCDatabaseEditorMainWindow::RefreshCurrentView);
 
@@ -1108,11 +1110,11 @@ namespace StableCore::Storage::Editor
             &SCDatabaseEditorMainWindow::EditSelectedRelation);
         tableToolBar_->addSeparator();
         tableToolBar_->addAction(
-            QStringLiteral("Save Pending Changes"), this,
-            &SCDatabaseEditorMainWindow::SavePendingChanges);
+            QStringLiteral("提交本批次"), this,
+            &SCDatabaseEditorMainWindow::CommitCurrentEdit);
         tableToolBar_->addAction(
-            QStringLiteral("Discard Pending Changes"), this,
-            &SCDatabaseEditorMainWindow::DiscardPendingChanges);
+            QStringLiteral("放弃本批次"), this,
+            &SCDatabaseEditorMainWindow::RollbackCurrentEdit);
         tableToolBar_->addSeparator();
         tableToolBar_->addAction(
             QStringLiteral("Add Computed Column"), this,
@@ -2003,19 +2005,23 @@ namespace StableCore::Storage::Editor
             session_->HasPendingEdit())
         {
             SetStatusMessage(QStringLiteral(
-                "Record draft created. Fill required fields and then save pending changes."));
+                "Record draft created. Fill required fields, then commit the edit."));
         } else
         {
             SetStatusMessage(QStringLiteral("Record added."));
         }
     }
 
-    void SCDatabaseEditorMainWindow::SavePendingChanges()
+    void SCDatabaseEditorMainWindow::CommitCurrentEdit()
     {
         QString error;
-        if (!session_->SavePendingChanges(&error))
+        if (!session_->CommitCurrentEdit(&error))
         {
-            ShowError(QStringLiteral("Failed to save pending changes"), error);
+            // The current edit stays active so the user can fix the draft.
+            ShowError(QStringLiteral("Failed to commit the current edit"), error);
+            RefreshGridData();
+            RefreshCurrentRecordPanel();
+            UpdateDatabaseStatusBar();
             return;
         }
 
@@ -2025,15 +2031,15 @@ namespace StableCore::Storage::Editor
         RefreshOverviewPanels();
         UpdateGridSummary();
         UpdateDatabaseStatusBar();
-        SetStatusMessage(QStringLiteral("Pending changes saved."));
+        SetStatusMessage(QStringLiteral("Current edit committed."));
     }
 
-    void SCDatabaseEditorMainWindow::DiscardPendingChanges()
+    void SCDatabaseEditorMainWindow::RollbackCurrentEdit()
     {
         QString error;
-        if (!session_->DiscardPendingChanges(&error))
+        if (!session_->RollbackCurrentEdit(&error))
         {
-            ShowError(QStringLiteral("Failed to discard pending changes"), error);
+            ShowError(QStringLiteral("Failed to roll back the current edit"), error);
             return;
         }
 
@@ -2043,7 +2049,20 @@ namespace StableCore::Storage::Editor
         RefreshOverviewPanels();
         UpdateGridSummary();
         UpdateDatabaseStatusBar();
-        SetStatusMessage(QStringLiteral("Pending changes discarded."));
+        SetStatusMessage(QStringLiteral("Current edit rolled back."));
+    }
+
+    void SCDatabaseEditorMainWindow::keyPressEvent(QKeyEvent* event)
+    {
+        if (event != nullptr && event->key() == Qt::Key_Escape && session_ != nullptr &&
+            session_->HasPendingEdit())
+        {
+            event->accept();
+            RollbackCurrentEdit();
+            return;
+        }
+
+        QMainWindow::keyPressEvent(event);
     }
 
     void SCDatabaseEditorMainWindow::DeleteSelectedRecord()
@@ -2739,9 +2758,10 @@ namespace StableCore::Storage::Editor
             return true;
         }
 
+        // ExecuteBatchEdit() has no rollbackOnError: it always rolls the whole
+        // batch back atomically when anything fails.
         sc::SCBatchExecutionOptions options;
         options.editName = L"ImportCSV";
-        options.rollbackOnError = true;
 
         sc::SCBatchExecutionResult result;
         const sc::ErrorCode rc = sc::ExecuteBatchEdit(
@@ -3897,16 +3917,16 @@ namespace StableCore::Storage::Editor
                     : QStringLiteral("Table: ") + name);
         }
 
-        if (savePendingChangesAction_ != nullptr)
+        if (commitCurrentEditAction_ != nullptr)
         {
-            savePendingChangesAction_->setEnabled(
+            commitCurrentEditAction_->setEnabled(
                 stateLoaded && session_->HasPendingEdit() &&
                 state.openMode != sc::SCDatabaseOpenMode::ReadOnly);
         }
 
-        if (discardPendingChangesAction_ != nullptr)
+        if (rollbackCurrentEditAction_ != nullptr)
         {
-            discardPendingChangesAction_->setEnabled(
+            rollbackCurrentEditAction_->setEnabled(
                 stateLoaded && session_->HasPendingEdit() &&
                 state.openMode != sc::SCDatabaseOpenMode::ReadOnly);
         }

@@ -41,3 +41,5 @@
 *.dwo
 /Extern/
 /build/
+# WorkBuddy workspace data (project memory, not for version control)
+/.workbuddy/

@@ -314,6 +314,8 @@ if (SCSTORAGE_BUILD_TESTS)
         Tests/SqliteBackend/SqliteImportTests.cpp
         Tests/SqliteBackend/SqliteSchemaTests.cpp
         Tests/SqliteBackend/SqliteBatchTests.cpp
+        Tests/SqliteBackend/SqliteBatchFailureLocationTests.cpp
+        Tests/SqliteBackend/SqliteCreateRecordLifecycleTests.cpp
         Tests/SqliteBackend/SqliteReadOnlyOpenTests.cpp
         Tests/SqliteBackend/SqliteRelationTests.cpp
         Tests/StorageCore/StorageCoreValueTests.cpp
@@ -376,6 +378,8 @@ if (SCSTORAGE_BUILD_TESTS)
         Tests/SqliteBackend/SqliteImportTests.cpp
         Tests/SqliteBackend/SqliteSchemaTests.cpp
         Tests/SqliteBackend/SqliteBatchTests.cpp
+        Tests/SqliteBackend/SqliteBatchFailureLocationTests.cpp
+        Tests/SqliteBackend/SqliteCreateRecordLifecycleTests.cpp
         Tests/SqliteBackend/SqliteReadOnlyOpenTests.cpp
         Tests/SqliteBackend/SqliteRelationTests.cpp
         Tests/TableViewTests.cpp

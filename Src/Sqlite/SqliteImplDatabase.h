@@ -71,20 +71,13 @@ private:
 class SqliteRecordCursor final : public ISCRecordCursor, public SCRefCountedObject
 {
 public:
-    explicit SqliteRecordCursor(std::vector<SCRecordPtr> records) : records_(std::move(records)) {}
+    SqliteRecordCursor(SqliteDatabase* db, std::vector<SCRecordPtr> records)
+        : db_(db), records_(std::move(records)) {}
 
-    ErrorCode Next(SCRecordPtr& outRecord) override
-    {
-        if (index_ < records_.size())
-        {
-            outRecord = records_[index_++];
-            return SC_OK;
-        }
-        outRecord.Reset();
-        return SC_OK;
-    }
+    ErrorCode Next(SCRecordPtr& outRecord) override;
 
 private:
+    SqliteDatabase* db_{nullptr};
     std::vector<SCRecordPtr> records_;
     std::size_t index_{0};
 };
@@ -99,11 +92,7 @@ public:
     ErrorCode GetRecord(RecordId id, SCRecordPtr& outRecord) override;
     ErrorCode CreateRecord(SCRecordPtr& outRecord) override;
     ErrorCode DeleteRecord(RecordId id) override;
-    ErrorCode GetSchema(SCSchemaPtr& outSchema) override
-    {
-        outSchema = schema_;
-        return SC_OK;
-    }
+    ErrorCode GetSchema(SCSchemaPtr& outSchema) override;
     ErrorCode EnumerateRecords(SCRecordCursorPtr& outCursor) override;
     ErrorCode FindRecords(const SCQueryCondition& condition, SCRecordCursorPtr& outCursor) override;
 
@@ -207,7 +196,19 @@ public:
     ErrorCode CollectCompositeIndexRecordIds(const QueryPlan& analyzedPlan,
                                              std::vector<RecordId>* outRecordIds,
                                              std::uint64_t* outScannedEntries) override;
-    ErrorCode ExecuteSql(const char* sql) override { return db_.Execute(sql); }
+    // Low-level escape hatch reserved for the schema upgrade pipeline
+    // (SqliteUpgradeV5ToV6 / V6ToV7 / V7ToV8). It is NOT part of the ISCDatabase
+    // public surface and must not run while the connection is faulted or while
+    // an edit is poisoned (only Rollback may touch a poisoned edit).
+    ErrorCode ExecuteSql(const char* sql) override
+    {
+        const ErrorCode editableRc = EnsureEditableState();
+        if (Failed(editableRc))
+        {
+            return editableRc;
+        }
+        return db_.Execute(sql);
+    }
     bool HasTableColumn(const char* tableName, const char* columnName) const override
     {
         return HasTableColumnRaw(db_.Raw(), tableName, columnName);
@@ -217,8 +218,21 @@ public:
 
     friend class SqliteSchema;
     friend class SqliteTable;
+    friend class SqliteRecord;
 
     bool HasActiveEdit() const noexcept { return static_cast<bool>(activeEdit_); }
+
+    // Unified gate for every ordinary public entry point that reads, writes or
+    // otherwise depends on database consistency. GetEditingState() and
+    // GetEditLogState() are the only diagnostic exceptions; they must never
+    // call this helper because they stay available after a consistency loss.
+    ErrorCode EnsureUsable() const;
+    // EnsureUsable() plus the "active edit is poisoned" gate. Every ordinary
+    // write, Commit, Undo, Redo and BeginEdit must use this. Rollback() must
+    // use EnsureWritable() instead so it can clean up a poisoned edit.
+    ErrorCode EnsureEditableState() const;
+    bool IsDatabaseFaulted() const noexcept { return replayCompensationFailureDetected_; }
+    bool HasPoisonedActiveEdit() const noexcept { return activeEditPoisoned_; }
     bool IsCleanShutdown() const noexcept { return cleanShutdown_; }
     void SuppressCleanShutdownOnDestroy() noexcept { persistCleanShutdownOnDestroy_ = false; }
     RecordId AllocateRecordId() noexcept { return nextRecordId_++; }
@@ -245,6 +259,7 @@ public:
         Rollback,
         Undo,
         Redo,
+        Commit,
     };
 
     struct JournalFailureInjection
@@ -252,6 +267,9 @@ public:
         JournalFailureOperation operation{JournalFailureOperation::Undo};
         std::size_t failPrimaryAfterAppliedEntries{~std::size_t{0}};
         std::size_t failCompensationAfterAppliedEntries{~std::size_t{0}};
+        // When true, FinalizeCommitFailure() also fails its recovery ROLLBACK,
+        // forcing the active edit into Poisoned instead of staying usable.
+        bool failCommitRollback{false};
     };
 
     void SetJournalFailureInjectionForTesting(const JournalFailureInjection& injection);
@@ -375,12 +393,30 @@ private:
                                                  const QueryPlan& analyzedPlan,
                                                  CompositeIndexLookupBounds* outBounds) const;
     ErrorCode ValidateRequiredValuesForCommit() const;
+    ErrorCode ValidateConstraintsOfKindForTouchedTables(
+        const JournalTransaction& tx,
+        SCConstraintKind kind,
+        bool reverseRenameResolution = false) const;
     ErrorCode ValidateUniqueAndPrimaryKeyConstraintsForTouchedTables(
         const JournalTransaction& tx, bool reverseRenameResolution = false) const;
+    // Full candidate-state validation for Commit(). Must run before any SQLite
+    // write so a rejected candidate never reaches the persistence phase.
+    ErrorCode ValidateCommitCandidateState() const;
+    // Second Commit() phase: everything that may modify SQLite state.
+    ErrorCode CommitPersistencePhase();
+    // Single exit path for the persistence phase. Restores memory state and
+    // either leaves the edit recoverable through Rollback() or escalates to a
+    // permanent database fault.
+    ErrorCode FinalizeCommitFailure(ErrorCode primaryRc, const JournalTransaction& pendingJournal);
     bool HasAliveRecords(SqliteSchema* schema) const;
     bool IsRecordReferenced(const std::wstring& tableName, RecordId recordId) const;
     SqliteTable* FindTableByRowId(std::int64_t tableRowId) const;
     void MarkReferenceIndexDirty() noexcept;
+    // Rebuilds the in-memory reference index without the public Poisoned gate.
+    // This is the recovery path used by Commit() / Rollback() / replay, where
+    // the caller already holds the recovery channel and must not be blocked by
+    // the ordinary writable-state check.
+    ErrorCode RebuildReferenceIndexesInternal();
     void RefreshReferenceIndexState();
     void CollectTouchedTableNames(const JournalTransaction& tx,
                                   std::vector<std::wstring>* outTableNames,
@@ -529,6 +565,9 @@ private:
     bool persistCleanShutdownOnDestroy_{true};
     bool dirtyStartupDetected_{false};
     bool replayCompensationFailureDetected_{false};
+    // Active edit whose SQLite durability is unknown after a failed persistence
+    // attempt. Only Rollback() is allowed while this is set.
+    bool activeEditPoisoned_{false};
     bool corruptionDetected_{false};
     bool importSessionStoreReady_{false};
     mutable std::optional<SCConstraintViolationInfo> lastConstraintViolation_;

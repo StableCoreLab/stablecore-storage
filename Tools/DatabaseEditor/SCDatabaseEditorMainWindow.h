@@ -2,6 +2,7 @@
 
 #include <QDockWidget>
 #include <QAction>
+#include <QKeyEvent>
 #include <QLineEdit>
 #include <QLabel>
 #include <QMainWindow>
@@ -31,6 +32,12 @@ namespace StableCore::Storage::Editor
     public:
         explicit SCDatabaseEditorMainWindow(QWidget* parent = nullptr);
 
+    protected:
+        // Esc discards the current edit: it forwards to
+        // SCDatabaseSession::RollbackCurrentEdit() and therefore to the public
+        // db->Rollback(edit).
+        void keyPressEvent(QKeyEvent* event) override;
+
     private slots:
         void CreateDatabase();
         void OpenDatabase();
@@ -51,8 +58,8 @@ namespace StableCore::Storage::Editor
         void DeleteSelectedComputedColumn();
         void AddRecord();
         void DeleteSelectedRecord();
-        void SavePendingChanges();
-        void DiscardPendingChanges();
+        void CommitCurrentEdit();
+        void RollbackCurrentEdit();
         void EditSelectedRelation();
         void UndoLastAction();
         void RedoLastAction();
@@ -149,8 +156,8 @@ namespace StableCore::Storage::Editor
         QAction* closeDatabaseAction_{nullptr};
         QAction* undoAction_{nullptr};
         QAction* redoAction_{nullptr};
-        QAction* savePendingChangesAction_{nullptr};
-        QAction* discardPendingChangesAction_{nullptr};
+        QAction* commitCurrentEditAction_{nullptr};
+        QAction* rollbackCurrentEditAction_{nullptr};
         QLineEdit* filterEdit_{nullptr};
         class SCTableDesignPane* tableDesignPane_{nullptr};
         class SCSchemaTextPane* schemaTextPane_{nullptr};
