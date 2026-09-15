@@ -30,7 +30,7 @@
 
 验收标准：
 - 当 `ExecuteBatchEdit()` 或 `ExecuteImport()` 中任意一步失败时，数据库最终状态必须可继续开启新的 `BeginEdit()`。
-- `rollbackOnError=false` 时也不能遗留 active edit。
+- `ExecuteBatchEdit()` 失败时始终原子回滚；`SCImportExecutionOptions::rollbackOnError=false` 仅影响导入会话分块追加失败时的中断和清理，此时也不能遗留 active edit。
 - 新增测试覆盖失败后再次写入、再次导入、再次撤销的场景。
 
 ## T2. 收敛查询计划与执行语义
