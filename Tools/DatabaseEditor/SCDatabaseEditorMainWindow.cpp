@@ -727,6 +727,7 @@ namespace StableCore::Storage::Editor
             session_, &SCDatabaseSession::RecordsChanged, this,
             [this]() {
                 RefreshGridData();
+                FocusPendingRecord();
                 RefreshCurrentRecordPanel();
                 RefreshRelationPanel();
                 RefreshOverviewPanels();
@@ -1222,6 +1223,7 @@ namespace StableCore::Storage::Editor
             return;
         }
 
+        pendingRecordFocusId_ = 0;
         RefreshGridData();
         RefreshObjectExplorer();
         RefreshCurrentDetailsPanel();
@@ -1986,6 +1988,20 @@ namespace StableCore::Storage::Editor
 
     void SCDatabaseEditorMainWindow::AddRecord()
     {
+        // Starting another record is an implicit row/action transition. Save
+        // the current draft first so the previous row no longer remains
+        // marked with '*'.
+        if (session_->HasPendingEdit())
+        {
+            QString commitError;
+            if (!session_->CommitCurrentEdit(&commitError))
+            {
+                ShowError(QStringLiteral("Failed to save the previous new record"),
+                          commitError);
+                return;
+            }
+        }
+
         QString error;
         if (!session_->AddRecord(&error))
         {
@@ -1993,19 +2009,11 @@ namespace StableCore::Storage::Editor
             return;
         }
 
-        RefreshGridData();
-        RefreshCurrentRecordPanel();
-        RefreshRelationPanel();
-        RefreshOverviewPanels();
-        UpdateGridSummary();
-        UpdateDatabaseStatusBar();
-
-        sc::SCEditingDatabaseState editingState;
-        if (session_->GetEditingState(&editingState, &error) &&
-            session_->HasPendingEdit())
+        pendingRecordFocusId_ = session_->LatestPendingRecordId();
+        if (session_->HasPendingEdit())
         {
             SetStatusMessage(QStringLiteral(
-                "Record draft created. Fill required fields, then commit the edit."));
+                "Record draft created. Fill the fields; switching rows saves it."));
         } else
         {
             SetStatusMessage(QStringLiteral("Record added."));
@@ -2025,31 +2033,26 @@ namespace StableCore::Storage::Editor
             return;
         }
 
-        RefreshGridData();
-        RefreshCurrentRecordPanel();
-        RefreshRelationPanel();
-        RefreshOverviewPanels();
-        UpdateGridSummary();
-        UpdateDatabaseStatusBar();
         SetStatusMessage(QStringLiteral("Current edit committed."));
     }
 
     void SCDatabaseEditorMainWindow::RollbackCurrentEdit()
     {
+        TryRollbackCurrentEdit();
+    }
+
+    bool SCDatabaseEditorMainWindow::TryRollbackCurrentEdit()
+    {
         QString error;
         if (!session_->RollbackCurrentEdit(&error))
         {
             ShowError(QStringLiteral("Failed to roll back the current edit"), error);
-            return;
+            return false;
         }
 
-        RefreshGridData();
-        RefreshCurrentRecordPanel();
-        RefreshRelationPanel();
-        RefreshOverviewPanels();
-        UpdateGridSummary();
-        UpdateDatabaseStatusBar();
+        pendingRecordFocusId_ = 0;
         SetStatusMessage(QStringLiteral("Current edit rolled back."));
+        return true;
     }
 
     void SCDatabaseEditorMainWindow::keyPressEvent(QKeyEvent* event)
@@ -2058,7 +2061,7 @@ namespace StableCore::Storage::Editor
             session_->HasPendingEdit())
         {
             event->accept();
-            RollbackCurrentEdit();
+            TryRollbackCurrentEdit();
             return;
         }
 
@@ -2918,6 +2921,31 @@ namespace StableCore::Storage::Editor
             OnGridCellSelected(currentRow_, currentColumn_);
         };
 
+        dataTable_->OnCurrentCellChanged =
+            [this](int oldRow, int oldColumn, int newRow, int /*newColumn*/) {
+                if (gridRefreshInProgress_ || oldRow == newRow ||
+                    !session_->HasPendingEdit())
+                {
+                    return;
+                }
+
+                QString error;
+                if (!session_->CommitCurrentEdit(&error))
+                {
+                    ShowError(QStringLiteral("Failed to save the new record"), error);
+                    RefreshGridData();
+                    if (oldRow >= 0 && oldRow < visibleRows_.size())
+                    {
+                        const bool previousRefreshState = gridRefreshInProgress_;
+                        gridRefreshInProgress_ = true;
+                        dataTable_->SetCurrentCell(oldRow, std::max(oldColumn, 0));
+                        gridRefreshInProgress_ = previousRefreshState;
+                    }
+                    RefreshCurrentRecordPanel();
+                    UpdateDatabaseStatusBar();
+                }
+            };
+
         dataTable_->OnCommitEditText = [this](SCEditorContext& context) {
             const int row = context.Row;
             const int col = context.Column;
@@ -2948,6 +2976,15 @@ namespace StableCore::Storage::Editor
             return true;
         };
 
+        dataTable_->OnEscapePressed = [this]() {
+            if (!session_->HasPendingEdit())
+            {
+                return false;
+            }
+
+            return TryRollbackCurrentEdit();
+        };
+
         dataTable_->OnFilterRow = [this](int row) {
             return RowPassesQuickFilter(row);
         };
@@ -2961,12 +2998,48 @@ namespace StableCore::Storage::Editor
         };
     }
 
+    void SCDatabaseEditorMainWindow::FocusPendingRecord()
+    {
+        if (dataTable_ == nullptr || pendingRecordFocusId_ == 0)
+        {
+            return;
+        }
+
+        const auto newRowIt = std::find_if(
+            visibleRows_.cbegin(), visibleRows_.cend(),
+            [recordId = pendingRecordFocusId_](const GridRowData& row) {
+                return row.recordId == recordId;
+            });
+        if (newRowIt == visibleRows_.cend())
+        {
+            // The row may be hidden by the active filter. Do not carry the
+            // request into a later, unrelated RecordsChanged refresh.
+            pendingRecordFocusId_ = 0;
+            return;
+        }
+
+        const int newRow = static_cast<int>(
+            std::distance(visibleRows_.cbegin(), newRowIt));
+        const bool previousRefreshState = gridRefreshInProgress_;
+        gridRefreshInProgress_ = true;
+        dataTable_->SetCurrentCell(newRow, columns_.isEmpty() ? 0 : 1);
+        gridRefreshInProgress_ = previousRefreshState;
+        pendingRecordFocusId_ = 0;
+    }
+
     void SCDatabaseEditorMainWindow::RefreshGridData()
     {
         if (dataTable_ == nullptr)
         {
             return;
         }
+
+        gridRefreshInProgress_ = true;
+        struct RefreshGuard
+        {
+            bool& flag;
+            ~RefreshGuard() { flag = false; }
+        } refreshGuard{gridRefreshInProgress_};
 
         if (!session_->IsOpen() || session_->CurrentTableName().isEmpty())
         {
@@ -3057,6 +3130,18 @@ namespace StableCore::Storage::Editor
 
         dataTable_->OnGetRowCount = [this]() {
             return static_cast<int>(visibleRows_.size());
+        };
+
+        dataTable_->OnGetRowHeaderText = [this](int row) {
+            if (row < 0 || row >= static_cast<int>(visibleRows_.size()))
+            {
+                return QString();
+            }
+
+            const sc::RecordId recordId = visibleRows_[row].recordId;
+            return QString::number(row + 1) +
+                   (session_->IsPendingRecord(recordId) ? QStringLiteral("*")
+                                                         : QString());
         };
 
         dataTable_->OnGetColumnCount = [visibleColumnCount]() {

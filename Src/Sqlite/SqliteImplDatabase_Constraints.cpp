@@ -569,8 +569,8 @@ namespace StableCore::Storage
                 return SC_OK;
             }
 
-            std::unordered_set<std::wstring> seenKeySignatures;
-            seenKeySignatures.reserve(table->Records().size());
+            std::unordered_map<std::wstring, RecordId> seenKeyRecordIds;
+            seenKeyRecordIds.reserve(table->Records().size());
 
             for (const auto& [recordId, recordData] : table->Records())
             {
@@ -605,7 +605,9 @@ namespace StableCore::Storage
                     continue;
                 }
 
-                if (!seenKeySignatures.insert(keySignature).second)
+                const auto [seenIt, inserted] =
+                    seenKeyRecordIds.emplace(keySignature, recordData->id);
+                if (!inserted)
                 {
                     SetConstraintViolation(SCConstraintViolationInfo{
                         table->Name(),
@@ -613,7 +615,7 @@ namespace StableCore::Storage
                         constraint.kind,
                         constraint.columns,
                         recordData->id,
-                        0,
+                        seenIt->second,
                         L"Unique key already exists.",
                     });
                     return SC_E_CONSTRAINT_VIOLATION;

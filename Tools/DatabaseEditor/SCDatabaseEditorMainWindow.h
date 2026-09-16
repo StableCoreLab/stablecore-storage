@@ -121,9 +121,11 @@ namespace StableCore::Storage::Editor
         void RefreshWorkspaceHeader();
         void RefreshWorkspacePages();
         void RefreshGridData();
+        void FocusPendingRecord();
         bool RowPassesQuickFilter(int row) const;
         void ShowError(const QString& title, const QString& message);
         void SetStatusMessage(const QString& text);
+        bool TryRollbackCurrentEdit();
         bool ExportCurrentTableCsvFile(const QString& filePath,
                                        QString* outError) const;
         bool ImportCsvIntoCurrentTableFile(const QString& filePath,
@@ -137,6 +139,8 @@ namespace StableCore::Storage::Editor
         QVector<GridRowData> visibleRows_;
         int currentRow_{-1};
         int currentColumn_{-1};
+        bool gridRefreshInProgress_{false};
+        StableCore::Storage::RecordId pendingRecordFocusId_{0};
 
         QDockWidget* objectExplorerDock_{nullptr};
         QTreeWidget* objectTree_{nullptr};

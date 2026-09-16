@@ -268,6 +268,7 @@ TEST(DatabaseEditorSession, AddColumnRejectsNonNullableColumnsWithoutDefaultWhen
     ASSERT_TRUE(session.CreateTable(QStringLiteral("Beam"), &error)) << error.toStdString();
     ASSERT_TRUE(session.AddColumn(MakeIntColumn(L"Id"), &error)) << error.toStdString();
     ASSERT_TRUE(session.AddRecord(&error)) << error.toStdString();
+    ASSERT_TRUE(session.CommitCurrentEdit(&error)) << error.toStdString();
 
     EXPECT_FALSE(session.AddColumn(MakeRequiredIntColumnWithoutDefault(L"Width"), &error));
     EXPECT_EQ(error, QStringLiteral("Storage error: 0xffffffffa0010008"));
@@ -397,6 +398,101 @@ TEST(DatabaseEditorSession, AddRecordAllowsExplicitRequiredValuesBeforeSave)
     std::int64_t width = 0;
     ASSERT_EQ(record->GetInt64(L"Width", &width), sc::SC_OK);
     EXPECT_EQ(width, 42);
+}
+
+TEST(DatabaseEditorSession, AddRecordAlwaysCreatesDraftForAutoCommitOnRowSwitch)
+{
+    const fs::path dbPath =
+        MakeTempDbPath(L"StableCoreStorage_DbEditor_AddRecordAlwaysDraft.sqlite");
+
+    editor::SCDatabaseSession session;
+    QString error;
+
+    ASSERT_TRUE(session.CreateDatabase(QString::fromStdWString(dbPath.wstring()), &error))
+        << error.toStdString();
+    ASSERT_TRUE(session.CreateTable(QStringLiteral("ElementTypeDict"), &error))
+        << error.toStdString();
+    ASSERT_TRUE(session.AddColumn(MakeIntColumn(L"ElementTypeID"), &error))
+        << error.toStdString();
+    sc::SCConstraintDef unique;
+    unique.kind = sc::SCConstraintKind::Unique;
+    unique.name = L"ElementTypeID";
+    unique.columns.push_back(L"ElementTypeID");
+    ASSERT_TRUE(session.AddConstraint(unique, &error)) << error.toStdString();
+
+    ASSERT_TRUE(session.AddRecord(&error)) << error.toStdString();
+    EXPECT_TRUE(session.HasPendingEdit());
+
+    sc::SCRecordCursorPtr cursor;
+    ASSERT_EQ(session.CurrentTable()->EnumerateRecords(cursor), sc::SC_OK);
+    sc::SCRecordPtr record;
+    ASSERT_EQ(cursor->Next(record), sc::SC_OK);
+    ASSERT_TRUE(record);
+    EXPECT_TRUE(session.IsPendingRecord(record->GetId()));
+
+    ASSERT_TRUE(session.SetCellValue(record->GetId(), QStringLiteral("ElementTypeID"),
+                                     QVariant::fromValue<qlonglong>(160), &error))
+        << error.toStdString();
+    ASSERT_TRUE(session.CommitCurrentEdit(&error)) << error.toStdString();
+    EXPECT_FALSE(session.HasPendingEdit());
+}
+
+TEST(DatabaseEditorSession, AddRecordUniqueConflictKeepsDraftRecoverable)
+{
+    const fs::path dbPath =
+        MakeTempDbPath(L"StableCoreStorage_DbEditor_AddRecordUniqueConflict.sqlite");
+
+    editor::SCDatabaseSession session;
+    QString error;
+
+    ASSERT_TRUE(session.CreateDatabase(QString::fromStdWString(dbPath.wstring()), &error))
+        << error.toStdString();
+    ASSERT_TRUE(session.CreateTable(QStringLiteral("ElementTypeDict"), &error))
+        << error.toStdString();
+    ASSERT_TRUE(session.AddColumn(MakeIntColumn(L"ElementTypeID"), &error))
+        << error.toStdString();
+
+    sc::SCConstraintDef unique;
+    unique.kind = sc::SCConstraintKind::Unique;
+    unique.name = L"ElementTypeID";
+    unique.columns.push_back(L"ElementTypeID");
+    ASSERT_TRUE(session.AddConstraint(unique, &error)) << error.toStdString();
+
+    ASSERT_TRUE(session.AddRecord(&error)) << error.toStdString();
+    sc::SCRecordCursorPtr cursor;
+    ASSERT_EQ(session.CurrentTable()->EnumerateRecords(cursor), sc::SC_OK);
+    sc::SCRecordPtr existingRecord;
+    ASSERT_EQ(cursor->Next(existingRecord), sc::SC_OK);
+    ASSERT_TRUE(static_cast<bool>(existingRecord));
+    const sc::RecordId existingRecordId = existingRecord->GetId();
+    ASSERT_TRUE(session.SetCellValue(
+        existingRecord->GetId(), QStringLiteral("ElementTypeID"),
+        QVariant::fromValue<qlonglong>(160), &error)) << error.toStdString();
+    ASSERT_TRUE(session.CommitCurrentEdit(&error)) << error.toStdString();
+
+    ASSERT_TRUE(session.AddRecord(&error)) << error.toStdString();
+    sc::SCRecordPtr draftRecord;
+    ASSERT_EQ(session.CurrentTable()->EnumerateRecords(cursor), sc::SC_OK);
+    sc::SCRecordPtr candidate;
+    while (cursor->Next(candidate) == sc::SC_OK && candidate)
+    {
+        if (candidate->GetId() != existingRecordId)
+        {
+            draftRecord = candidate;
+            break;
+        }
+    }
+    ASSERT_TRUE(static_cast<bool>(draftRecord));
+    ASSERT_TRUE(session.SetCellValue(
+        draftRecord->GetId(), QStringLiteral("ElementTypeID"),
+        QVariant::fromValue<qlonglong>(160), &error)) << error.toStdString();
+
+    EXPECT_FALSE(session.CommitCurrentEdit(&error));
+    EXPECT_TRUE(session.HasPendingEdit());
+    EXPECT_TRUE(session.IsPendingRecord(draftRecord->GetId()));
+
+    ASSERT_TRUE(session.RollbackCurrentEdit(&error)) << error.toStdString();
+    EXPECT_FALSE(session.HasPendingEdit());
 }
 
 TEST(DatabaseEditorSession, BinaryCellValuesRoundTripThroughEditorSession)
@@ -908,6 +1004,7 @@ TEST(DatabaseEditorSession, TableSelectionAndSchemaRemainAlignedAcrossCreateAndR
         ASSERT_TRUE(session.AddColumn(MakeIntColumn(L"Width"), &error)) << error.toStdString();
         ASSERT_TRUE(session.AddColumn(MakeIntColumn(L"Area"), &error)) << error.toStdString();
         ASSERT_TRUE(session.AddRecord(&error)) << error.toStdString();
+        ASSERT_TRUE(session.CommitCurrentEdit(&error)) << error.toStdString();
 
         ASSERT_TRUE(session.CreateTable(QStringLiteral("Colum"), &error)) << error.toStdString();
         EXPECT_EQ(session.CurrentTableName(), QStringLiteral("Colum"));
@@ -1279,6 +1376,7 @@ TEST(DatabaseEditorSession, RenameTableUndoRedoRewritesComputedColumnsAcrossTabl
     ASSERT_TRUE(session.CreateTable(QStringLiteral("Beam"), &error)) << error.toStdString();
     ASSERT_TRUE(session.AddColumn(MakeIntColumn(L"Width"), &error)) << error.toStdString();
     ASSERT_TRUE(session.AddRecord(&error)) << error.toStdString();
+    ASSERT_TRUE(session.CommitCurrentEdit(&error)) << error.toStdString();
     ASSERT_TRUE(session.CurrentTable() != nullptr);
     sc::SCRecordCursorPtr beamCursor;
     ASSERT_EQ(session.CurrentTable()->EnumerateRecords(beamCursor), sc::SC_OK);
@@ -1295,6 +1393,7 @@ TEST(DatabaseEditorSession, RenameTableUndoRedoRewritesComputedColumnsAcrossTabl
     ASSERT_TRUE(session.CreateTable(QStringLiteral("Floor"), &error)) << error.toStdString();
     ASSERT_TRUE(session.AddColumn(MakeIntColumn(L"Height"), &error)) << error.toStdString();
     ASSERT_TRUE(session.AddRecord(&error)) << error.toStdString();
+    ASSERT_TRUE(session.CommitCurrentEdit(&error)) << error.toStdString();
     ASSERT_TRUE(session.CurrentTable() != nullptr);
     sc::SCRecordCursorPtr floorCursor;
     ASSERT_EQ(session.CurrentTable()->EnumerateRecords(floorCursor), sc::SC_OK);
@@ -1670,6 +1769,7 @@ TEST(DatabaseEditorSession, AddAndDeleteRecordStayOnCurrentTable)
     ASSERT_TRUE(session.AddColumn(MakeIntColumn(L"Width"), &error)) << error.toStdString();
 
     ASSERT_TRUE(session.AddRecord(&error)) << error.toStdString();
+    ASSERT_TRUE(session.CommitCurrentEdit(&error)) << error.toStdString();
     ASSERT_TRUE(session.CurrentTable() != nullptr);
 
     sc::SCRecordCursorPtr cursor;
@@ -1696,6 +1796,7 @@ TEST(DatabaseEditorSession, DeleteRecordRefreshesRecordTableModelRowCount)
     ASSERT_TRUE(session.AddColumn(MakeIntColumn(L"Width"), &error)) << error.toStdString();
     ASSERT_TRUE(session.AddRecord(&error)) << error.toStdString();
     ASSERT_TRUE(session.AddRecord(&error)) << error.toStdString();
+    ASSERT_TRUE(session.CommitCurrentEdit(&error)) << error.toStdString();
 
     ASSERT_TRUE(session.SelectTable(QStringLiteral("Beam"), &error)) << error.toStdString();
 
@@ -1753,6 +1854,7 @@ TEST(DatabaseEditorSession, EditColumnMigratesCompatibleValues)
     ASSERT_TRUE(session.CreateTable(QStringLiteral("Beam"), &error)) << error.toStdString();
     ASSERT_TRUE(session.AddColumn(MakeIntColumn(L"Width"), &error)) << error.toStdString();
     ASSERT_TRUE(session.AddRecord(&error)) << error.toStdString();
+    ASSERT_TRUE(session.CommitCurrentEdit(&error)) << error.toStdString();
 
     ASSERT_TRUE(session.CurrentTable() != nullptr);
     sc::SCRecordCursorPtr cursor;
@@ -1794,6 +1896,7 @@ TEST(DatabaseEditorSession, EditColumnRollsBackWhenViewRebuildFails)
     ASSERT_TRUE(session.CreateTable(QStringLiteral("Beam"), &error)) << error.toStdString();
     ASSERT_TRUE(session.AddColumn(MakeIntColumn(L"Width"), &error)) << error.toStdString();
     ASSERT_TRUE(session.AddRecord(&error)) << error.toStdString();
+    ASSERT_TRUE(session.CommitCurrentEdit(&error)) << error.toStdString();
 
     ASSERT_TRUE(session.CurrentTable() != nullptr);
     sc::SCRecordCursorPtr cursor;
@@ -1882,6 +1985,7 @@ TEST(DatabaseEditorSession, ConvertColumnToComputedRebuildsSchemaAndView)
     ASSERT_TRUE(session.AddColumn(MakeIntColumn(L"Length"), &error)) << error.toStdString();
     ASSERT_TRUE(session.AddColumn(MakeIntColumn(L"Width"), &error)) << error.toStdString();
     ASSERT_TRUE(session.AddRecord(&error)) << error.toStdString();
+    ASSERT_TRUE(session.CommitCurrentEdit(&error)) << error.toStdString();
 
     ASSERT_TRUE(session.CurrentTable() != nullptr);
     sc::SCRecordCursorPtr cursor;
@@ -1977,6 +2081,7 @@ TEST(DatabaseEditorSession, ConvertNonNullableColumnToComputedClearsDataStructur
     const sc::RecordId recordId = record->GetId();
     ASSERT_TRUE(session.SetCellValue(recordId, QStringLiteral("Width"), QVariant::fromValue<qlonglong>(11), &error))
         << error.toStdString();
+    ASSERT_TRUE(session.CommitCurrentEdit(&error)) << error.toStdString();
 
     const sc::SCComputedColumnDef computed = MakeExpressionComputedColumn(L"Width", L"Length * 2", L"Length");
     ASSERT_TRUE(session.ConvertColumnToComputed(QStringLiteral("Width"), computed, &error)) << error.toStdString();
@@ -2140,6 +2245,7 @@ TEST(DatabaseEditorSession, EditingStateAndEditLogAreExposedAfterEdits)
     ASSERT_TRUE(session.CreateTable(QStringLiteral("Beam"), &error)) << error.toStdString();
     ASSERT_TRUE(session.AddColumn(MakeIntColumn(L"Width"), &error)) << error.toStdString();
     ASSERT_TRUE(session.AddRecord(&error)) << error.toStdString();
+    ASSERT_TRUE(session.CommitCurrentEdit(&error)) << error.toStdString();
 
     sc::SCEditingDatabaseState editingState;
     ASSERT_TRUE(session.GetEditingState(&editingState, &error)) << error.toStdString();
@@ -2164,6 +2270,7 @@ TEST(DatabaseEditorSession, CreateBackupCopyWritesAnOpenableDatabaseCopy)
     ASSERT_TRUE(session.CreateTable(QStringLiteral("Beam"), &error)) << error.toStdString();
     ASSERT_TRUE(session.AddColumn(MakeIntColumn(L"Width"), &error)) << error.toStdString();
     ASSERT_TRUE(session.AddRecord(&error)) << error.toStdString();
+    ASSERT_TRUE(session.CommitCurrentEdit(&error)) << error.toStdString();
 
     sc::SCBackupOptions options;
     options.overwriteExisting = true;
@@ -2180,4 +2287,3 @@ TEST(DatabaseEditorSession, CreateBackupCopyWritesAnOpenableDatabaseCopy)
     ASSERT_EQ(columns.size(), 1);
     EXPECT_EQ(columns[0].name, L"Width");
 }
-

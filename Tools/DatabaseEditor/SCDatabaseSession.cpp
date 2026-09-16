@@ -7,6 +7,7 @@
 #include <vector>
 
 #include <QByteArray>
+#include <QDebug>
 #include <QIODevice>
 #include <QMetaType>
 #include <QSaveFile>
@@ -36,6 +37,55 @@ namespace StableCore::Storage::Editor
         {
             return QString::fromStdWString(lhs)
                        .compare(QString::fromStdWString(rhs), Qt::CaseInsensitive) == 0;
+        }
+
+        void LogConstraintFailure(const sc::SCDbPtr& database,
+                                  const QString& context,
+                                  sc::ErrorCode error)
+        {
+            qWarning().noquote()
+                << QStringLiteral("[DatabaseEditor] %1 failed: rc=0x%2")
+                       .arg(context)
+                       .arg(QString::number(static_cast<qulonglong>(error), 16));
+
+            if (error != sc::SC_E_CONSTRAINT_VIOLATION &&
+                error != sc::SC_E_SCHEMA_VIOLATION)
+            {
+                return;
+            }
+
+            if (!database)
+            {
+                return;
+            }
+
+            sc::SCConstraintViolationInfo violation;
+            const sc::ErrorCode infoRc =
+                database->GetLastConstraintViolationInfo(&violation);
+            if (sc::Failed(infoRc))
+            {
+                qWarning().noquote()
+                    << QStringLiteral("[DatabaseEditor] constraint details unavailable: rc=0x%1")
+                           .arg(QString::number(static_cast<qulonglong>(infoRc), 16));
+                return;
+            }
+
+            QStringList columns;
+            for (const std::wstring& column : violation.columns)
+            {
+                columns.push_back(QString::fromStdWString(column));
+            }
+            qWarning().noquote()
+                << QStringLiteral(
+                       "[DatabaseEditor] constraint: table=%1 name=%2 kind=%3 "
+                       "recordId=%4 referencedRecordId=%5 columns=[%6] reason=%7")
+                       .arg(QString::fromStdWString(violation.tableName))
+                       .arg(QString::fromStdWString(violation.constraintName))
+                       .arg(static_cast<int>(violation.kind))
+                       .arg(static_cast<qulonglong>(violation.recordId))
+                       .arg(static_cast<qulonglong>(violation.referencedRecordId))
+                       .arg(columns.join(QStringLiteral(", ")))
+                       .arg(QString::fromStdWString(violation.reason));
         }
 
         void ReplaceDependencyFieldName(std::vector<sc::SCFieldDependency>* dependencies,
@@ -1253,6 +1303,8 @@ namespace StableCore::Storage::Editor
                 return false;
             }
             pendingEdit_.Reset();
+            pendingRecordIds_.clear();
+            latestPendingRecordId_ = 0;
         }
 
         if (db_)
@@ -2898,76 +2950,21 @@ namespace StableCore::Storage::Editor
             return false;
         }
 
-        bool requiresPendingEdit = pendingEdit_.Get() != nullptr;
-        if (!requiresPendingEdit)
-        {
-            sc::SCSchemaPtr schema;
-            const sc::ErrorCode schemaRc = currentTable_->GetSchema(schema);
-            if (sc::Failed(schemaRc))
-            {
-                if (outError != nullptr)
-                {
-                    *outError = ErrorToString(schemaRc);
-                }
-                return false;
-            }
-
-            std::int32_t columnCount = 0;
-            const sc::ErrorCode countRc = schema->GetColumnCount(&columnCount);
-            if (sc::Failed(countRc))
-            {
-                if (outError != nullptr)
-                {
-                    *outError = ErrorToString(countRc);
-                }
-                return false;
-            }
-
-            for (std::int32_t index = 0; index < columnCount; ++index)
-            {
-                sc::SCColumnDef column;
-                const sc::ErrorCode columnRc =
-                    schema->GetColumn(index, &column);
-                if (sc::Failed(columnRc))
-                {
-                    if (outError != nullptr)
-                    {
-                        *outError = ErrorToString(columnRc);
-                    }
-                    return false;
-                }
-
-                if (!column.nullable && column.defaultValue.IsNull())
-                {
-                    requiresPendingEdit = true;
-                    break;
-                }
-            }
-        }
-
-        if (!requiresPendingEdit)
-        {
-            const bool ok = BeginAndCommitSingleAction(
-                L"Add Record",
-                [&]() {
-                    sc::SCRecordPtr record;
-                    return currentTable_->CreateRecord(record);
-                },
-                outError);
-
-            if (ok)
-            {
-                emit RecordsChanged();
-            }
-            return ok;
-        }
+        qDebug().noquote()
+            << QStringLiteral("[DatabaseEditor] AddRecord begin: database=%1 table=%2 pendingEdit=%3")
+                   .arg(databasePath_)
+                   .arg(currentTableName_)
+                   .arg(pendingEdit_ ? QStringLiteral("true") : QStringLiteral("false"));
 
         if (!pendingEdit_)
         {
+            qDebug().noquote()
+                << QStringLiteral("[DatabaseEditor] AddRecord path=pending-draft; starting edit");
             const sc::ErrorCode beginRc =
                 db_->BeginEdit(L"Add Record", pendingEdit_);
             if (sc::Failed(beginRc))
             {
+                LogConstraintFailure(db_, QStringLiteral("BeginEdit(Add Record)"), beginRc);
                 if (outError != nullptr)
                 {
                     *outError = ErrorToString(beginRc);
@@ -2980,6 +2977,8 @@ namespace StableCore::Storage::Editor
         const sc::ErrorCode createRc = currentTable_->CreateRecord(record);
         if (sc::Failed(createRc))
         {
+            LogConstraintFailure(db_, QStringLiteral("CreateRecord(%1)").arg(currentTableName_),
+                                 createRc);
             if (pendingEdit_)
             {
                 const sc::ErrorCode rollbackRc =
@@ -2989,6 +2988,8 @@ namespace StableCore::Storage::Editor
                     *outError = ErrorToString(rollbackRc);
                 }
                 pendingEdit_.Reset();
+                pendingRecordIds_.clear();
+                latestPendingRecordId_ = 0;
             }
             if (outError != nullptr && outError->isEmpty())
             {
@@ -2997,7 +2998,13 @@ namespace StableCore::Storage::Editor
             return false;
         }
 
+        pendingRecordIds_.insert(record->GetId());
+        latestPendingRecordId_ = record->GetId();
         emit RecordsChanged();
+        qDebug().noquote()
+            << QStringLiteral("[DatabaseEditor] AddRecord draft created: table=%1 recordId=%2")
+                   .arg(currentTableName_)
+                   .arg(static_cast<qulonglong>(record->GetId()));
         return true;
     }
 
@@ -3120,6 +3127,7 @@ namespace StableCore::Storage::Editor
         const sc::ErrorCode rc = db_->Commit(pendingEdit_.Get());
         if (sc::Failed(rc))
         {
+            LogConstraintFailure(db_, QStringLiteral("pending Add/Edit commit"), rc);
             // The edit stays active on validation failures so the caller can
             // fix the draft and commit again.
             if (outError != nullptr)
@@ -3130,6 +3138,8 @@ namespace StableCore::Storage::Editor
         }
 
         pendingEdit_.Reset();
+        pendingRecordIds_.clear();
+        latestPendingRecordId_ = 0;
         emit RecordsChanged();
         return true;
     }
@@ -3165,6 +3175,8 @@ namespace StableCore::Storage::Editor
         }
 
         pendingEdit_.Reset();
+        pendingRecordIds_.clear();
+        latestPendingRecordId_ = 0;
         emit RecordsChanged();
         return true;
     }
@@ -5166,6 +5178,8 @@ namespace StableCore::Storage::Editor
         rc = action();
         if (sc::Failed(rc))
         {
+            LogConstraintFailure(db_, QStringLiteral("%1 action").arg(QString::fromStdWString(actionName)),
+                                 rc);
             RollbackEditAndReport(
                 db_, edit.Get(), ErrorToString(rc),
                 QStringLiteral("Edit action"),
@@ -5177,6 +5191,8 @@ namespace StableCore::Storage::Editor
         rc = db_->Commit(edit.Get());
         if (sc::Failed(rc))
         {
+            LogConstraintFailure(db_, QStringLiteral("%1 commit").arg(QString::fromStdWString(actionName)),
+                                 rc);
             RollbackEditAndReport(
                 db_, edit.Get(), ErrorToString(rc),
                 QStringLiteral("Edit commit"),
@@ -5191,6 +5207,16 @@ namespace StableCore::Storage::Editor
     bool SCDatabaseSession::HasPendingEdit() const noexcept
     {
         return pendingEdit_.Get() != nullptr;
+    }
+
+    bool SCDatabaseSession::IsPendingRecord(sc::RecordId recordId) const noexcept
+    {
+        return pendingRecordIds_.contains(recordId);
+    }
+
+    sc::RecordId SCDatabaseSession::LatestPendingRecordId() const noexcept
+    {
+        return latestPendingRecordId_;
     }
 
     bool SCDatabaseSession::ExportDebugPackage(

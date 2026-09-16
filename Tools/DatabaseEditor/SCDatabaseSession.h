@@ -5,6 +5,7 @@
 #include <QHash>
 #include <QObject>
 #include <QPair>
+#include <QSet>
 #include <QString>
 #include <QStringList>
 #include <QVariant>
@@ -172,6 +173,8 @@ namespace StableCore::Storage::Editor
             QString* outError) const;
         bool CurrentTableHasRecords(bool* outHasRecords, QString* outError) const;
         bool HasPendingEdit() const noexcept;
+        bool IsPendingRecord(StableCore::Storage::RecordId recordId) const noexcept;
+        StableCore::Storage::RecordId LatestPendingRecordId() const noexcept;
         bool BuildRecordSnapshot(StableCore::Storage::RecordId recordId,
                                  QVector<QPair<QString, QString>>* outFields,
                                  QString* outError) const;
@@ -216,6 +219,8 @@ namespace StableCore::Storage::Editor
         StableCore::Storage::SCTablePtr currentTable_;
         StableCore::Storage::SCComputedTableViewPtr currentTableView_;
         StableCore::Storage::SCEditPtr pendingEdit_;
+        QSet<StableCore::Storage::RecordId> pendingRecordIds_;
+        StableCore::Storage::RecordId latestPendingRecordId_{0};
         StableCore::Storage::SCImportStagingArea importSession_;
         bool importSessionActive_{false};
         QString databasePath_;
