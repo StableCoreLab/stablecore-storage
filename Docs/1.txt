@@ -1,0 +1,40 @@
+## 审查结论
+
+发现 2 项 P0 问题，当前仍不建议直接进入开发。
+
+### P0-1：约束错误归因仍使用不存在的正式 RecordId
+
+[第 142 行](/D:/code/stablecore/Storage/Docs/SCStorage能力差距实现方案.md:142)规定：
+
+> 延迟约束错误用约束信息中的 record id 查磁盘来源映射。
+
+但当前唯一有效的 RecordId 合同是：
+
+- Append/候选态只生成 `temporaryRecordKey`；
+- 正式 `RecordId` 仅在 Finalize 最终事务内分配；
+- sidecar 在提交前只保存临时记录键。
+
+因此，候选约束校验失败时可能根本没有正式 `record id`，无法按该字段查来源。应改为：
+
+- 候选阶段按 `temporaryRecordKey` 查询来源；
+- Finalize 事务完成临时键到正式 `RecordId` 的映射后，正式持久化错误或提交后诊断才使用 `recordId`；
+- T02/T03/T08 增加两种键的阶段边界和错误归因验证。
+
+### P0-2：P0 schema 与 candidate cleanup 字段仍有直接冲突
+
+[第 103 行](/D:/code/stablecore/Storage/Docs/SCStorage能力差距实现方案.md:103)仍要求：
+
+- `terminal outcome` 保存 `candidate_cleanup_pending`；
+- Finalize/Abort 后由 Storage scanner 依据 candidate manifest 清理。
+
+但[第 109 行](/D:/code/stablecore/Storage/Docs/SCStorage能力差距实现方案.md:109)明确规定：
+
+- P0 不创建 `candidate_cleanup_pending`；
+- P0 不创建 candidate manifest；
+- P0 不启动外部 candidate scanner。
+
+[第 151 行](/D:/code/stablecore/Storage/Docs/SCStorage能力差距实现方案.md:151)只明确了其后的 candidate manifest 段落属于未来扩展，不能消除第 103 行在当前 SQLite 私有结构章节中的冲突。开发者仍可能按第 103 行创建 P0 schema。
+
+应将第 103 行明确标注为“未来磁盘候选扩展”，或从 P0 私有持久化结构中移除，并把 P0 的 terminal outcome 定义为只保存 receipt/tombstone、attempt token 和诊断摘要，不包含 `candidate_cleanup_pending` 或 candidate manifest 清理依赖。
+
+本轮仅做静态审查，未修改文件，未执行构建、脚本或测试。
