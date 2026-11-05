@@ -47,6 +47,9 @@ namespace StableCore::Storage
     {
     public:
         virtual ~IQueryIndexMaintainer() = default;
+        // Explicit maintenance from the database's loaded records. Requires a
+        // writable database without an active edit. Rebuilding is atomic and
+        // does not create an undo entry. Reopen after external data changes.
         virtual ErrorCode RebuildQueryIndex() = 0;
     };
 

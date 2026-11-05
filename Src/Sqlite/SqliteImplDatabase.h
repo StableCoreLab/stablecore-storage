@@ -296,7 +296,7 @@ private:
     ErrorCode EnsureLegacyColumnIndexes();
     ErrorCode RebuildCompositeQueryIndexes();
     ErrorCode EnsureImportSessionStore();
-    void EnsureColumnIndex(std::int64_t tableRowId, const std::wstring& columnName);
+    ErrorCode EnsureColumnIndex(std::int64_t tableRowId, const std::wstring& columnName);
     void RunStartupIntegrityCheck();
     void LogStartupDiagnostic(SCDiagnosticSeverity severity,
                               const std::wstring& category,

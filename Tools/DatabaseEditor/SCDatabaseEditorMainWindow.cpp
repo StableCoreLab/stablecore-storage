@@ -1035,6 +1035,9 @@ namespace StableCore::Storage::Editor
             &SCDatabaseEditorMainWindow::DeleteSelectedComputedColumn);
 
         auto* toolsMenu = menuBar()->addMenu(QStringLiteral("Tools(&T)"));
+        rebuildQueryIndexesAction_ = toolsMenu->addAction(
+            QStringLiteral("Rebuild Query Indexes..."), this,
+            &SCDatabaseEditorMainWindow::RebuildQueryIndexes);
         toolsMenu->addAction(QStringLiteral("Health Summary"), this,
                              &SCDatabaseEditorMainWindow::ShowHealthSummary);
         toolsMenu->addAction(QStringLiteral("Show Edit Log / State Summary"),
@@ -2278,6 +2281,32 @@ namespace StableCore::Storage::Editor
         RefreshRelationPanel();
         RefreshOverviewPanels();
         UpdateGridSummary();
+    }
+
+    void SCDatabaseEditorMainWindow::RebuildQueryIndexes()
+    {
+        if (QMessageBox::question(
+                this, QStringLiteral("Rebuild Query Indexes"),
+                QStringLiteral(
+                    "Rebuild query indexes for all tables from the loaded records?\n\n"
+                    "After editing data with an external SQLite tool, close and reopen "
+                    "the database before running this command. Stop external writes "
+                    "while the database is open here.\n\n"
+                    "This maintenance operation does not create an undo entry."),
+                QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes)
+        {
+            return;
+        }
+        QString error;
+        if (!session_->RebuildQueryIndexes(&error))
+        {
+            ShowError(QStringLiteral("Rebuild query indexes failed"), error);
+            return;
+        }
+        RefreshGridData();
+        RefreshRelationPanel();
+        RefreshOverviewPanels();
+        SetStatusMessage(QStringLiteral("Query indexes rebuilt for all tables."));
     }
 
     void SCDatabaseEditorMainWindow::ShowHealthSummary()
@@ -4020,6 +4049,14 @@ namespace StableCore::Storage::Editor
         {
             undoAction_->setEnabled(
                 stateLoaded && state.undoCount > 0 &&
+                state.openMode != sc::SCDatabaseOpenMode::ReadOnly);
+        }
+
+        if (rebuildQueryIndexesAction_ != nullptr)
+        {
+            rebuildQueryIndexesAction_->setEnabled(
+                stateLoaded && !state.consistencyLost &&
+                !session_->HasPendingEdit() &&
                 state.openMode != sc::SCDatabaseOpenMode::ReadOnly);
         }
 

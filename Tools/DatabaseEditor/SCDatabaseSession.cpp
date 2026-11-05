@@ -14,6 +14,7 @@
 #include <QStringList>
 
 #include "SCBinaryUtils.h"
+#include "ISCQuery.h"
 #include "SCSchemaTableImport.h"
 
 namespace sc = StableCore::Storage;
@@ -1430,6 +1431,51 @@ namespace StableCore::Storage::Editor
         }
 
         emit TablesChanged();
+        emit RecordsChanged();
+        return true;
+    }
+
+    bool SCDatabaseSession::RebuildQueryIndexes(QString* outError)
+    {
+        if (outError != nullptr)
+        {
+            outError->clear();
+        }
+        sc::SCEditingDatabaseState state;
+        if (!GetEditingState(&state, outError))
+        {
+            return false;
+        }
+        if (HasPendingEdit() || importSessionActive_)
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral(
+                    "Finish the active edit or import session before rebuilding indexes.");
+            }
+            return false;
+        }
+        auto* maintainer = dynamic_cast<sc::IQueryIndexMaintainer*>(db_.Get());
+        if (maintainer == nullptr)
+        {
+            if (outError != nullptr)
+            {
+                *outError = QStringLiteral("Query index maintenance is not supported.");
+            }
+            return false;
+        }
+
+        // Maintenance requires no active edit; the backend owns atomicity and
+        // writable-state checks. Do not wrap this in BeginEdit/Commit.
+        const sc::ErrorCode rc = maintainer->RebuildQueryIndex();
+        if (sc::Failed(rc))
+        {
+            if (outError != nullptr)
+            {
+                *outError = ErrorToString(rc);
+            }
+            return false;
+        }
         emit RecordsChanged();
         return true;
     }

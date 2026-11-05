@@ -392,6 +392,8 @@ if (SCSTORAGE_BUILD_TESTS)
         add_executable(${SCSTORAGE_DB_EDITOR_TESTS_TARGET}
             Tests/DatabaseEditorSessionTests.cpp
             Tests/DatabaseEditorSchemaTableTests.cpp
+            Tests/Support/TestSqliteHelpers.cpp
+            Tests/Support/TestQueryHelpers.cpp
             Tools/DatabaseEditor/SCDatabaseSession.cpp
             Tools/DatabaseEditor/SCDatabaseSession.h
             Tools/DatabaseEditor/SCRecordTableModel.cpp
@@ -421,6 +423,8 @@ if (SCSTORAGE_BUILD_TESTS)
         SCStorageSourceGroupTree("${CMAKE_CURRENT_SOURCE_DIR}"
             Tests/DatabaseEditorSessionTests.cpp
             Tests/DatabaseEditorSchemaTableTests.cpp
+            Tests/Support/TestSqliteHelpers.cpp
+            Tests/Support/TestQueryHelpers.cpp
             Tools/DatabaseEditor/SCDatabaseSession.cpp
             Tools/DatabaseEditor/SCDatabaseSession.h
             Tools/DatabaseEditor/SCRecordTableModel.cpp

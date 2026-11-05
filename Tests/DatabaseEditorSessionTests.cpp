@@ -10,6 +10,8 @@
 #include "SCDatabaseSession.h"
 #include "SCRecordTableModel.h"
 #include "SCSchemaTableImport.h"
+#include "Support/TestSqliteHelpers.h"
+#include "Support/TestQueryHelpers.h"
 
 namespace sc = StableCore::Storage;
 namespace editor = StableCore::Storage::Editor;
@@ -272,6 +274,114 @@ TEST(DatabaseEditorSession, AddColumnRejectsNonNullableColumnsWithoutDefaultWhen
 
     EXPECT_FALSE(session.AddColumn(MakeRequiredIntColumnWithoutDefault(L"Width"), &error));
     EXPECT_EQ(error, QStringLiteral("Storage error: 0xffffffffa0010008"));
+}
+
+TEST(DatabaseEditorSession, RebuildQueryIndexesRepairsExternalChangesAfterReopen)
+{
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_DbEditor_RebuildQueryIndexes.sqlite");
+    editor::SCDatabaseSession session;
+    QString error;
+    ASSERT_TRUE(session.CreateDatabase(QString::fromStdWString(dbPath.wstring()), &error)) << error.toStdString();
+    ASSERT_TRUE(session.CreateTable(QStringLiteral("Beam"), &error)) << error.toStdString();
+    ASSERT_TRUE(session.AddColumn(MakeIntColumn(L"Width"), &error)) << error.toStdString();
+    ASSERT_TRUE(session.AddColumn(MakeStringColumn(L"Name"), &error)) << error.toStdString();
+    ASSERT_TRUE(session.AddIndex(MakeIndex(L"idx_Width", L"Width"), &error)) << error.toStdString();
+    sc::SCIndexDef composite = MakeIndex(L"idx_Width_Name", L"Width");
+    composite.columns.push_back({L"Name", false});
+    ASSERT_TRUE(session.AddIndex(composite, &error)) << error.toStdString();
+    ASSERT_TRUE(session.AddRecord(&error)) << error.toStdString();
+    const sc::RecordId aliveId = session.LatestPendingRecordId();
+    ASSERT_TRUE(session.SetCellValue(aliveId, QStringLiteral("Width"), 100, &error)) << error.toStdString();
+    ASSERT_TRUE(session.SetCellValue(aliveId, QStringLiteral("Name"), QStringLiteral("Alpha"), &error)) << error.toStdString();
+    ASSERT_TRUE(session.CommitCurrentEdit(&error)) << error.toStdString();
+    ASSERT_TRUE(session.AddRecord(&error)) << error.toStdString();
+    const sc::RecordId deletedId = session.LatestPendingRecordId();
+    ASSERT_TRUE(session.SetCellValue(deletedId, QStringLiteral("Width"), 100, &error)) << error.toStdString();
+    ASSERT_TRUE(session.SetCellValue(deletedId, QStringLiteral("Name"), QStringLiteral("Alpha"), &error)) << error.toStdString();
+    ASSERT_TRUE(session.CommitCurrentEdit(&error)) << error.toStdString();
+    ASSERT_TRUE(session.DeleteRecord(deletedId, &error)) << error.toStdString();
+    ASSERT_TRUE(session.CloseDatabase(&error)) << error.toStdString();
+
+    ASSERT_TRUE(ExecSqliteScript(dbPath,
+        "UPDATE field_values SET int64_value = 200 WHERE column_name = 'Width';"));
+    ASSERT_TRUE(session.OpenDatabase(QString::fromStdWString(dbPath.wstring()), &error)) << error.toStdString();
+    const auto* provider = dynamic_cast<const sc::IQueryIndexProvider*>(session.Database());
+    ASSERT_NE(provider, nullptr);
+    sc::QueryIndexCheckResult check;
+    ASSERT_EQ(provider->CheckQueryIndex(&check), sc::SC_OK);
+    EXPECT_EQ(check.state, sc::QueryIndexHealthState::Corrupted);
+
+    sc::QueryConstraints constraints;
+    constraints.requireIndex = true;
+    constraints.allowFallbackScan = false;
+    std::vector<std::wstring> names;
+    sc::QueryExecutionResult result;
+    const std::vector<sc::QueryCondition> conditions{
+        {L"Width", sc::QueryConditionOperator::Equal, {sc::SCValue::FromInt64(200)}},
+        {L"Name", sc::QueryConditionOperator::Equal, {sc::SCValue::FromString(L"Alpha")}}};
+    ASSERT_EQ(ExecuteQueryForBeam(session.Database(), conditions,
+        constraints, &names, &result), sc::SC_OK);
+    EXPECT_TRUE(names.empty());
+
+    sc::SCEditingDatabaseState before;
+    ASSERT_TRUE(session.GetEditingState(&before, &error));
+    ASSERT_TRUE(session.RebuildQueryIndexes(&error)) << error.toStdString();
+    ASSERT_TRUE(session.RebuildQueryIndexes(&error)) << error.toStdString();
+    ASSERT_EQ(provider->CheckQueryIndex(&check), sc::SC_OK);
+    EXPECT_EQ(check.state, sc::QueryIndexHealthState::Healthy);
+    sc::SCEditingDatabaseState after;
+    ASSERT_TRUE(session.GetEditingState(&after, &error));
+    EXPECT_EQ(after.currentVersion, before.currentVersion);
+    EXPECT_EQ(after.undoCount, before.undoCount);
+    EXPECT_EQ(after.redoCount, before.redoCount);
+    EXPECT_EQ(after.dirty, before.dirty);
+
+    ASSERT_EQ(ExecuteQueryForBeam(session.Database(), conditions,
+        constraints, &names, &result), sc::SC_OK);
+    EXPECT_EQ(result.mode, sc::QueryExecutionMode::DirectIndex);
+    ASSERT_EQ(names.size(), 1u);
+    EXPECT_EQ(names.front(), L"Alpha");
+    ASSERT_TRUE(session.SelectTable(QStringLiteral("Beam"), &error));
+    sc::SCRecordPtr record;
+    EXPECT_EQ(session.CurrentTable()->GetRecord(aliveId, record), sc::SC_OK);
+    ASSERT_TRUE(record);
+    EXPECT_EQ(record->GetId(), aliveId);
+    record.Reset();
+    ASSERT_EQ(session.CurrentTable()->GetRecord(deletedId, record), sc::SC_OK);
+    ASSERT_TRUE(record);
+    EXPECT_TRUE(record->IsDeleted());
+    record.Reset();
+
+    ASSERT_TRUE(session.CloseDatabase(&error));
+    ASSERT_TRUE(session.OpenDatabase(QString::fromStdWString(dbPath.wstring()), &error));
+    provider = dynamic_cast<const sc::IQueryIndexProvider*>(session.Database());
+    ASSERT_NE(provider, nullptr);
+    ASSERT_EQ(provider->CheckQueryIndex(&check), sc::SC_OK);
+    EXPECT_EQ(check.state, sc::QueryIndexHealthState::Healthy);
+}
+
+TEST(DatabaseEditorSession, RebuildQueryIndexesRejectsClosedAndEditingSessions)
+{
+    editor::SCDatabaseSession session;
+    QString error;
+    EXPECT_FALSE(session.RebuildQueryIndexes(&error));
+    EXPECT_FALSE(error.isEmpty());
+    const fs::path dbPath = MakeTempDbPath(L"StableCoreStorage_DbEditor_RebuildQueryIndexesGates.sqlite");
+    ASSERT_TRUE(session.CreateDatabase(QString::fromStdWString(dbPath.wstring()), &error));
+    ASSERT_TRUE(session.CreateTable(QStringLiteral("Beam"), &error));
+    ASSERT_TRUE(session.AddColumn(MakeIntColumn(L"Width"), &error));
+    ASSERT_TRUE(session.AddRecord(&error));
+    const sc::RecordId pendingId = session.LatestPendingRecordId();
+    EXPECT_FALSE(session.RebuildQueryIndexes(&error));
+    EXPECT_TRUE(session.HasPendingEdit());
+    EXPECT_EQ(session.LatestPendingRecordId(), pendingId);
+    ASSERT_TRUE(session.RollbackCurrentEdit(&error));
+    sc::SCEditPtr externalEdit;
+    ASSERT_EQ(session.Database()->BeginEdit(L"external edit", externalEdit), sc::SC_OK);
+    EXPECT_FALSE(session.RebuildQueryIndexes(&error));
+    EXPECT_EQ(externalEdit->GetState(), sc::EditState::Active);
+    ASSERT_EQ(session.Database()->Rollback(externalEdit.Get()), sc::SC_OK);
+    EXPECT_TRUE(session.RebuildQueryIndexes(&error)) << error.toStdString();
 }
 
 TEST(DatabaseEditorSession, AddIndexPersistsAcrossReopen)

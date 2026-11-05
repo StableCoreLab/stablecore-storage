@@ -49,6 +49,7 @@ namespace StableCore::Storage::Editor
         bool GetEditingState(StableCore::Storage::SCEditingDatabaseState* outState,
                              QString* outError) const;
         bool Refresh(QString* outError);
+        bool RebuildQueryIndexes(QString* outError);
         bool CreateTable(const QString& tableName, QString* outError);
         bool CreateTableFromSchema(const SCSchemaTableImportResult& schema,
                                    QString* outError);

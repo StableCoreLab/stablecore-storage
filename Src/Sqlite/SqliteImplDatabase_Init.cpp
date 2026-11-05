@@ -1335,27 +1335,38 @@ namespace StableCore::Storage
                 }
 
                 SCSchemaPtr schema;
-                if (Failed(tableRef->GetSchema(schema)) || !schema)
+                const ErrorCode schemaRc = tableRef->GetSchema(schema);
+                if (Failed(schemaRc))
                 {
-                    continue;
+                    return schemaRc;
+                }
+                if (!schema)
+                {
+                    return SC_E_FAIL;
                 }
 
                 std::int32_t count = 0;
-                if (Failed(schema->GetColumnCount(&count)))
+                const ErrorCode countRc = schema->GetColumnCount(&count);
+                if (Failed(countRc))
                 {
-                    continue;
+                    return countRc;
                 }
 
                 for (std::int32_t index = 0; index < count; ++index)
                 {
                     SCColumnDef column;
-                    if (Failed(schema->GetColumn(index, &column)))
+                    const ErrorCode columnRc = schema->GetColumn(index, &column);
+                    if (Failed(columnRc))
                     {
-                        continue;
+                        return columnRc;
                     }
                     if (column.indexed)
                     {
-                        EnsureColumnIndex(table->TableRowId(), column.name);
+                        const ErrorCode indexRc = EnsureColumnIndex(table->TableRowId(), column.name);
+                        if (Failed(indexRc))
+                        {
+                            return indexRc;
+                        }
                     }
                 }
             }
@@ -1390,14 +1401,14 @@ namespace StableCore::Storage
             return SC_OK;
         }
 
-        void SqliteDatabase::EnsureColumnIndex(std::int64_t tableRowId, const std::wstring& columnName)
+        ErrorCode SqliteDatabase::EnsureColumnIndex(std::int64_t tableRowId, const std::wstring& columnName)
         {
             const std::wstring indexName =
                 L"idx_fv_" + std::to_wstring(tableRowId) + L"_" + SCCommon::SanitizeFileName(columnName);
             const std::string sql = SCCommon::ToUtf8(L"CREATE INDEX IF NOT EXISTS " + indexName +
                                            L" ON field_values(table_id, column_name, int64_value, "
                                            L"double_value, bool_value, text_value);");
-            db_.Execute(sql.c_str());
+            return db_.Execute(sql.c_str());
         }
 
         void SqliteDatabase::RunStartupIntegrityCheck()
@@ -1879,13 +1890,49 @@ namespace StableCore::Storage
                 return SC_E_WRITE_CONFLICT;
             }
 
-            const ErrorCode legacyRc = EnsureLegacyColumnIndexes();
-            if (Failed(legacyRc))
+            // This explicit maintenance entry point runs without an edit.
+            // Keep every table's derived entries and the lookup cache atomic.
+            auto previousIndexRowIds = queryIndexRowIdsByTableAndName_;
+            const ErrorCode beginRc = db_.Execute("BEGIN IMMEDIATE TRANSACTION;");
+            if (Failed(beginRc))
             {
-                return legacyRc;
+                return beginRc;
             }
-
-            return RebuildCompositeQueryIndexes();
+            const auto rollback = [&](ErrorCode error) {
+                bool restored = sqlite3_get_autocommit(db_.Raw()) != 0;
+                if (!restored)
+                {
+                    const ErrorCode rollbackRc = db_.Execute("ROLLBACK;");
+                    restored = Succeeded(rollbackRc) && sqlite3_get_autocommit(db_.Raw()) != 0;
+                }
+                queryIndexRowIdsByTableAndName_.swap(previousIndexRowIds);
+                if (!restored)
+                {
+                    // Block further use when recovery cannot be established.
+                    replayCompensationFailureDetected_ = true;
+                    return SC_E_DATABASE_FAULTED;
+                }
+                return error;
+            };
+            try
+            {
+                const ErrorCode legacyRc = EnsureLegacyColumnIndexes();
+                if (Failed(legacyRc))
+                {
+                    return rollback(legacyRc);
+                }
+                const ErrorCode rebuildRc = RebuildCompositeQueryIndexes();
+                if (Failed(rebuildRc))
+                {
+                    return rollback(rebuildRc);
+                }
+                const ErrorCode commitRc = db_.Execute("COMMIT;");
+                return Failed(commitRc) ? rollback(commitRc) : SC_OK;
+            }
+            catch (...)
+            {
+                return rollback(SC_E_FAIL);
+            }
         }
 
 } // namespace StableCore::Storage

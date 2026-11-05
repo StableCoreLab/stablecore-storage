@@ -64,6 +64,7 @@ namespace StableCore::Storage::Editor
         void UndoLastAction();
         void RedoLastAction();
         void RefreshCurrentView();
+        void RebuildQueryIndexes();
         void ShowHealthSummary();
         void ShowEditLogSummary();
         void ExportDebugPackage();
@@ -159,6 +160,7 @@ namespace StableCore::Storage::Editor
         QToolBar* tableToolBar_{nullptr};
         QAction* closeDatabaseAction_{nullptr};
         QAction* undoAction_{nullptr};
+        QAction* rebuildQueryIndexesAction_{nullptr};
         QAction* redoAction_{nullptr};
         QAction* commitCurrentEditAction_{nullptr};
         QAction* rollbackCurrentEditAction_{nullptr};
